@@ -3,8 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
+import { Modal } from '@/components/ui/Modal';
+import { BulletinPostForm } from '@/components/BulletinPostForm';
 
 export default function SilerCityPage() {
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [events, setEvents] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -82,6 +85,14 @@ export default function SilerCityPage() {
       </section>
 
       <section>
+        <div className="flex justify-between items-center mb-2">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700 text-sm"
+          >
+            Add a Post
+          </button>
+        </div>
         <h2 className="text-2xl font-semibold mb-4">Bulletin Board</h2>
         <div className="space-y-4">
           {posts.map(post => (
@@ -101,26 +112,67 @@ export default function SilerCityPage() {
                   rel="noopener noreferrer"
                 >
                   {post.cta_type === 'visit_website' ? 'Visit Website' :
-                   post.cta_type === 'email_us' ? 'Email Us' :
-                   'Learn More'}
+                    post.cta_type === 'email_us' ? 'Email Us' :
+                      'Learn More'}
                 </a>
               )}
             </div>
           ))}
         </div>
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add a Post">
+          <BulletinPostForm location="Siler City" />
+        </Modal>
       </section>
 
       <section>
         <h2 className="text-2xl font-semibold mb-4">Local Businesses</h2>
         <div className="grid gap-4">
-          {businesses.map(biz => (
-            <div key={biz.id} className="p-4 bg-white rounded shadow">
-              <h3 className="text-lg font-bold">{biz.name}</h3>
-              <p className="text-sm text-gray-700">{biz.address}</p>
-              <p className="text-sm text-gray-600">{biz.hours}</p>
-              <p className="text-gray-800 text-sm">{truncate(biz.description || '')}</p>
-            </div>
-          ))}
+          {businesses
+            .filter(biz => biz.approved !== false) // Show only approved or null
+            .map(biz => (
+              <div key={biz.id} className="p-4 bg-white rounded shadow border border-gray-200">
+                {biz.image_url && (
+                  <img
+                    src={biz.image_url}
+                    alt={biz.name}
+                    className="w-full h-40 object-cover rounded mb-2"
+                  />
+                )}
+                <h3 className="text-lg font-bold">{biz.name}</h3>
+                <p className="text-sm text-gray-700">{biz.address || 'No address listed'}</p>
+                {biz.hours && <p className="text-sm text-gray-600">{biz.hours}</p>}
+                <p className="text-gray-800 text-sm">{truncate(biz.description || '')}</p>
+                {biz.tags && biz.tags.length > 0 && (
+                  <p className="mt-1 text-xs text-gray-500 italic">
+                    {biz.tags.join(', ')}
+                  </p>
+                )}
+                {biz.social_links && (
+                  <div className="mt-2 flex gap-2 text-sm">
+                    {biz.social_links.instagram && (
+                      <a
+                        href={biz.social_links.instagram}
+                        className="text-blue-600 underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Instagram
+                      </a>
+                    )}
+                    {biz.social_links.website && (
+                      <a
+                        href={biz.social_links.website}
+                        className="text-blue-600 underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Website
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
         </div>
         <div className="mt-4">
           <Link href="/businesses" className="text-blue-600 underline">

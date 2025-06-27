@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Modal } from '@/components/ui/Modal';
-import { BulletinPostForm } from '../../components/BulletinPostForm';
+import { BulletinPostForm } from '@/components/BulletinPostForm';
+import { Card, CardContent } from '@/components/ui/card';
+
 
 export default function SilerCityPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);

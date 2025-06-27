@@ -1,0 +1,13 @@
+.
+./app
+./app/businesses
+./app/siler-city
+./app/siler-city/bulletin-board
+./app/supabase-test
+./node_modules
+./.next
+./components
+./components/ui
+./public
+./lib
+./.git

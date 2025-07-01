@@ -13,7 +13,7 @@ export function Badge({
   const baseStyles =
     "inline-block text-xs font-alt px-3 py-1 rounded-full border transition";
 
-  const variantStyles: Record<BadgeProps["variant"], string> = {
+    const variantStyles: Record<NonNullable<BadgeProps["variant"]>, string> = {
     default: "bg-subtle text-text border-subtle",
     subtle: "bg-background text-subtle border border-subtle",
     success: "bg-accent2 text-white border-transparent",

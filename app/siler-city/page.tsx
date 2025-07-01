@@ -3,13 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
-import { Modal } from '@/components/ui/Modal';
-import { BulletinPostForm } from '@/components/BulletinPostForm';
 import { Card, CardContent } from '@/components/ui/card';
 
-
 export default function SilerCityPage() {
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [events, setEvents] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -18,17 +14,54 @@ export default function SilerCityPage() {
   useEffect(() => {
     async function fetchData() {
       try {
+        // 1. Fetch Siler City town ID
+        const { data: town, error: townError } = await supabase
+          .from('towns')
+          .select('id')
+          .eq('slug', 'siler-city')
+          .single();
+  
+        if (townError || !town) {
+          console.error("❌ Could not fetch Siler City ID:", townError);
+          throw new Error('Siler City not found');
+        }
+  
+        console.log("✅ Siler City ID:", town.id);
+  
+        // 2. Set date range
         const now = new Date().toISOString();
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
         const weekLater = nextWeek.toISOString();
-
+  
+        // 3. Fetch data from Supabase using town ID
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
-          supabase.from('events').select('*').gte('start_time', now).lte('start_time', weekLater).order('start_time'),
-          supabase.from('bulletin_board_posts').select('*').order('start_date'),
-          supabase.from('businesses').select('*').order('name'),
+          supabase
+            .from('events')
+            .select('*')
+            .eq('town_id', town.id)
+            .gte('start_time', now)
+            .lte('start_time', weekLater)
+            .order('start_time'),
+  
+          supabase
+            .from('bulletin_board_posts')
+            .select('*')
+            .eq('town_id', town.id),
+  
+          supabase
+            .from('businesses')
+            .select('*')
+            .eq('town_id', town.id)
+            .order('name'),
         ]);
-
+  
+        // 4. Log all results
+        console.log("📆 Events Response:", eventsRes);
+        console.log("📋 Posts Response:", postsRes);
+        console.log("🏪 Businesses Response:", businessesRes);
+  
+        // 5. Check for any query errors
         if (eventsRes.error || postsRes.error || businessesRes.error) {
           throw new Error(
             eventsRes.error?.message ||
@@ -37,12 +70,14 @@ export default function SilerCityPage() {
             'Unknown error'
           );
         }
-
+  
+        // 6. Extend events if less than 5
         let eventsData = eventsRes.data;
         if (eventsData.length < 5) {
           const extended = await supabase
             .from('events')
             .select('*')
+            .eq('town_id', town.id)
             .gt('start_time', weekLater)
             .order('start_time')
             .limit(5 - eventsData.length);
@@ -50,17 +85,19 @@ export default function SilerCityPage() {
             eventsData = [...eventsData, ...extended.data];
           }
         }
-
+  
+        // 7. Update state
         setEvents(eventsData);
         setPosts(postsRes.data);
         setBusinesses(businessesRes.data);
       } catch (err: any) {
+        console.error("❌ fetchData error:", err.message);
         setError(err.message);
       }
     }
-
+  
     fetchData();
-  }, []);
+  }, []);  
 
   function truncate(text: string, maxLength = 120): string {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
@@ -69,7 +106,19 @@ export default function SilerCityPage() {
   return (
     <main className="min-h-screen px-4 py-10 font-sans max-w-4xl mx-auto space-y-12">
       <h1 className="text-3xl font-bold mb-2">Siler City</h1>
-      <p className="text-gray-600">Explore what’s happening this week.</p>
+      <p className="text-gray-600">
+        Explore what’s happening in Siler City.{' '}
+        <strong>
+          <a
+            href="https://tally.so/r/wzAZlR"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 underline"
+          >
+            Submit a post.
+          </a>
+        </strong>
+      </p>
 
       {error && <p className="text-red-500">❌ {error}</p>}
 
@@ -87,14 +136,6 @@ export default function SilerCityPage() {
       </section>
 
       <section>
-        <div className="flex justify-between items-center mb-2">
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700 text-sm"
-          >
-            Add a Post
-          </button>
-        </div>
         <h2 className="text-2xl font-semibold mb-4">Bulletin Board</h2>
         <div className="space-y-4">
           {posts.map(post => (
@@ -115,37 +156,51 @@ export default function SilerCityPage() {
                 >
                   {post.cta_type === 'visit_website' ? 'Visit Website' :
                     post.cta_type === 'email_us' ? 'Email Us' :
-                      'Learn More'}
+                    'Learn More'}
                 </a>
               )}
             </div>
           ))}
         </div>
-        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add a Post">
-          <BulletinPostForm location="Siler City" />
-        </Modal>
       </section>
 
       <section>
-      <h2 className="text-2xl font-semibold mb-4">Local Businesses</h2>
-  <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-    {businesses.map(biz => (
-      <Card key={biz.id}>
-        <CardContent className="space-y-2">
-          <h3 className="text-lg font-bold">{biz.name}</h3>
-          <p className="text-sm text-gray-700">{biz.address}</p>
-          <p className="text-sm text-gray-600">{biz.hours}</p>
-          <p className="text-gray-800 text-sm">{truncate(biz.description || '')}</p>
-        </CardContent>
-      </Card>
-    ))}
-  </div>
-  <div className="mt-4">
-    <Link href="/businesses" className="text-blue-600 underline">
-      View full business directory →
-    </Link>
-  </div>
+        <h2 className="text-2xl font-semibold mb-4">Local Businesses</h2>
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+          {businesses.map(biz => (
+            <Card key={biz.id}>
+              <CardContent className="space-y-2">
+                <h3 className="text-lg font-bold">{biz.name}</h3>
+                <p className="text-sm text-gray-700">{biz.address}</p>
+                <p className="text-sm text-gray-600">{biz.hours}</p>
+                <p className="text-gray-800 text-sm">{truncate(biz.description || '')}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="mt-4">
+          <Link href="/businesses" className="text-blue-600 underline">
+            View full business directory →
+          </Link>
+        </div>
       </section>
+
+      {/* BOTTOM SUBMIT BUTTON */}
+      <section className="bg-blue-50 py-12 px-6 rounded-xl mt-16 text-center">
+  <h2 className="text-2xl font-bold text-gray-800 mb-4">Have something to share with Siler City?</h2>
+  <p className="text-gray-700 mb-6">Events, job openings, news, local stories — we want to hear from you.</p>
+  <button
+    data-tally-open="wzAZlR"
+    data-tally-layout="modal"
+    data-tally-width="700"
+    data-tally-emoji-text="📝 Submit a Post"
+    data-tally-emoji-animation="bounce"
+    className="bg-blue-600 text-white text-lg font-semibold px-6 py-3 rounded hover:bg-blue-700 transition"
+  >
+    📝 Submit a Post
+  </button>
+</section>
+
     </main>
   );
 }

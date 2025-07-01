@@ -21,7 +21,8 @@ export default function HomePage() {
       const { data, error } = await supabase
         .from('towns')
         .select('*')
-        .neq('status', 'hidden');
+        .neq('status', 'hidden')
+        .order('status', { ascending: true });
       if (error) {
         setError(error.message);
       } else {

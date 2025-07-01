@@ -208,7 +208,7 @@ export default function SilerCityPage() {
 
                   {tagNames.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
-                      {tagNames.map(name => (
+                {tagNames.map((name: string) => (
                         <span
                           key={name}
                           className="text-xs font-medium bg-[#F0F0EB] text-[#2B2B2B] px-2 py-0.5 rounded-full shadow-sm"

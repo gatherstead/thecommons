@@ -130,38 +130,21 @@ export default function SilerCityPage() {
 
       {/* Bulletin Board */}
       <section>
-        <h2 className="text-2xl font-display font-bold text-foreground mb-6">Bulletin Board</h2>
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-          {posts.map(post => (
-            <Card key={post.id}>
-              <CardContent className="space-y-2">
-                <h3 className="text-lg font-semibold text-primary">{post.title}</h3>
-                {post.org_name && <p className="text-sm text-muted">{post.org_name}</p>}
-                <p className="text-sm text-foreground">{truncate(post.details || '')}</p>
-                <p className="text-sm text-subtle">
-                  {post.cost || 'Free'}
-                  {post.start_date ? ` • ${formatDate(post.start_date)}` : ''}
-                </p>
-                {post.cta_type && post.cta_destination && (
-                  <a
-                    href={post.cta_destination}
-                    className="inline-block text-sm text-accent underline mt-1"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {post.cta_type === 'visit_website'
-                      ? 'Visit Website'
-                      : post.cta_type === 'email_us'
-                        ? 'Email Us'
-                        : 'Learn More'}
-                  </a>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
-
+  <h2 className="text-2xl font-display font-bold text-foreground mb-6">Bulletin Board</h2>
+  <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+    {posts.map(post => (
+      <Card key={post.id}>
+        <CardContent className="space-y-2">
+          <h3 className="text-lg font-semibold text-primary">{post.title}</h3>
+          {post.submitter_name && (
+            <p className="text-sm text-muted">{post.submitter_name}</p>
+          )}
+          <p className="text-sm text-foreground">{truncate(post.content ?? '')}</p>
+        </CardContent>
+      </Card>
+    ))}
+  </div>
+</section>
       {/* Business Directory */}
       <section>
         <h2 className="text-2xl font-display font-bold text-foreground mb-6">Local Businesses</h2>

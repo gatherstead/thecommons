@@ -93,8 +93,10 @@ export default function HomePage() {
         <p className="text-base font-body mb-6 max-w-xl mx-auto">
           Get weekly highlights from your region—events, town launches, and new businesses. Just the good stuff.
         </p>
-        <button
-  onClick={showMailerLitePopup}
+        const showMailerLite = useMailerLite();
+
+<button
+  onClick={() => showMailerLite('9UJ5al')}
   className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
 >
   📬 Join the mailing list

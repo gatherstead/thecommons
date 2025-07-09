@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
+import { showMailerLitePopup } from '@/lib/useMailerLite';
 declare global {
   interface Window {
     ml: any;
@@ -93,11 +94,11 @@ export default function HomePage() {
           Get weekly highlights from your region—events, town launches, and new businesses. Just the good stuff.
         </p>
         <button
-          onClick={() => window.ml && window.ml('show', '9UJ5al', true)}
-          className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
-        >
-          📬 Join the mailing list
-        </button>
+  onClick={showMailerLitePopup}
+  className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
+>
+  📬 Join the mailing list
+</button>
         <div className="flex flex-col sm:flex-row sm:justify-center gap-4 mt-6 text-sm">
           <a
             href="https://www.instagram.com/thecommonshawriverregion"

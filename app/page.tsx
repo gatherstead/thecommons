@@ -4,6 +4,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
+declare global {
+  interface Window {
+    ml: any;
+  }
+}
 
 export default function HomePage() {
   const [towns, setTowns] = useState<any[]>([]);

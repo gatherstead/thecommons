@@ -1,10 +1,10 @@
-// HomePage.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
-import { showMailerLitePopup } from '@/lib/useMailerLite';
+import { useMailerLite } from '@/lib/useMailerLite';
+
 declare global {
   interface Window {
     ml: any;
@@ -14,6 +14,7 @@ declare global {
 export default function HomePage() {
   const [towns, setTowns] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const showMailerLite = useMailerLite();
 
   useEffect(() => {
     async function fetchTowns() {
@@ -49,16 +50,14 @@ export default function HomePage() {
       </header>
 
       <section className="space-y-6">
-  <h2 className="text-2xl font-display font-bold text-primary">About Us</h2>
-
-  <p className="text-base font-body max-w-prose">
-   Find your next excuse to stay local: events, businesses, and community. This is your town's Digital Commons, conveniently pushed to wherever you spend time online - Instagram, Facebook, and email, just to start. Explore the region and support your neighbors!
-  </p>
-
-  <p className="text-base italic text-subtle font-body max-w-prose">
-   <b> No algorithms. No clickbait. Just good old-fashioned internet, like your momma used to make.</b>
-  </p>
-</section>
+        <h2 className="text-2xl font-display font-bold text-primary">About Us</h2>
+        <p className="text-base font-body max-w-prose">
+          Find your next excuse to stay local: events, businesses, and community. This is your town's Digital Commons, conveniently pushed to wherever you spend time online — Instagram, Facebook, and email, just to start. Explore the region and support your neighbors!
+        </p>
+        <p className="text-base italic text-subtle font-body max-w-prose">
+          <b>No algorithms. No clickbait. Just good old-fashioned internet, like your momma used to make.</b>
+        </p>
+      </section>
 
       <section className="space-y-6">
         <h2 className="text-2xl font-display font-bold text-primary">🏘️ Explore the Region</h2>
@@ -93,14 +92,12 @@ export default function HomePage() {
         <p className="text-base font-body mb-6 max-w-xl mx-auto">
           Get weekly highlights from your region—events, town launches, and new businesses. Just the good stuff.
         </p>
-        const showMailerLite = useMailerLite();
-
-<button
-  onClick={() => showMailerLite('9UJ5al')}
-  className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
->
-  📬 Join the mailing list
-</button>
+        <button
+          onClick={() => showMailerLite('9UJ5al')}
+          className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
+        >
+          📬 Join the mailing list
+        </button>
         <div className="flex flex-col sm:flex-row sm:justify-center gap-4 mt-6 text-sm">
           <a
             href="https://www.instagram.com/thecommonshawriverregion"

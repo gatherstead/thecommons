@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
 
-// Import custom brand fonts from Google Fonts via next/font
+// Fonts
 import { Fraunces, Public_Sans, Inter, IBM_Plex_Sans } from "next/font/google";
 
 const fraunces = Fraunces({
@@ -40,30 +40,21 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
       className={`${fraunces.variable} ${publicSans.variable} ${inter.variable} ${ibmPlexSans.variable}`}
     >
-      <Script
-  id="mailerlite"
-  strategy="beforeInteractive"
-  dangerouslySetInnerHTML={{
-    __html: `(function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[]).push(arguments);},l=d.createElement(e),l.async=1,l.src=u,n=d.getElementsByTagName(e)[0],n.parentNode.insertBefore(l,n);})(window,document,'script','https://assets.mailerlite.com/js/universal.js','ml');ml('account', '1653125');`,
-  }}
-/>
-
       <body className="antialiased bg-background text-text font-body">
-        {children}
-
+        {/* ✅ MailerLite Embed Script */}
         <Script
-          src="https://tally.so/widgets/embed.js"
-          strategy="lazyOnload"
-          async
+          id="mailerlite-embed"
+          src="https://static.mailerlite.com/js/universal.js"
+          strategy="afterInteractive"
         />
+
+        {children}
       </body>
     </html>
   );

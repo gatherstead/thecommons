@@ -3,18 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../lib/supabaseClient';
-import { useMailerLite } from '@/lib/useMailerLite';
-
-declare global {
-  interface Window {
-    ml: any;
-  }
-}
 
 export default function HomePage() {
   const [towns, setTowns] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const showMailerLite = useMailerLite();
 
   useEffect(() => {
     async function fetchTowns() {
@@ -28,12 +20,6 @@ export default function HomePage() {
     }
 
     fetchTowns();
-
-    const script = document.createElement('script');
-    script.src = 'https://static.mailerlite.com/js/universal.js';
-    script.async = true;
-    script.type = 'text/javascript';
-    document.body.appendChild(script);
   }, []);
 
   function truncate(text: string, maxLength = 120): string {
@@ -92,12 +78,16 @@ export default function HomePage() {
         <p className="text-base font-body mb-6 max-w-xl mx-auto">
           Get weekly highlights from your region—events, town launches, and new businesses. Just the good stuff.
         </p>
-        <button
-          onClick={() => showMailerLite('9UJ5al')}
-          className="bg-accent text-white text-lg font-semibold px-6 py-3 rounded hover:bg-accent/90 transition"
-        >
-          📬 Join the mailing list
-        </button>
+
+        {/* ✅ MailerLite Embedded Form */}
+        <div className="text-center">
+          <div
+            className="ml-embedded"
+            data-form="9UJ5al"
+            style={{ display: 'inline-block', width: '100%' }}
+          ></div>
+        </div>
+
         <div className="flex flex-col sm:flex-row sm:justify-center gap-4 mt-6 text-sm">
           <a
             href="https://www.instagram.com/thecommonshawriverregion"

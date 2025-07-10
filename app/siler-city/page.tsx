@@ -114,13 +114,18 @@ export default function SilerCityPage() {
 
       {/* Events */}
       <section>
-        <h2 className="text-2xl font-display font-bold text-foreground mb-6">Upcoming Events</h2>
+        <h2 className="text-2xl font-display font-bold text-primary flex items-center gap-2 mb-6">
+          📅 Upcoming Events
+        </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
           {events.map(event => (
-            <Card key={event.id}>
-              <CardContent className="space-y-2">
+            <Card
+              key={event.id}
+              className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl"
+            >
+              <CardContent className="space-y-2 min-h-[10rem]">
                 <h3 className="text-lg font-semibold text-primary">{event.title}</h3>
-                <p className="text-sm text-muted">{formatDate(event.start_time)}</p>
+                <p className="text-sm text-muted italic">{formatDate(event.start_time)}</p>
                 <p className="text-sm text-foreground">{truncate(event.description || '')}</p>
               </CardContent>
             </Card>
@@ -130,24 +135,32 @@ export default function SilerCityPage() {
 
       {/* Bulletin Board */}
       <section>
-  <h2 className="text-2xl font-display font-bold text-foreground mb-6">Bulletin Board</h2>
-  <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-    {posts.map(post => (
-      <Card key={post.id}>
-        <CardContent className="space-y-2">
-          <h3 className="text-lg font-semibold text-primary">{post.title}</h3>
-          {post.submitter_name && (
-            <p className="text-sm text-muted">{post.submitter_name}</p>
-          )}
-          <p className="text-sm text-foreground">{truncate(post.content ?? '')}</p>
-        </CardContent>
-      </Card>
-    ))}
-  </div>
-</section>
+        <h2 className="text-2xl font-display font-bold text-primary flex items-center gap-2 mb-6">
+          📌 Bulletin Board
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+          {posts.map(post => (
+            <Card
+              key={post.id}
+              className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl"
+            >
+              <CardContent className="space-y-2 min-h-[10rem]">
+                <h3 className="text-lg font-semibold text-primary">{post.title}</h3>
+                {post.submitter_name && (
+                  <p className="text-sm text-muted italic">{post.submitter_name}</p>
+                )}
+                <p className="text-sm text-foreground">{truncate(post.content ?? '')}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
+
       {/* Business Directory */}
       <section>
-        <h2 className="text-2xl font-display font-bold text-foreground mb-6">Local Businesses</h2>
+        <h2 className="text-2xl font-display font-bold text-primary flex items-center gap-2 mb-6">
+          🏪 Local Businesses
+        </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
           {businesses.map(biz => {
             const tagNames = (biz.tag_slugs || [])
@@ -155,14 +168,16 @@ export default function SilerCityPage() {
               .filter(Boolean);
 
             return (
-              <Card key={biz.id}>
-                <CardContent className="space-y-2">
+              <Card
+                key={biz.id}
+                className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl"
+              >
+                <CardContent className="space-y-2 min-h-[10rem]">
                   <h3 className="text-lg font-semibold text-primary">{biz.name}</h3>
 
                   {biz.description && (
                     <p className="text-sm text-foreground min-h-[3.5rem]">{truncate(biz.description)}</p>
                   )}
-
 
                   {(biz.website_url || biz.instagram_url) && (
                     <div className="text-sm text-accent flex gap-4 mt-1">
@@ -191,10 +206,10 @@ export default function SilerCityPage() {
 
                   {tagNames.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
-                {tagNames.map((name: string) => (
+                      {tagNames.map((name: string) => (
                         <span
                           key={name}
-                          className="text-xs font-medium bg-[#F0F0EB] text-[#2B2B2B] px-2 py-0.5 rounded-full shadow-sm"
+                          className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm"
                         >
                           {name}
                         </span>
@@ -214,7 +229,7 @@ export default function SilerCityPage() {
       </section>
 
       {/* Bottom CTA */}
-      <section className="bg-[#7F9E5D]/10 py-12 px-6 rounded-2xl mt-16 text-center shadow-md border border-[#355E4C]/30">
+      <section className="bg-accent2/10 py-12 px-6 rounded-2xl mt-16 text-center shadow-md border border-primary/30">
         <h2 className="text-2xl font-heading text-primary mb-4">
           Have something to share with Siler City?
         </h2>
@@ -230,6 +245,10 @@ export default function SilerCityPage() {
           📝 Submit a Post
         </button>
       </section>
+
+      <footer className="border-t pt-6 mt-16 text-sm text-subtle text-center">
+        © 2025 The Commons · Built by Common Engine Studio
+      </footer>
     </main>
   );
 }

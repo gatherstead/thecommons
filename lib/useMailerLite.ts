@@ -1,24 +1,22 @@
-import { useEffect } from 'react';
+// lib/useMailerLite.ts
+
+import { useEffect, useState } from 'react';
+
+declare global {
+  interface Window {
+    ml?: (...args: any[]) => void;
+  }
+}
 
 export function useMailerLite() {
-  useEffect(() => {
-    const scriptId = 'ml-universal';
-    if (document.getElementById(scriptId)) return;
+  const [loaded, setLoaded] = useState(false);
 
-    const script = document.createElement('script');
-    script.id = scriptId;
-    script.src = 'https://static.mailerlite.com/js/universal.js';
-    script.async = true;
-    script.type = 'text/javascript';
-    document.body.appendChild(script);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.ml === 'function') {
+      setLoaded(true);
+    }
   }, []);
 
-  return function showMailerLite(formId?: string) {
-    if (typeof window !== 'undefined' && window.ml) {
-      window.ml('show', formId || '9UJ5al', true);
-    } else {
-      console.warn('MailerLite script not loaded yet.');
-    }
-  };
+  return loaded;
 }
   

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Script from 'next/script';
 import { supabase } from '../lib/supabaseClient';
 
 export default function HomePage() {
@@ -28,6 +29,14 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
+      <Script id="mailerlite-universal" strategy="afterInteractive">
+        {`(function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[])
+          .push(arguments);},l=d.createElement(e),l.async=1,l.src=u,
+          n=d.getElementsByTagName(e)[0],n.parentNode.insertBefore(l,n);})
+          (window,document,'script','https://assets.mailerlite.com/js/universal.js','ml');
+          ml('account', '1653125');`}
+      </Script>
+
       <header className="text-center space-y-4">
         <h1 className="text-4xl font-display font-extrabold text-primary">The Commons</h1>
         <p className="text-lg text-subtle font-body max-w-prose mx-auto">
@@ -79,11 +88,10 @@ export default function HomePage() {
           Get weekly highlights from your region—events, town launches, and new businesses. Just the good stuff.
         </p>
 
-        {/* ✅ MailerLite Embedded Form */}
         <div className="text-center">
           <div
             className="ml-embedded"
-            data-form="9UJ5al"
+            data-form="swzqjY"
             style={{ display: 'inline-block', width: '100%' }}
           ></div>
         </div>

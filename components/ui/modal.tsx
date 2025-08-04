@@ -42,7 +42,9 @@ export function Modal({ isOpen, onClose, children, title }: ModalProps) {
                   {title}
                 </Dialog.Title>
               )}
-              {children}
+              <div className="space-y-4 text-sm text-foreground">
+                {children}
+              </div>
             </Dialog.Panel>
           </Transition.Child>
         </div>

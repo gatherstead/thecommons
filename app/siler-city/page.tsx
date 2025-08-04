@@ -41,8 +41,6 @@ export default function SilerCityPage() {
             .from('events')
             .select('*')
             .eq('town_id', town.id)
-            .gte('start_time', now)
-            .lte('start_time', weekLater)
             .order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', town.id),
           supabase.from('businesses_with_tags').select('*').eq('town_id', town.id).order('name'),
@@ -57,19 +55,7 @@ export default function SilerCityPage() {
           );
         }
 
-        let eventsData = eventsRes.data;
-        if (eventsData.length < 5) {
-          const extended = await supabase
-            .from('events')
-            .select('*')
-            .eq('town_id', town.id)
-            .gt('start_time', weekLater)
-            .order('start_time')
-            .limit(5 - eventsData.length);
-          if (!extended.error) eventsData = [...eventsData, ...extended.data];
-        }
-
-        setEvents(eventsData);
+        setEvents(eventsRes.data);
         setPosts(postsRes.data);
         setBusinesses(businessesRes.data);
       } catch (err: any) {
@@ -107,7 +93,7 @@ export default function SilerCityPage() {
       {/* Events */}
       <section>
         <h2 className="text-2xl font-display font-bold text-primary flex items-center gap-2 mb-6">
-          📅 Upcoming Events
+          🗕️ Upcoming Events
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
           {events.map(event => (

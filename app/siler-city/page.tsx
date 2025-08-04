@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
+import { EventCard } from '@/components/ui/eventcard';
 
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
@@ -11,7 +12,6 @@ const TAG_NAME_LOOKUP: Record<string, string> = {
   'merchants-association': 'Merchants Association',
   'spanish-speaking': 'Spanish Speaking',
   'accessible': 'Accessible',
-  // Add more as needed
 };
 
 export default function SilerCityPage() {
@@ -51,9 +51,9 @@ export default function SilerCityPage() {
         if (eventsRes.error || postsRes.error || businessesRes.error) {
           throw new Error(
             eventsRes.error?.message ||
-            postsRes.error?.message ||
-            businessesRes.error?.message ||
-            'Unknown error'
+              postsRes.error?.message ||
+              businessesRes.error?.message ||
+              'Unknown error'
           );
         }
 
@@ -84,14 +84,6 @@ export default function SilerCityPage() {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
   }
 
-  function formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    return `${date.toLocaleDateString('en-US')} ${date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}`;
-  }
-
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
       <header className="space-y-4">
@@ -119,16 +111,7 @@ export default function SilerCityPage() {
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
           {events.map(event => (
-            <Card
-              key={event.id}
-              className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl"
-            >
-              <CardContent className="space-y-2 min-h-[10rem]">
-                <h3 className="text-lg font-semibold text-primary">{event.title}</h3>
-                <p className="text-sm text-muted italic">{formatDate(event.start_time)}</p>
-                <p className="text-sm text-foreground">{truncate(event.description || '')}</p>
-              </CardContent>
-            </Card>
+            <EventCard key={event.id} event={event} />
           ))}
         </div>
       </section>
@@ -176,7 +159,9 @@ export default function SilerCityPage() {
                   <h3 className="text-lg font-semibold text-primary">{biz.name}</h3>
 
                   {biz.description && (
-                    <p className="text-sm text-foreground min-h-[3.5rem]">{truncate(biz.description)}</p>
+                    <p className="text-sm text-foreground min-h-[3.5rem]">
+                      {truncate(biz.description)}
+                    </p>
                   )}
 
                   {(biz.website_url || biz.instagram_url) && (

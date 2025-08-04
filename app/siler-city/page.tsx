@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
 import { EventCard } from '@/components/ui/eventcard';
+import { Modal } from '@/components/ui/modal';
 
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
@@ -19,6 +20,7 @@ export default function SilerCityPage() {
   const [posts, setPosts] = useState<any[]>([]);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -93,13 +95,38 @@ export default function SilerCityPage() {
       {/* Events */}
       <section>
         <h2 className="text-2xl font-display font-bold text-primary flex items-center gap-2 mb-6">
-          🗕️ Upcoming Events
+          📅 Upcoming Events
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
           {events.map(event => (
-            <EventCard key={event.id} event={event} />
+            <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
           ))}
         </div>
+        {selectedEvent && (
+          <Modal
+            isOpen={!!selectedEvent}
+            onClose={() => setSelectedEvent(null)}
+            title={selectedEvent.title}
+          >
+            <div className="space-y-4 text-sm text-foreground">
+              <p className="italic text-muted">
+                {new Date(selectedEvent.start_time).toLocaleString()}
+              </p>
+              {selectedEvent.facebook_post && <p>{selectedEvent.facebook_post}</p>}
+              {selectedEvent.description && <p>{selectedEvent.description}</p>}
+              {selectedEvent.cta_url && (
+                <a
+                  href={selectedEvent.cta_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline block"
+                >
+                  Learn more →
+                </a>
+              )}
+            </div>
+          </Modal>
+        )}
       </section>
 
       {/* Bulletin Board */}

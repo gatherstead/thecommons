@@ -112,18 +112,21 @@ export default function SilerCityPage() {
               <p className="italic text-muted">
                 {new Date(selectedEvent.start_time).toLocaleString()}
               </p>
-              {selectedEvent.facebook_post && <p>{selectedEvent.facebook_post}</p>}
-              {selectedEvent.description && <p>{selectedEvent.description}</p>}
-              {selectedEvent.cta_url && (
-                <a
-                  href={selectedEvent.cta_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent underline block"
-                >
-                  Learn more →
-                </a>
-              )}
+              {(selectedEvent.facebook_post || selectedEvent.description) && (
+  <p>{selectedEvent.facebook_post || selectedEvent.description}</p>
+)}
+
+{selectedEvent.cta_url && (
+  <a
+    href={selectedEvent.cta_url}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="text-accent underline block"
+  >
+    Learn more →
+  </a>
+)}
+
             </div>
           </Modal>
         )}

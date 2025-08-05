@@ -1,27 +1,25 @@
 'use client';
 
 import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 
-export function EventCard({
-  event,
-  onClick,
-}: {
+type EventCardProps = {
   event: any;
+  variant?: 'compact' | 'expanded';
   onClick?: () => void;
-}) {
+};
+
+export function EventCard({ event, variant = 'compact', onClick }: EventCardProps) {
   const date = new Date(event.start_time);
   const isWeekend = [0, 6].includes(date.getDay());
-
-  function truncate(text: string, maxLength = 120): string {
-    return text?.length > maxLength ? text.slice(0, maxLength) + '…' : text;
-  }
+  const isCompact = variant === 'compact';
 
   function formatDayAndDate(d: Date): string {
-    return `${d.toLocaleDateString('en-US', {
+    return d.toLocaleDateString('en-US', {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
-    })}`;
+    });
   }
 
   function formatTime(d: Date): string {
@@ -30,6 +28,8 @@ export function EventCard({
       minute: '2-digit',
     });
   }
+
+  const summary = event.facebook_post || event.description;
 
   const tagPills = (event.tags || []).map((tag: string) => (
     <span
@@ -41,8 +41,13 @@ export function EventCard({
   ));
 
   return (
-    <div onClick={onClick} className="cursor-pointer">
-      <Card className="hover:shadow-lg transition-all h-full flex flex-col">
+    <div onClick={isCompact ? onClick : undefined} className={cn(isCompact && 'cursor-pointer')}>
+      <Card
+        className={cn(
+          'transition-all h-full flex flex-col',
+          isCompact && 'hover:shadow-lg'
+        )}
+      >
         <CardContent className="space-y-3 p-4 flex flex-col h-full">
           <div className="flex justify-between items-start">
             <span className="text-sm font-semibold text-accent uppercase">
@@ -61,26 +66,24 @@ export function EventCard({
 
           <div className="text-sm text-muted space-y-1">
             <p>
-              <strong className="text-foreground">🕒</strong>{' '}
-              {formatTime(date)}
+              <strong className="text-foreground">🕒</strong> {formatTime(date)}
             </p>
             {event.location && (
               <p>
-                <strong className="text-foreground">📍</strong>{' '}
-                {event.location}
+                <strong className="text-foreground">📍</strong> {event.location}
               </p>
             )}
           </div>
 
-          {event.facebook_post && (
-            <p className="text-sm text-foreground">{truncate(event.facebook_post)}</p>
+          {tagPills.length > 0 && <div className="flex flex-wrap gap-1">{tagPills}</div>}
+
+          {summary && (
+            <p className={cn('text-sm text-foreground', isCompact && 'line-clamp-2')}>
+              {summary}
+            </p>
           )}
 
-          {tagPills.length > 0 && (
-            <div className="flex flex-wrap gap-1">{tagPills}</div>
-          )}
-
-          {event.image_url && (
+          {!isCompact && event.image_url && (
             <img
               src={event.image_url}
               alt={event.title}

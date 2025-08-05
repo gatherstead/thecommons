@@ -1,14 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../../../lib/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
 
 type BulletinPost = {
   id: number;
   title: string | null;
-  org_name: string | null;
-  details: string | null;
+  submitter_name: string | null;
+  content: string | null;
+  category: string | null;
+  cta_url: string | null;
 };
 
 export default function BulletinBoardPage() {
@@ -18,8 +20,9 @@ export default function BulletinBoardPage() {
     async function fetchPosts() {
       const { data } = await supabase
         .from('bulletin_board_posts')
-        .select('id, title, org_name, details')
-        .eq('town_id', '5e02b672-7264-4069-8869-106c9f5fcd35');
+        .select('id, title, submitter_name, content, category, cta_url')
+        .eq('town_id', '5e02b672-7264-4069-8869-106c9f5fcd35')
+        .order('created_at', { ascending: false });
 
       if (data) setPosts(data);
     }
@@ -33,10 +36,25 @@ export default function BulletinBoardPage() {
       <div className="grid gap-6">
         {posts.map((post) => (
           <Card key={post.id}>
-            <CardContent>
-              <h2 className="text-xl font-semibold">{post.title}</h2>
-              {post.org_name && <p className="text-sm text-gray-600">by {post.org_name}</p>}
-              {post.details && <p className="mt-2">{post.details}</p>}
+            <CardContent className="space-y-2">
+              <h2 className="text-xl font-semibold text-primary">{post.title}</h2>
+              {post.category && (
+                <p className="text-xs uppercase text-subtle font-semibold">{post.category}</p>
+              )}
+              {post.submitter_name && (
+                <p className="text-sm text-muted italic">by {post.submitter_name}</p>
+              )}
+              {post.content && <p className="text-sm text-foreground">{post.content}</p>}
+              {post.cta_url && (
+                <a
+                  href={post.cta_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline block text-sm"
+                >
+                  Learn more →
+                </a>
+              )}
             </CardContent>
           </Card>
         ))}

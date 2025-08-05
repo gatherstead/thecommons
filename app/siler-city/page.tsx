@@ -33,17 +33,8 @@ export default function SilerCityPage() {
 
         if (townError || !town) throw new Error('Siler City not found');
 
-        const now = new Date().toISOString();
-        const nextWeek = new Date();
-        nextWeek.setDate(nextWeek.getDate() + 7);
-        const weekLater = nextWeek.toISOString();
-
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
-          supabase
-            .from('events')
-            .select('*')
-            .eq('town_id', town.id)
-            .order('start_time'),
+          supabase.from('events').select('*').eq('town_id', town.id).order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', town.id),
           supabase.from('businesses_with_tags').select('*').eq('town_id', town.id).order('name'),
         ]);
@@ -98,9 +89,14 @@ export default function SilerCityPage() {
           📅 Upcoming Events
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-          {events.map(event => (
+          {events.map((event) => (
             <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
           ))}
+        </div>
+        <div className="mt-6 text-center">
+          <Link href="/siler-city/events" className="text-accent underline text-sm font-medium">
+            View full events calendar →
+          </Link>
         </div>
         {selectedEvent && (
           <Modal
@@ -113,20 +109,18 @@ export default function SilerCityPage() {
                 {new Date(selectedEvent.start_time).toLocaleString()}
               </p>
               {(selectedEvent.facebook_post || selectedEvent.description) && (
-  <p>{selectedEvent.facebook_post || selectedEvent.description}</p>
-)}
-
-{selectedEvent.cta_url && (
-  <a
-    href={selectedEvent.cta_url}
-    target="_blank"
-    rel="noopener noreferrer"
-    className="text-accent underline block"
-  >
-    Learn more →
-  </a>
-)}
-
+                <p>{selectedEvent.facebook_post || selectedEvent.description}</p>
+              )}
+              {selectedEvent.cta_url && (
+                <a
+                  href={selectedEvent.cta_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline block"
+                >
+                  Learn more →
+                </a>
+              )}
             </div>
           </Modal>
         )}
@@ -138,7 +132,7 @@ export default function SilerCityPage() {
           📌 Bulletin Board
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-          {posts.map(post => (
+          {posts.map((post) => (
             <Card
               key={post.id}
               className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl"
@@ -153,6 +147,14 @@ export default function SilerCityPage() {
             </Card>
           ))}
         </div>
+        <div className="mt-6 text-center">
+          <Link
+            href="/siler-city/bulletin-board"
+            className="text-accent underline text-sm font-medium"
+          >
+            View full bulletin board →
+          </Link>
+        </div>
       </section>
 
       {/* Business Directory */}
@@ -161,7 +163,7 @@ export default function SilerCityPage() {
           🏪 Local Businesses
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-          {businesses.map(biz => {
+          {businesses.map((biz) => {
             const tagNames = (biz.tag_slugs || [])
               .map((slug: string) => TAG_NAME_LOOKUP[slug])
               .filter(Boolean);
@@ -173,13 +175,11 @@ export default function SilerCityPage() {
               >
                 <CardContent className="space-y-2 min-h-[10rem]">
                   <h3 className="text-lg font-semibold text-primary">{biz.name}</h3>
-
                   {biz.description && (
                     <p className="text-sm text-foreground min-h-[3.5rem]">
                       {truncate(biz.description)}
                     </p>
                   )}
-
                   {(biz.website_url || biz.instagram_url) && (
                     <div className="text-sm text-accent flex gap-4 mt-1">
                       {biz.website_url && (
@@ -204,7 +204,6 @@ export default function SilerCityPage() {
                       )}
                     </div>
                   )}
-
                   {tagNames.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {tagNames.map((name: string) => (

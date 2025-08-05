@@ -41,7 +41,13 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
   ));
 
   return (
-    <div onClick={isCompact ? onClick : undefined} className={cn(isCompact && 'cursor-pointer')}>
+    <div
+      onClick={isCompact ? onClick : undefined}
+      className={cn(
+        isCompact &&
+          'cursor-pointer group hover:scale-[1.01] active:scale-[0.99] transition'
+      )}
+    >
       <Card
         className={cn(
           'transition-all h-full flex flex-col',
@@ -75,10 +81,12 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
             )}
           </div>
 
-          {tagPills.length > 0 && <div className="flex flex-wrap gap-1">{tagPills}</div>}
+          {tagPills.length > 0 && (
+            <div className="flex flex-wrap gap-1">{tagPills}</div>
+          )}
 
           {summary && (
-            <p className={cn('text-sm text-foreground', isCompact && 'line-clamp-2')}>
+            <p className={cn('text-sm text-foreground whitespace-pre-line', isCompact && 'line-clamp-2')}>
               {summary}
             </p>
           )}
@@ -101,6 +109,12 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
             >
               Learn more →
             </a>
+          )}
+
+          {isCompact && (
+            <p className="text-sm text-accent font-medium mt-auto opacity-0 group-hover:opacity-100 transition">
+              View details →
+            </p>
           )}
         </CardContent>
       </Card>

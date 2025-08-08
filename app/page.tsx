@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import Script from 'next/script';
 import { supabase } from '../lib/supabaseClient';
 
 export default function HomePage() {
@@ -11,6 +10,10 @@ export default function HomePage() {
 
   useEffect(() => {
     async function fetchTowns() {
+      if (!supabase) {
+        setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+        return;
+      }
       const { data, error } = await supabase
         .from('towns')
         .select('*')
@@ -29,13 +32,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
-      <Script id="mailerlite-universal" strategy="afterInteractive">
-        {`(function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[])
-          .push(arguments);},l=d.createElement(e),l.async=1,l.src=u,
-          n=d.getElementsByTagName(e)[0],n.parentNode.insertBefore(l,n);})
-          (window,document,'script','https://assets.mailerlite.com/js/universal.js','ml');
-          ml('account', '1653125');`}
-      </Script>
+      {/* MailerLite script removed from here, now handled globally in app/layout.tsx */}
 
       <header className="text-center space-y-4">
         <h1 className="text-4xl font-display font-extrabold text-primary">The Commons</h1>

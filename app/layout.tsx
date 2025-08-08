@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
+import { Header } from '@/components/layout/header'; // Import the new Header component
 
 // Fonts
-import { Fraunces, Public_Sans, Inter, IBM_Plex_Sans } from "next/font/google";
+import { Fraunces, Public_Sans, Inter, IBM_Plex_Sans } from 'next/font/google';
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -47,7 +48,7 @@ export default function RootLayout({
       className={`${fraunces.variable} ${publicSans.variable} ${inter.variable} ${ibmPlexSans.variable}`}
     >
       <body className="antialiased bg-background text-text font-body">
-        {/* ✅ MailerLite Universal Embed Script */}
+        {/* ✅ MailerLite Universal Embed Script - Placed here once globally */}
         <Script id="mailerlite-universal" strategy="afterInteractive">
           {`(function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[])
           .push(arguments);},l=d.createElement(e),l.async=1,l.src=u,
@@ -56,6 +57,7 @@ export default function RootLayout({
           ml('account', '1653125');`}
         </Script>
 
+        <Header /> {/* Render the Header component */}
         {children}
       </body>
     </html>

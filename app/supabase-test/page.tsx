@@ -8,7 +8,14 @@ export default function SupabaseTestPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const { data, error } = await supabase.from('businesses').select('*');
+      if (!supabase) {
+        setResult('❌ Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+        return;
+      }
+      // Explicitly capture the non-null supabase client for TypeScript
+      const client = supabase;
+
+      const { data, error } = await client.from('businesses').select('*');
       if (error) {
         setResult(`❌ Error: ${error.message}`);
       } else {
@@ -26,5 +33,3 @@ export default function SupabaseTestPage() {
     </main>
   );
 }
-
-

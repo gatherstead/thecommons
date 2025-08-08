@@ -14,7 +14,10 @@ export default function HomePage() {
         setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
         return;
       }
-      const { data, error } = await supabase
+      // Explicitly capture the non-null supabase client for TypeScript
+      const client = supabase;
+
+      const { data, error } = await client
         .from('towns')
         .select('*')
         .neq('status', 'hidden')

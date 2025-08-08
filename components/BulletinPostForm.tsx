@@ -16,13 +16,25 @@ export function BulletinPostForm({ location }: BulletinPostFormProps) {
   const [category, setCategory] = useState('');
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null); // Added error state
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !content) return;
+    setError(null); // Clear previous errors
+    if (!title || !content) {
+      setError('Title and Content are required.');
+      return;
+    }
+
+    if (!supabase) {
+      setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+      return;
+    }
+    // Explicitly capture the non-null supabase client for TypeScript
+    const client = supabase;
 
     setSubmitting(true);
-    const { error } = await supabase.from('bulletin_board_posts').insert([
+    const { error: submitError } = await client.from('bulletin_board_posts').insert([
       {
         title,
         content,
@@ -34,7 +46,7 @@ export function BulletinPostForm({ location }: BulletinPostFormProps) {
     ]);
 
     setSubmitting(false);
-    if (!error) {
+    if (!submitError) {
       setSuccess(true);
       setTitle('');
       setContent('');
@@ -42,7 +54,8 @@ export function BulletinPostForm({ location }: BulletinPostFormProps) {
       setAuthorEmail('');
       setCategory('');
     } else {
-     console.error('Submission error:', JSON.stringify(error, null, 2));
+     console.error('Submission error:', JSON.stringify(submitError, null, 2));
+     setError(`Submission failed: ${submitError.message}`); // Display error to user
     }
   };
 
@@ -52,6 +65,7 @@ export function BulletinPostForm({ location }: BulletinPostFormProps) {
         <h2 className="text-xl font-semibold mb-4">{location} Bulletin Board</h2>
 
         {success && <p className="text-green-600 mb-4">Your post was submitted!</p>}
+        {error && <p className="text-red-500 mb-4">❌ {error}</p>} {/* Display error */}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input

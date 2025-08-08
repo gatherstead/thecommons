@@ -20,8 +20,15 @@ export default function EventsPage() {
 
   useEffect(() => {
     async function fetchEvents() {
+      if (!supabase) {
+        setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+        return;
+      }
+      // Explicitly capture the non-null supabase client for TypeScript
+      const client = supabase;
+
       try {
-        const { data: town, error: townError } = await supabase
+        const { data: town, error: townError } = await client
           .from('towns')
           .select('id')
           .eq('slug', 'siler-city') // Hardcoded now, dynamic later
@@ -29,7 +36,7 @@ export default function EventsPage() {
 
         if (townError || !town) throw new Error('Siler City not found');
 
-        const { data, error } = await supabase
+        const { data, error } = await client
           .from('events')
           .select('*')
           .eq('town_id', town.id)

@@ -29,8 +29,11 @@ export default function SilerCityPage() {
         setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
         return;
       }
+      // Explicitly capture the non-null supabase client for TypeScript
+      const client = supabase;
+
       try {
-        const { data: town, error: townError } = await supabase
+        const { data: town, error: townError } = await client
           .from('towns')
           .select('id')
           .eq('slug', 'siler-city')
@@ -39,9 +42,9 @@ export default function SilerCityPage() {
         if (townError || !town) throw new Error('Siler City not found');
 
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
-          supabase.from('events').select('*').eq('town_id', town.id).order('start_time'),
-          supabase.from('bulletin_board_posts').select('*').eq('town_id', town.id),
-          supabase.from('businesses_with_tags').select('*').eq('town_id', town.id).order('name'),
+          client.from('events').select('*').eq('town_id', town.id).order('start_time'),
+          client.from('bulletin_board_posts').select('*').eq('town_id', town.id),
+          client.from('businesses_with_tags').select('*').eq('town_id', town.id).order('name'),
         ]);
 
         if (eventsRes.error || postsRes.error || businessesRes.error) {

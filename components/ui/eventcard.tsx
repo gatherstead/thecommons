@@ -48,13 +48,14 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
           'cursor-pointer group hover:scale-[1.01] active:scale-[0.99] transition'
       )}
     >
-      <Card
-        className={cn(
-          'transition-all h-full flex flex-col',
-          isCompact && 'hover:shadow-lg'
-        )}
-      >
-        <CardContent className="space-y-3 p-4 flex flex-col h-full">
+     <Card
+  className={cn(
+    'transition-all h-full flex flex-col bg-white', // explicitly white
+    isCompact && 'hover:shadow-lg'
+  )}
+>
+        <CardContent className="flex flex-col h-full p-4 space-y-3">
+          {/* Date & Weekend */}
           <div className="flex justify-between items-start">
             <span className="text-sm font-semibold text-accent uppercase">
               {formatDayAndDate(date)}
@@ -66,10 +67,12 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
             )}
           </div>
 
+          {/* Title */}
           <h3 className="text-lg font-semibold text-primary leading-tight">
             {event.title}
           </h3>
 
+          {/* Time & Location */}
           <div className="text-sm text-muted space-y-1">
             <p>
               <strong className="text-foreground">🕒</strong> {formatTime(date)}
@@ -81,16 +84,24 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
             )}
           </div>
 
+          {/* Tags */}
           {tagPills.length > 0 && (
             <div className="flex flex-wrap gap-1">{tagPills}</div>
           )}
 
+          {/* Description */}
           {summary && (
-            <p className={cn('text-sm text-foreground whitespace-pre-line', isCompact && 'line-clamp-2')}>
+            <p
+              className={cn(
+                'text-sm text-foreground whitespace-pre-line',
+                isCompact ? 'line-clamp-2' : ''
+              )}
+            >
               {summary}
             </p>
           )}
 
+          {/* Optional Image (expanded only) */}
           {!isCompact && event.image_url && (
             <img
               src={event.image_url}
@@ -99,23 +110,29 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
             />
           )}
 
-          {event.cta_url && (
-            <a
-              href={event.cta_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="inline-block text-accent underline text-sm mt-2"
-            >
-              Learn more →
-            </a>
-          )}
+          {/* CTAs */}
+          <div className="mt-auto flex flex-col gap-1">
+            {/* External CTA Link */}
+            {event.cta_url && (
+              <a
+                href={event.cta_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-accent underline text-sm"
+              >
+                🔗 Link
+              </a>
+            )}
 
-          {isCompact && (
-            <p className="text-sm text-accent font-medium mt-auto opacity-0 group-hover:opacity-100 transition">
+            {/* Modal Trigger */}
+            <p
+              className="text-sm text-accent font-medium"
+              onClick={onClick}
+            >
               View details →
             </p>
-          )}
+          </div>
         </CardContent>
       </Card>
     </div>

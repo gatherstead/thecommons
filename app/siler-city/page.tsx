@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
 import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'; // Import Tabs components
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
@@ -26,14 +26,14 @@ export default function SilerCityPage() {
   useEffect(() => {
     async function fetchData() {
       if (!supabase) {
-        setError('Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+        setError(
+          'Supabase client not initialized. Please ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.'
+        );
         return;
       }
-      // Explicitly capture the non-null supabase client for TypeScript
-      const client = supabase;
 
       try {
-        const { data: town, error: townError } = await client
+        const { data: town, error: townError } = await supabase
           .from('towns')
           .select('id')
           .eq('slug', 'siler-city')
@@ -42,9 +42,13 @@ export default function SilerCityPage() {
         if (townError || !town) throw new Error('Siler City not found');
 
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
-          client.from('events').select('*').eq('town_id', town.id).order('start_time'),
-          client.from('bulletin_board_posts').select('*').eq('town_id', town.id),
-          client.from('businesses_with_tags').select('*').eq('town_id', town.id).order('name'),
+          supabase.from('events').select('*').eq('town_id', town.id).order('start_time'),
+          supabase.from('bulletin_board_posts').select('*').eq('town_id', town.id),
+          supabase
+            .from('businesses_with_tags')
+            .select('*')
+            .eq('town_id', town.id)
+            .order('name'),
         ]);
 
         if (eventsRes.error || postsRes.error || businessesRes.error) {
@@ -101,50 +105,62 @@ export default function SilerCityPage() {
         {/* Events Tab Content */}
         <TabsContent value="events">
           <section className="py-6">
-            <h2 className="sr-only">Upcoming Events</h2> {/* Screen reader only */}
+            <h2 className="sr-only">Upcoming Events</h2>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               {events.map((event) => (
-                <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
+                <EventCard
+                  key={event.id}
+                  event={event}
+                  onClick={() => setSelectedEvent(event)}
+                />
               ))}
             </div>
             <div className="mt-6 text-center">
-              <Link href="/siler-city/events" className="text-accent underline text-sm font-medium">
+              <Link
+                href="/siler-city/events"
+                className="text-accent underline text-sm font-medium"
+              >
                 View full events calendar →
               </Link>
             </div>
+
+            {/* Event Modal */}
             {selectedEvent && (
-              <Modal
-                isOpen={!!selectedEvent}
-                onClose={() => setSelectedEvent(null)}
-                title={selectedEvent.title}
-              >
-                <div className="space-y-4 text-sm text-foreground">
-                  <p className="italic text-muted">
-                    {new Date(selectedEvent.start_time).toLocaleString()}
-                  </p>
-                  {(selectedEvent.facebook_post || selectedEvent.description) && (
-                    <p>{selectedEvent.facebook_post || selectedEvent.description}</p>
-                  )}
-                  {selectedEvent.cta_url && (
-                    <a
-                      href={selectedEvent.cta_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent underline block"
-                    >
-                      Learn more →
-                    </a>
-                  )}
-                </div>
-              </Modal>
-            )}
+  <Modal
+    isOpen={!!selectedEvent}
+    onClose={() => setSelectedEvent(null)}
+    title={selectedEvent.title}
+  >
+    <div className="space-y-4 text-sm text-foreground max-h-[70vh] overflow-y-auto">
+      <p className="italic text-muted">
+        {new Date(selectedEvent.start_time).toLocaleString()}
+      </p>
+
+      <p className="whitespace-pre-line">
+      {selectedEvent.card_summary || selectedEvent.facebook_post || selectedEvent.description || 'No summary available.'}
+      </p>
+
+      {selectedEvent.cta_url && (
+        <a
+          href={selectedEvent.cta_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent underline flex items-center gap-1 mt-2"
+        >
+          🔗 Link
+        </a>
+      )}
+    </div>
+  </Modal>
+)}
+
           </section>
         </TabsContent>
 
         {/* Bulletin Board Tab Content */}
         <TabsContent value="bulletin-board">
           <section className="py-6">
-            <h2 className="sr-only">Bulletin Board</h2> {/* Screen reader only */}
+            <h2 className="sr-only">Bulletin Board</h2>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               {posts.map((post) => (
                 <Card
@@ -156,7 +172,9 @@ export default function SilerCityPage() {
                     {post.submitter_name && (
                       <p className="text-sm text-muted italic">{post.submitter_name}</p>
                     )}
-                    <p className="text-sm text-foreground">{truncate(post.content ?? '')}</p>
+                    <p className="text-sm text-foreground">
+                      {truncate(post.content ?? '')}
+                    </p>
                   </CardContent>
                 </Card>
               ))}
@@ -175,7 +193,7 @@ export default function SilerCityPage() {
         {/* Business Directory Tab Content */}
         <TabsContent value="businesses">
           <section className="py-6">
-            <h2 className="sr-only">Local Businesses</h2> {/* Screen reader only */}
+            <h2 className="sr-only">Local Businesses</h2>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               {businesses.map((biz) => {
                 const tagNames = (biz.tag_slugs || [])
@@ -236,8 +254,10 @@ export default function SilerCityPage() {
               })}
             </div>
             <div className="mt-6 text-center">
-              {/* Updated link to point to the town-specific business page */}
-              <Link href="/siler-city/businesses" className="text-accent underline text-sm font-medium">
+              <Link
+                href="/siler-city/businesses"
+                className="text-accent underline text-sm font-medium"
+              >
                 View full business directory →
               </Link>
             </div>

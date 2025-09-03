@@ -29,7 +29,7 @@ export function EventCard({ event, variant = 'compact', onClick }: EventCardProp
     });
   }
 
-  const summary = event.facebook_post || event.description;
+  const summary = event.card_summary || event.facebook_post || event.description;
 
   const tagPills = (event.tags || []).map((tag: string) => (
     <span

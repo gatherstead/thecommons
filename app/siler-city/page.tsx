@@ -18,11 +18,17 @@ const TAG_NAME_LOOKUP: Record<string, string> = {
 
 export default function SilerCityPage() {
   const [events, setEvents] = useState<any[]>([]);
+  const [groupedEvents, setGroupedEvents] = useState({
+    thisWeek: [] as any[],
+    nextWeek: [] as any[],
+    later: [] as any[],
+  });
   const [posts, setPosts] = useState<any[]>([]);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
 
+  // Fetch data from Supabase
   useEffect(() => {
     async function fetchData() {
       if (!supabase) {
@@ -60,6 +66,8 @@ export default function SilerCityPage() {
           );
         }
 
+        console.log('Fetched events from Supabase:', eventsRes.data);
+
         setEvents(eventsRes.data);
         setPosts(postsRes.data);
         setBusinesses(businessesRes.data);
@@ -71,8 +79,60 @@ export default function SilerCityPage() {
     fetchData();
   }, []);
 
+  // Group events into "This Week", "Next Week", "Later"
+  useEffect(() => {
+    if (!events || events.length === 0) return;
+
+    const now = new Date();
+    const startOfWeek = new Date();
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    const nextWeekStart = new Date(endOfWeek);
+    nextWeekStart.setDate(endOfWeek.getDate() + 1);
+    nextWeekStart.setHours(0, 0, 0, 0);
+
+    const nextWeekEnd = new Date(nextWeekStart);
+    nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+    nextWeekEnd.setHours(23, 59, 59, 999);
+
+    const grouped = { thisWeek: [], nextWeek: [], later: [] };
+
+    events.forEach((event) => {
+      const eventDate = new Date(event.start_time);
+      if (eventDate >= startOfWeek && eventDate <= endOfWeek) {
+        grouped.thisWeek.push(event);
+      } else if (eventDate >= nextWeekStart && eventDate <= nextWeekEnd) {
+        grouped.nextWeek.push(event);
+      } else {
+        grouped.later.push(event);
+      }
+    });
+
+    console.log('Grouped events:', grouped);
+    setGroupedEvents(grouped);
+  }, [events]);
+
   function truncate(text: string, maxLength = 120): string {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
+  }
+
+  function renderEventGroup(title: string, events: any[]) {
+    if (!events || events.length === 0) return null;
+    return (
+      <div className="mb-8">
+        <h3 className="text-xl font-semibold text-primary mb-4">{title}</h3>
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+          {events.map((event) => (
+            <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -106,15 +166,17 @@ export default function SilerCityPage() {
         <TabsContent value="events">
           <section className="py-6">
             <h2 className="sr-only">Upcoming Events</h2>
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-              {events.map((event) => (
-                <EventCard
-                  key={event.id}
-                  event={event}
-                  onClick={() => setSelectedEvent(event)}
-                />
-              ))}
-            </div>
+
+            {renderEventGroup('This Week', groupedEvents.thisWeek)}
+            {renderEventGroup('Next Week', groupedEvents.nextWeek)}
+            {renderEventGroup('Later', groupedEvents.later)}
+
+            {groupedEvents.thisWeek.length === 0 &&
+             groupedEvents.nextWeek.length === 0 &&
+             groupedEvents.later.length === 0 && (
+              <p>No events to display</p>
+            )}
+
             <div className="mt-6 text-center">
               <Link
                 href="/siler-city/events"
@@ -124,36 +186,34 @@ export default function SilerCityPage() {
               </Link>
             </div>
 
-            {/* Event Modal */}
             {selectedEvent && (
-  <Modal
-    isOpen={!!selectedEvent}
-    onClose={() => setSelectedEvent(null)}
-    title={selectedEvent.title}
-  >
-    <div className="space-y-4 text-sm text-foreground max-h-[70vh] overflow-y-auto">
-      <p className="italic text-muted">
-        {new Date(selectedEvent.start_time).toLocaleString()}
-      </p>
+              <Modal
+                isOpen={!!selectedEvent}
+                onClose={() => setSelectedEvent(null)}
+                title={selectedEvent.title}
+              >
+                <div className="space-y-4 text-sm text-foreground max-h-[70vh] overflow-y-auto">
+                  <p className="italic text-muted">
+                    {new Date(selectedEvent.start_time).toLocaleString()}
+                  </p>
 
-      <p className="whitespace-pre-line">
-      {selectedEvent.card_summary || selectedEvent.facebook_post || selectedEvent.description || 'No summary available.'}
-      </p>
+                  <p className="whitespace-pre-line">
+                    {selectedEvent.card_summary || selectedEvent.facebook_post || selectedEvent.description || 'No summary available.'}
+                  </p>
 
-      {selectedEvent.cta_url && (
-        <a
-          href={selectedEvent.cta_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-accent underline flex items-center gap-1 mt-2"
-        >
-          🔗 Link
-        </a>
-      )}
-    </div>
-  </Modal>
-)}
-
+                  {selectedEvent.cta_url && (
+                    <a
+                      href={selectedEvent.cta_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent underline flex items-center gap-1 mt-2"
+                    >
+                      🔗 Link
+                    </a>
+                  )}
+                </div>
+              </Modal>
+            )}
           </section>
         </TabsContent>
 

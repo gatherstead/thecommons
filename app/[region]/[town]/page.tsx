@@ -8,7 +8,9 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-// Lookup for business tag names
+// ----------------------
+// Constants / Lookup
+// ----------------------
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
   'live-music': 'Live Music',
@@ -17,48 +19,23 @@ const TAG_NAME_LOOKUP: Record<string, string> = {
   'accessible': 'Accessible',
 };
 
-type EventType = {
-  id: string;
-  start_time: string;
-  title: string;
-  description?: string;
-  card_summary?: string;
-  facebook_post?: string;
-  cta_url?: string;
-};
+// ----------------------
+// Type Definitions
+// ----------------------
+type EventType = { id: string; start_time: string; title: string; description?: string; card_summary?: string; facebook_post?: string; cta_url?: string; };
+type PostType = { id: string; title: string; submitter_name?: string; content?: string; };
+type BusinessType = { id: string; name: string; description?: string; website_url?: string; instagram_url?: string; tag_slugs?: string[]; };
 
-type PostType = {
-  id: string;
-  title: string;
-  submitter_name?: string;
-  content?: string;
-};
+type Props = { params: { region: string; town: string; }; };
 
-type BusinessType = {
-  id: string;
-  name: string;
-  description?: string;
-  website_url?: string;
-  instagram_url?: string;
-  tag_slugs?: string[];
-};
-
-type Props = {
-  params: {
-    region: string;
-    town: string;
-  };
-};
-
+// ----------------------
+// Main Component
+// ----------------------
 export default function TownPage({ params }: Props) {
-  // ----------------------
-  // Unwrap params using React state
-  // ----------------------
-  const { region, town } = React.use(params);
+  // Directly unwrap params (client component)
+  const { region, town } = params;
 
-  // ----------------------
   // Local state
-  // ----------------------
   const [events, setEvents] = useState<EventType[]>([]);
   const [posts, setPosts] = useState<PostType[]>([]);
   const [businesses, setBusinesses] = useState<BusinessType[]>([]);
@@ -66,12 +43,14 @@ export default function TownPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // ----------------------
-  // Fetch data from Supabase
+  // Fetch Data
   // ----------------------
   useEffect(() => {
     async function fetchData() {
       try {
-        // First, look up the town UUID by slug
+        if (!supabase) throw new Error('Supabase client not initialized');
+
+        // Get town UUID by slug
         const { data: townData, error: townError } = await supabase
           .from('towns')
           .select('id, name')
@@ -81,7 +60,7 @@ export default function TownPage({ params }: Props) {
         if (townError || !townData) throw new Error('Town not found');
         const townId = townData.id;
 
-        // Fetch events, posts, and businesses by town UUID
+        // Fetch events, posts, businesses
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
           supabase.from('events').select('*').eq('town_id', townId).order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', townId),
@@ -89,9 +68,7 @@ export default function TownPage({ params }: Props) {
         ]);
 
         if (eventsRes.error || postsRes.error || businessesRes.error) {
-          throw new Error(
-            eventsRes.error?.message || postsRes.error?.message || businessesRes.error?.message || 'Unknown error'
-          );
+          throw new Error(eventsRes.error?.message || postsRes.error?.message || businessesRes.error?.message || 'Unknown error');
         }
 
         setEvents(eventsRes.data);
@@ -108,9 +85,7 @@ export default function TownPage({ params }: Props) {
   // ----------------------
   // Helper: truncate text
   // ----------------------
-  function truncate(text: string, maxLength = 120) {
-    return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
-  }
+  const truncate = (text: string, maxLength = 120) => (text.length > maxLength ? text.slice(0, maxLength) + '…' : text);
 
   // ----------------------
   // Render JSX
@@ -121,12 +96,7 @@ export default function TownPage({ params }: Props) {
         <h1 className="text-4xl font-display font-extrabold text-primary">{town.replace('-', ' ')}</h1>
         <p className="text-base text-subtle font-body max-w-prose">
           Explore what’s happening in your community — businesses, events, and local stories.{' '}
-          <a
-            href="https://tally.so/r/wzAZlR"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent underline font-medium"
-          >
+          <a href="https://tally.so/r/wzAZlR" target="_blank" rel="noopener noreferrer" className="text-accent underline font-medium">
             Submit a post
           </a>
           .

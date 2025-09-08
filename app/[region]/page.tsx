@@ -8,72 +8,86 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-/**
- * RegionPageClient Component
- *
- * Displays towns and events for a specific region.
- * Uses Next.js 15+ App Router conventions (params is a Promise).
- */
-export default function RegionPageClient({
-  params,
-}: {
-  params: Promise<{ region: string }>; // Params are now a Promise in Next.js 15+
-}) {
-  // Unwrap the Promise to get the actual params object
+// ----------------------
+// Props and Types
+// ----------------------
+type Props = {
+  params: Promise<{
+    region: string;
+  }>;
+};
+
+type TownType = {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  status: 'active' | 'passive';
+};
+
+type EventType = {
+  id: string;
+  town_id: string;
+  start_time: string;
+  title: string;
+  description?: string;
+};
+
+// ----------------------
+// Component
+// ----------------------
+export default function RegionPageClient({ params }: Props) {
+  // Unwrap the params promise (Next.js 15+)
   const { region } = React.use(params);
 
-  // ----------------------
-  // State Declarations
-  // ----------------------
-  const [towns, setTowns] = useState<any[]>([]); // List of towns in the region
-  const [events, setEvents] = useState<any[]>([]); // All events for the region's towns
-  const [selectedEvent, setSelectedEvent] = useState<any | null>(null); // Currently open modal event
-  const [error, setError] = useState<string | null>(null); // Error handling
+  // State
+  const [towns, setTowns] = useState<TownType[]>([]);
+  const [events, setEvents] = useState<EventType[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Filter state
-  const [selectedTowns, setSelectedTowns] = useState<string[]>([]); // Town filters
-  const [selectedTags, setSelectedTags] = useState<string[]>([]); // Tag filters
-  const [selectedTime, setSelectedTime] = useState<string>('all'); // Time filters: all, weekday, weekend, this-week, next-week
+  // Filters
+  const [selectedTowns, setSelectedTowns] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedTime, setSelectedTime] = useState<'all' | 'weekday' | 'weekend' | 'this-week' | 'next-week'>('all');
 
   // ----------------------
-  // Data Fetching
+  // Fetch data
   // ----------------------
   useEffect(() => {
     async function fetchData() {
       try {
-        // 1. Get region ID by slug
-        const { data: regionData, error: regionError } = await supabase
+        // Get region ID
+        const { data: regionData } = await supabase
           .from('regions')
           .select('id')
           .eq('slug', region)
           .single();
 
-        if (regionError) throw regionError;
         if (!regionData) throw new Error('Region not found');
 
-        // 2. Get all towns in this region
-        const { data: townsData, error: townsError } = await supabase
+        // Fetch towns
+        const townsRes = await supabase
           .from('towns')
           .select('*')
           .eq('region_id', regionData.id)
           .order('status', { ascending: false });
 
-        if (townsError) throw townsError;
+        if (townsRes.error) throw townsRes.error;
 
-        const townIds = townsData.map(town => town.id);
+        const townIds = townsRes.data.map((t: TownType) => t.id);
 
-        // 3. Get all events for these towns
-        const { data: eventsData, error: eventsError } = await supabase
+        // Fetch events for all towns in region
+        const eventsRes = await supabase
           .from('events')
           .select('*')
           .in('town_id', townIds)
           .order('start_time', { ascending: true });
 
-        if (eventsError) throw eventsError;
+        if (eventsRes.error) throw eventsRes.error;
 
-        // 4. Update state
-        setTowns(townsData || []);
-        setEvents(eventsData || []);
+        setTowns(townsRes.data);
+        setEvents(eventsRes.data);
       } catch (err: any) {
         setError(err.message);
       }
@@ -83,25 +97,21 @@ export default function RegionPageClient({
   }, [region]);
 
   // ----------------------
-  // Utility Functions
+  // Utility: truncate text
   // ----------------------
+  function truncate(text: string, maxLength = 120) {
+    return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
+  }
 
-  // Truncate long text to a max length
-  const truncate = (text: string, maxLength = 120) =>
-    text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
-
-  // Toggle an item in a string[] filter array
-  const toggleFilter = (
-    filterSetter: React.Dispatch<React.SetStateAction<string[]>>,
-    value: string
-  ) => {
-    filterSetter(prev =>
-      prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]
-    );
+  // ----------------------
+  // Filter toggle helper
+  // ----------------------
+  const toggleFilter = (setter: React.Dispatch<React.SetStateAction<string[]>>, value: string) => {
+    setter(prev => (prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]));
   };
 
   // ----------------------
-  // Filtered Events Computation
+  // Filtered events
   // ----------------------
   const filteredEvents = events.filter(event => {
     const townMatch = selectedTowns.length === 0 || selectedTowns.includes(event.town_id);
@@ -110,9 +120,7 @@ export default function RegionPageClient({
     let timeMatch = true;
     if (selectedTime !== 'all') {
       const eventDate = new Date(event.start_time);
-      const today = new Date();
       const dayOfWeek = eventDate.getDay();
-
       switch (selectedTime) {
         case 'weekday':
           timeMatch = dayOfWeek >= 1 && dayOfWeek <= 5;
@@ -121,19 +129,21 @@ export default function RegionPageClient({
           timeMatch = dayOfWeek === 0 || dayOfWeek === 6;
           break;
         case 'this-week': {
-          const startOfWeek = new Date(today);
-          startOfWeek.setDate(today.getDate() - today.getDay());
-          const endOfWeek = new Date(startOfWeek);
-          endOfWeek.setDate(startOfWeek.getDate() + 7);
-          timeMatch = eventDate >= startOfWeek && eventDate < endOfWeek;
+          const now = new Date();
+          const start = new Date(now);
+          start.setDate(now.getDate() - now.getDay());
+          const end = new Date(start);
+          end.setDate(start.getDate() + 7);
+          timeMatch = eventDate >= start && eventDate < end;
           break;
         }
         case 'next-week': {
-          const startOfNextWeek = new Date(today);
-          startOfNextWeek.setDate(today.getDate() - today.getDay() + 7);
-          const endOfNextWeek = new Date(startOfNextWeek);
-          endOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
-          timeMatch = eventDate >= startOfNextWeek && eventDate < endOfNextWeek;
+          const now = new Date();
+          const start = new Date(now);
+          start.setDate(now.getDate() - now.getDay() + 7);
+          const end = new Date(start);
+          end.setDate(start.getDate() + 7);
+          timeMatch = eventDate >= start && eventDate < end;
           break;
         }
       }
@@ -147,46 +157,28 @@ export default function RegionPageClient({
   // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
-      {/* Header */}
       <header className="text-center space-y-4">
-        <h1 className="text-4xl font-display font-extrabold text-primary">
-          {region.replace('-', ' ')}
-        </h1>
-        <p className="text-lg text-subtle font-body max-w-prose mx-auto">
-          Explore towns and events in the {region.replace('-', ' ')} region.
-        </p>
+        <h1 className="text-4xl font-display font-extrabold text-primary">{region.replace('-', ' ')}</h1>
+        <p className="text-lg text-subtle font-body max-w-prose mx-auto">Explore towns and events in the {region.replace('-', ' ')} region.</p>
       </header>
 
-      {/* Error Display */}
       {error && <p className="text-red-500">❌ {error}</p>}
 
-      {/* Tabs for Towns and Events */}
       <Tabs defaultValue="towns" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="towns">Towns</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
         </TabsList>
 
-        {/* Towns Tab */}
         <TabsContent value="towns">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mt-6">
-            {towns.map(town => (
+            {towns.map((town) => (
               <Link key={town.id} href={`/${region}/${town.slug}`}>
-                <Card
-                  className={`p-5 border border-[#A7A7A2] bg-white shadow hover:shadow-md transition rounded-xl cursor-pointer ${
-                    town.status !== 'active' ? 'opacity-60 pointer-events-none' : ''
-                  }`}
-                >
+                <Card className={`p-5 border border-[#A7A7A2] bg-white shadow hover:shadow-md transition rounded-xl cursor-pointer ${town.status !== 'active' ? 'opacity-60 pointer-events-none' : ''}`}>
                   <CardContent>
-                    <h3 className="text-xl font-display font-semibold text-primary mb-2">
-                      {town.name}
-                    </h3>
-                    <p className="text-sm text-muted">{truncate(town.description)}</p>
-                    {town.status === 'passive' && (
-                      <span className="inline-block mt-3 text-xs font-semibold bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                        Coming Soon
-                      </span>
-                    )}
+                    <h3 className="text-xl font-display font-semibold text-primary mb-2">{town.name}</h3>
+                    <p className="text-sm text-muted">{town.description}</p>
+                    {town.status === 'passive' && <span className="inline-block mt-3 text-xs font-semibold bg-yellow-100 text-yellow-800 px-2 py-1 rounded">Coming Soon</span>}
                   </CardContent>
                 </Card>
               </Link>
@@ -194,69 +186,17 @@ export default function RegionPageClient({
           </div>
         </TabsContent>
 
-        {/* Events Tab */}
         <TabsContent value="events">
           <div className="space-y-4 mt-6">
-            {/* Filters */}
-            <div className="flex flex-wrap gap-4 mb-4">
-              {/* Town Filters */}
-              {towns.map(town => (
-                <label key={town.id} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedTowns.includes(town.id)}
-                    onChange={() => toggleFilter(setSelectedTowns, town.id)}
-                  />
-                  {town.name}
-                </label>
-              ))}
-
-              {/* Tag Filters */}
-              {['live-music', 'pet-friendly'].map(tag => (
-                <label key={tag} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedTags.includes(tag)}
-                    onChange={() => toggleFilter(setSelectedTags, tag)}
-                  />
-                  {tag.replace('-', ' ')}
-                </label>
-              ))}
-
-              {/* Time Filters */}
-              {['all', 'weekday', 'weekend', 'this-week', 'next-week'].map(time => (
-                <label key={time} className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    checked={selectedTime === time}
-                    onChange={() => setSelectedTime(time)}
-                  />
-                  {time.replace('-', ' ')}
-                </label>
-              ))}
-            </div>
-
-            {/* Event Cards */}
-            {filteredEvents.map(event => (
-              <EventCard
-                key={event.id}
-                event={event}
-                onClick={() => setSelectedEvent(event)}
-              />
+            {filteredEvents.map((event) => (
+              <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
             ))}
 
-            {/* Modal for selected event */}
             {selectedEvent && (
-              <Modal
-                isOpen={true}
-                onClose={() => setSelectedEvent(null)}
-                title={selectedEvent.title}
-              >
+              <Modal isOpen={true} onClose={() => setSelectedEvent(null)} title={selectedEvent.title}>
                 <div className="space-y-2">
                   <p>{selectedEvent.description}</p>
-                  <p className="text-sm text-muted">
-                    {new Date(selectedEvent.start_time).toLocaleString()}
-                  </p>
+                  <p className="text-sm text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
                 </div>
               </Modal>
             )}

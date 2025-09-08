@@ -51,17 +51,27 @@ type Props = {
 };
 
 export default function TownPage({ params }: Props) {
-  const { region, town } = params;
+  // ----------------------
+  // Unwrap params using React.use()
+  // ----------------------
+  const { region, town } = React.use(params);
 
+  // ----------------------
+  // Local state
+  // ----------------------
   const [events, setEvents] = useState<EventType[]>([]);
   const [posts, setPosts] = useState<PostType[]>([]);
   const [businesses, setBusinesses] = useState<BusinessType[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // ----------------------
+  // Fetch data from Supabase
+  // ----------------------
   useEffect(() => {
     async function fetchData() {
       try {
+        // First, look up the town UUID by slug
         const { data: townData, error: townError } = await supabase
           .from('towns')
           .select('id, name')
@@ -71,6 +81,7 @@ export default function TownPage({ params }: Props) {
         if (townError || !townData) throw new Error('Town not found');
         const townId = townData.id;
 
+        // Fetch events, posts, and businesses by town UUID
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
           supabase.from('events').select('*').eq('town_id', townId).order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', townId),
@@ -94,10 +105,16 @@ export default function TownPage({ params }: Props) {
     fetchData();
   }, [town]);
 
+  // ----------------------
+  // Helper: truncate text
+  // ----------------------
   function truncate(text: string, maxLength = 120) {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
   }
 
+  // ----------------------
+  // Render JSX
+  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
       <header className="space-y-4">
@@ -127,7 +144,7 @@ export default function TownPage({ params }: Props) {
 
         <TabsContent value="events">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
-            {events.map(event => (
+            {events.map((event) => (
               <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
             ))}
           </div>
@@ -144,7 +161,7 @@ export default function TownPage({ params }: Props) {
 
         <TabsContent value="bulletin-board">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
-            {posts.map(post => (
+            {posts.map((post) => (
               <Card key={post.id} className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl">
                 <CardContent className="space-y-2 min-h-[10rem]">
                   <h3 className="text-lg font-semibold text-primary">{post.title}</h3>
@@ -158,8 +175,8 @@ export default function TownPage({ params }: Props) {
 
         <TabsContent value="businesses">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
-            {businesses.map(biz => {
-              const tagNames = (biz.tag_slugs || []).map(slug => TAG_NAME_LOOKUP[slug]).filter(Boolean);
+            {businesses.map((biz) => {
+              const tagNames = (biz.tag_slugs || []).map((slug) => TAG_NAME_LOOKUP[slug]).filter(Boolean);
               return (
                 <Card key={biz.id} className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl">
                   <CardContent className="space-y-2 min-h-[10rem]">
@@ -181,7 +198,7 @@ export default function TownPage({ params }: Props) {
                     )}
                     {tagNames.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {tagNames.map(name => (
+                        {tagNames.map((name) => (
                           <span key={name} className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm">
                             {name}
                           </span>

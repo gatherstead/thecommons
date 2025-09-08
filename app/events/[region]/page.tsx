@@ -1,10 +1,8 @@
 // app/events/[region]/page.tsx
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
-
-type Props = {
-  params: { region: string }; // slug from URL
-};
+import React from 'react';
+import type { PageProps } from 'next/types';
 
 type TownType = {
   id: string;
@@ -12,10 +10,11 @@ type TownType = {
   name: string;
 };
 
-export default async function RegionPage({ params }: Props) {
-  const { region: regionSlug } = params;
+export default async function RegionPage({ params }: PageProps<{ region: string }>) {
+  // Unwrap params
+  const { region: regionSlug } = await params; // <-- key fix
 
-  // 1️⃣ Fetch the region to get its ID
+  // Fetch the region to get its ID
   const { data: regionData, error: regionError } = await supabase
     .from('regions')
     .select('id, name')
@@ -27,7 +26,7 @@ export default async function RegionPage({ params }: Props) {
     return <p className="text-red-500">❌ Failed to load region.</p>;
   }
 
-  // 2️⃣ Fetch towns in this region by region.id
+  // Fetch towns by region.id
   const { data: townsData, error: townsError } = await supabase
     .from('towns')
     .select('slug, name')

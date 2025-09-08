@@ -1,32 +1,62 @@
 // app/events/[region]/page.tsx
 import Link from 'next/link';
+import { supabase } from '@/lib/supabaseClient';
 
-type Params = {
-  params: {
-    region: string;
-  };
+type Props = {
+  params: { region: string }; // slug from URL
 };
 
-export default async function RegionPage({ params }: Params) {
-  const { region } = params;
+type TownType = {
+  id: string;
+  slug: string;
+  name: string;
+};
 
-  // Optionally fetch towns in this region from Supabase
-  // const towns = await supabase.from('towns').select('*').eq('region_slug', region);
+export default async function RegionPage({ params }: Props) {
+  const { region: regionSlug } = params;
 
-  const towns = ['siler-city']; // placeholder for now
+  // 1️⃣ Fetch the region to get its ID
+  const { data: regionData, error: regionError } = await supabase
+    .from('regions')
+    .select('id, name')
+    .eq('slug', regionSlug)
+    .single();
+
+  if (regionError || !regionData) {
+    console.error('Error fetching region:', regionError?.message || 'Region not found');
+    return <p className="text-red-500">❌ Failed to load region.</p>;
+  }
+
+  // 2️⃣ Fetch towns in this region by region.id
+  const { data: townsData, error: townsError } = await supabase
+    .from('towns')
+    .select('slug, name')
+    .eq('region_id', regionData.id)
+    .order('name');
+
+  if (townsError) {
+    console.error('Error fetching towns:', townsError.message);
+    return <p className="text-red-500">❌ Failed to load towns.</p>;
+  }
+
+  const towns: TownType[] = townsData || [];
 
   return (
     <main className="p-6">
-      <h1 className="text-3xl font-bold">{region.replace('-', ' ')}</h1>
-      <ul className="mt-4 list-disc list-inside">
-        {towns.map((town) => (
-          <li key={town}>
-            <Link href={`/events/${region}/${town}`} className="text-accent underline">
-              {town.replace('-', ' ')}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <h1 className="text-3xl font-bold">{regionData.name}</h1>
+      {towns.length === 0 ? (
+        <p>No towns found in this region.</p>
+      ) : (
+        <ul className="mt-4 list-disc list-inside">
+          {towns.map((town) => (
+            <li key={town.slug}>
+              <Link href={`/events/${regionSlug}/${town.slug}`} className="text-accent underline">
+                {town.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </main>
   );
 }

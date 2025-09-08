@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, use } from 'react'; // ✅ include `use` to unwrap Promises
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +8,9 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
+// ----------------------
+// Tag name lookup for business badges
+// ----------------------
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
   'live-music': 'Live Music',
@@ -16,6 +19,9 @@ const TAG_NAME_LOOKUP: Record<string, string> = {
   'accessible': 'Accessible',
 };
 
+// ----------------------
+// Type definitions
+// ----------------------
 type EventType = {
   id: string;
   start_time: string;
@@ -43,13 +49,21 @@ type BusinessType = {
 };
 
 type Props = {
-  params: {
-    region: string;
-    town: string;
-  };
+  params: Promise<{ region: string; town: string }>; // ✅ params is now a Promise
 };
 
+// ----------------------
+// Main Component
+// ----------------------
 export default function TownPage({ params }: Props) {
+  // ----------------------
+  // Unwrap params Promise using React.use()
+  // ----------------------
+  const { region, town } = use(params);
+
+  // ----------------------
+  // Component state
+  // ----------------------
   const [events, setEvents] = useState<EventType[]>([]);
   const [groupedEvents, setGroupedEvents] = useState({
     thisWeek: [] as EventType[],
@@ -61,13 +75,16 @@ export default function TownPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
 
+  // ----------------------
+  // Fetch data for this town
+  // ----------------------
   useEffect(() => {
     async function fetchData() {
       try {
         const { data: townData, error: townError } = await supabase
           .from('towns')
           .select('id, name')
-          .eq('slug', params.town)
+          .eq('slug', town)
           .single();
 
         if (townError || !townData) throw new Error('Town not found');
@@ -81,9 +98,9 @@ export default function TownPage({ params }: Props) {
         if (eventsRes.error || postsRes.error || businessesRes.error) {
           throw new Error(
             eventsRes.error?.message ||
-              postsRes.error?.message ||
-              businessesRes.error?.message ||
-              'Unknown error'
+            postsRes.error?.message ||
+            businessesRes.error?.message ||
+            'Unknown error'
           );
         }
 
@@ -96,8 +113,11 @@ export default function TownPage({ params }: Props) {
     }
 
     fetchData();
-  }, [params.town]);
+  }, [town]);
 
+  // ----------------------
+  // Group events by this week / next week / later
+  // ----------------------
   useEffect(() => {
     if (!events || events.length === 0) return;
 
@@ -130,10 +150,16 @@ export default function TownPage({ params }: Props) {
     setGroupedEvents(grouped);
   }, [events]);
 
+  // ----------------------
+  // Helper: truncate text
+  // ----------------------
   function truncate(text: string, maxLength = 120) {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
   }
 
+  // ----------------------
+  // Helper: render event groups
+  // ----------------------
   function renderEventGroup(title: string, events: EventType[], showHeader: boolean) {
     if (!events || events.length === 0) return null;
     return (
@@ -148,10 +174,14 @@ export default function TownPage({ params }: Props) {
     );
   }
 
+  // ----------------------
+  // Render JSX
+  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
+      {/* Header */}
       <header className="space-y-4">
-        <h1 className="text-4xl font-display font-extrabold text-primary">{params.town.replace('-', ' ')}</h1>
+        <h1 className="text-4xl font-display font-extrabold text-primary">{town.replace('-', ' ')}</h1>
         <p className="text-base text-subtle font-body max-w-prose">
           Explore what’s happening in your community — businesses, events, and local stories.{' '}
           <a
@@ -166,8 +196,10 @@ export default function TownPage({ params }: Props) {
         </p>
       </header>
 
+      {/* Error message */}
       {error && <p className="text-red-500">❌ {error}</p>}
 
+      {/* Tabs */}
       <Tabs defaultValue="events" className="w-full">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="events">Events</TabsTrigger>
@@ -175,6 +207,7 @@ export default function TownPage({ params }: Props) {
           <TabsTrigger value="businesses">Businesses</TabsTrigger>
         </TabsList>
 
+        {/* Events Tab */}
         <TabsContent value="events">
           <section className="py-6">
             {(() => {
@@ -192,16 +225,10 @@ export default function TownPage({ params }: Props) {
               );
             })()}
 
-            <div className="mt-6 text-center">
-              <Link href={`/${params.region}/${params.town}/events`} className="text-accent underline text-sm font-medium">
-                View full events calendar →
-              </Link>
-            </div>
-
             {selectedEvent && (
               <Modal isOpen onClose={() => setSelectedEvent(null)} title={selectedEvent.title}>
                 <div className="space-y-4 text-sm text-foreground max-h-[70vh] overflow-y-auto">
-                <p className="italic text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
+                  <p className="italic text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
                   <p className="whitespace-pre-line">
                     {selectedEvent.card_summary || selectedEvent.facebook_post || selectedEvent.description || 'No summary available.'}
                   </p>
@@ -221,10 +248,9 @@ export default function TownPage({ params }: Props) {
           </section>
         </TabsContent>
 
-        {/* Bulletin Board Tab Content */}
+        {/* Bulletin Board Tab */}
         <TabsContent value="bulletin-board">
           <section className="py-6">
-            <h2 className="sr-only">Bulletin Board</h2>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               {posts.map((post) => (
                 <Card key={post.id} className="border border-subtle bg-white shadow-sm hover:shadow-md transition rounded-xl">
@@ -237,17 +263,16 @@ export default function TownPage({ params }: Props) {
               ))}
             </div>
             <div className="mt-6 text-center">
-              <Link href="/siler-city/bulletin-board" className="text-accent underline text-sm font-medium">
+              <Link href={`/${region}/${town}/bulletin-board`} className="text-accent underline text-sm font-medium">
                 View full bulletin board →
               </Link>
             </div>
           </section>
         </TabsContent>
 
-        {/* Business Directory Tab Content */}
+        {/* Businesses Tab */}
         <TabsContent value="businesses">
           <section className="py-6">
-            <h2 className="sr-only">Local Businesses</h2>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
               {businesses.map((biz) => {
                 const tagNames = (biz.tag_slugs || []).map((slug) => TAG_NAME_LOOKUP[slug]).filter(Boolean);
@@ -258,24 +283,14 @@ export default function TownPage({ params }: Props) {
                       {biz.description && <p className="text-sm text-foreground min-h-[3.5rem]">{truncate(biz.description)}</p>}
                       {(biz.website_url || biz.instagram_url) && (
                         <div className="text-sm text-accent flex gap-4 mt-1">
-                          {biz.website_url && (
-                            <a href={biz.website_url} target="_blank" rel="noopener noreferrer" className="underline">
-                              Website
-                            </a>
-                          )}
-                          {biz.instagram_url && (
-                            <a href={biz.instagram_url} target="_blank" rel="noopener noreferrer" className="underline">
-                              Instagram
-                            </a>
-                          )}
+                          {biz.website_url && <a href={biz.website_url} target="_blank" rel="noopener noreferrer" className="underline">Website</a>}
+                          {biz.instagram_url && <a href={biz.instagram_url} target="_blank" rel="noopener noreferrer" className="underline">Instagram</a>}
                         </div>
                       )}
                       {tagNames.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {tagNames.map((name) => (
-                            <span key={name} className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm">
-                              {name}
-                            </span>
+                            <span key={name} className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm">{name}</span>
                           ))}
                         </div>
                       )}
@@ -285,7 +300,7 @@ export default function TownPage({ params }: Props) {
               })}
             </div>
             <div className="mt-6 text-center">
-              <Link href="/siler-city/businesses" className="text-accent underline text-sm font-medium">
+              <Link href={`/${region}/${town}/businesses`} className="text-accent underline text-sm font-medium">
                 View full business directory →
               </Link>
             </div>
@@ -295,7 +310,7 @@ export default function TownPage({ params }: Props) {
 
       {/* Bottom CTA */}
       <section className="bg-accent2/10 py-12 px-6 rounded-2xl mt-16 text-center shadow-md border border-primary/30">
-        <h2 className="text-2xl font-heading text-primary mb-4">Have something to share with Siler City?</h2>
+        <h2 className="text-2xl font-heading text-primary mb-4">Have something to share with {town.replace('-', ' ')}?</h2>
         <p className="text-md text-text mb-6 max-w-xl mx-auto">
           Events, job openings, news, local stories — we want to hear from you.
         </p>
@@ -309,6 +324,7 @@ export default function TownPage({ params }: Props) {
         </button>
       </section>
 
+      {/* Footer */}
       <footer className="border-t pt-6 mt-16 text-sm text-subtle text-center">
         © 2025 The Commons · Built by Common Engine Studio
       </footer>

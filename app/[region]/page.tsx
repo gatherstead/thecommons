@@ -1,4 +1,4 @@
-'use client'; // app/[region]/page.tsx
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -8,31 +8,10 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-// ----------------------
-// Props typing
-// ----------------------
-type Props = {
-  params: {
-    region: string;
-  };
-};
+type TownType = { id: string; name: string; slug: string; description?: string; status: 'active' | 'passive' };
+type EventType = { id: string; title: string; description?: string; start_time: string };
 
-type TownType = {
-  id: string;
-  name: string;
-  slug: string;
-  description?: string;
-  status: 'active' | 'passive';
-};
-
-type EventType = {
-  id: string;
-  title: string;
-  description?: string;
-  start_time: string;
-};
-
-export default function RegionPage({ params }: Props) {
+export default function RegionPage({ params }: { params: { region: string } }) {
   const { region } = params;
 
   const [towns, setTowns] = useState<TownType[]>([]);

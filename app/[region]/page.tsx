@@ -1,13 +1,6 @@
-// app/[region]/page.tsx
-// ----------------------
-// Async Server Component for Region Page
-// Fetches towns and events server-side for faster rendering and full TypeScript support.
-// Notes:
-// - Tabs and EventCard rendering are still compatible with client interactivity
-// - Modal can be converted to a client component if needed
-// - This avoids the 'PageProps' TypeScript error from client-only type
-// ----------------------
+'use client'; // app/[region]/page.tsx
 
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,11 +8,11 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-type Props = {
-  params: {
-    region: string;
-  };
-};
+// ----------------------
+// Note: We no longer define explicit Props here. 
+// Next.js App Router infers PageProps automatically, 
+// preventing the PageProps type error.
+// ----------------------
 
 type TownType = {
   id: string;
@@ -36,48 +29,53 @@ type EventType = {
   start_time: string;
 };
 
-// ----------------------
-// Async Server Component
-// ----------------------
-export default async function RegionPage({ params }: Props) {
+export default function RegionPage({ params }: { params: { region: string } }) {
   const { region } = params;
 
-  // ----------------------
-  // Fetch region ID
-  // ----------------------
-  const { data: regionData, error: regionError } = await supabase
-    .from('regions')
-    .select('id')
-    .eq('slug', region)
-    .single();
-  if (regionError || !regionData) return <p>Region not found</p>;
-  const regionId = regionData.id;
+  const [towns, setTowns] = useState<TownType[]>([]);
+  const [events, setEvents] = useState<EventType[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // ----------------------
-  // Fetch towns in this region
+  // Fetch towns and events for this region
   // ----------------------
-  const { data: townsData, error: townsError } = await supabase
-    .from('towns')
-    .select('*')
-    .eq('region_id', regionId)
-    .order('status', { ascending: false });
-  if (townsError) return <p>Error loading towns: {townsError.message}</p>;
-  const towns = townsData || [];
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const { data: regionData, error: regionError } = await supabase
+          .from('regions')
+          .select('id')
+          .eq('slug', region)
+          .single();
+        if (regionError || !regionData) throw new Error('Region not found');
+
+        const { data: townsData, error: townsError } = await supabase
+          .from('towns')
+          .select('*')
+          .eq('region_id', regionData.id)
+          .order('status', { ascending: false });
+        if (townsError) throw townsError;
+
+        const townIds = (townsData || []).map(t => t.id);
+        const { data: eventsData, error: eventsError } = await supabase
+          .from('events')
+          .select('*')
+          .in('town_id', townIds)
+          .order('start_time', { ascending: true });
+        if (eventsError) throw eventsError;
+
+        setTowns(townsData || []);
+        setEvents(eventsData || []);
+      } catch (err: any) {
+        setError(err.message);
+      }
+    }
+    fetchData();
+  }, [region]);
 
   // ----------------------
-  // Fetch events in all towns
-  // ----------------------
-  const townIds = towns.map(t => t.id);
-  const { data: eventsData, error: eventsError } = await supabase
-    .from('events')
-    .select('*')
-    .in('town_id', townIds)
-    .order('start_time', { ascending: true });
-  if (eventsError) return <p>Error loading events: {eventsError.message}</p>;
-  const events = eventsData || [];
-
-  // ----------------------
-  // Helper: truncate text
+  // Utility: truncate text
   // ----------------------
   function truncate(text: string, maxLength = 120) {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
@@ -94,6 +92,8 @@ export default async function RegionPage({ params }: Props) {
           Explore towns and events in the {region.replace('-', ' ')} region.
         </p>
       </header>
+
+      {error && <p className="text-red-500">❌ {error}</p>}
 
       <Tabs defaultValue="towns" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
@@ -129,8 +129,17 @@ export default async function RegionPage({ params }: Props) {
           <div className="space-y-4 mt-6">
             {events.length === 0 && <p>No events found.</p>}
             {events.map(event => (
-              <EventCard key={event.id} event={event} onClick={() => { /* For client interactivity, wrap in client component */ }} />
+              <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
             ))}
+
+            {selectedEvent && (
+              <Modal isOpen={true} onClose={() => setSelectedEvent(null)} title={selectedEvent.title}>
+                <div className="space-y-2">
+                  <p>{selectedEvent.description}</p>
+                  <p className="text-sm text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
+                </div>
+              </Modal>
+            )}
           </div>
         </TabsContent>
       </Tabs>

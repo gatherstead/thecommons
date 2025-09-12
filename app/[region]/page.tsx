@@ -1,4 +1,4 @@
-'use client'; // app/[region]/page.tsx
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -9,14 +9,8 @@ import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 // ----------------------
-// Props typing
+// Types
 // ----------------------
-type Props = {
-  params: {
-    region: string;
-  };
-};
-
 type TownType = {
   id: string;
   name: string;
@@ -37,9 +31,15 @@ type EventType = {
   cta_url?: string;
 };
 
-export default function RegionPage({ params }: Props) {
+// ----------------------
+// Component
+// ----------------------
+export default function RegionPage({ params }: any) {
   const { region } = params;
 
+  // ----------------------
+  // State
+  // ----------------------
   const [towns, setTowns] = useState<TownType[]>([]);
   const [events, setEvents] = useState<EventType[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
@@ -51,6 +51,7 @@ export default function RegionPage({ params }: Props) {
   useEffect(() => {
     async function fetchData() {
       try {
+        // Fetch region ID
         const { data: regionData, error: regionError } = await supabase
           .from('regions')
           .select('id')
@@ -58,6 +59,7 @@ export default function RegionPage({ params }: Props) {
           .single();
         if (regionError || !regionData) throw new Error('Region not found');
 
+        // Fetch towns for region
         const { data: townsData, error: townsError } = await supabase
           .from('towns')
           .select('*')
@@ -65,7 +67,8 @@ export default function RegionPage({ params }: Props) {
           .order('status', { ascending: false });
         if (townsError) throw townsError;
 
-        const townIds = (townsData || []).map(t => t.id);
+        // Fetch events for towns
+        const townIds = (townsData || []).map((t) => t.id);
         const { data: eventsData, error: eventsError } = await supabase
           .from('events')
           .select('*')
@@ -82,12 +85,19 @@ export default function RegionPage({ params }: Props) {
     fetchData();
   }, [region]);
 
+  // ----------------------
+  // Utility
+  // ----------------------
   function truncate(text: string, maxLength = 120) {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
   }
 
+  // ----------------------
+  // Render
+  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
+      {/* Header */}
       <header className="text-center space-y-4">
         <h1 className="text-4xl font-display font-extrabold text-primary">
           {region.replace('-', ' ')}
@@ -97,14 +107,17 @@ export default function RegionPage({ params }: Props) {
         </p>
       </header>
 
+      {/* Error display */}
       {error && <p className="text-red-500">❌ {error}</p>}
 
+      {/* Tabs */}
       <Tabs defaultValue="towns" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="towns">Towns</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
         </TabsList>
 
+        {/* Towns Tab */}
         <TabsContent value="towns">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mt-6">
             {towns.map((town) => (
@@ -131,6 +144,7 @@ export default function RegionPage({ params }: Props) {
           </div>
         </TabsContent>
 
+        {/* Events Tab */}
         <TabsContent value="events">
           <div className="space-y-4 mt-6">
             {events.length === 0 && <p>No events found.</p>}
@@ -138,11 +152,18 @@ export default function RegionPage({ params }: Props) {
               <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
             ))}
 
+            {/* Modal for selected event */}
             {selectedEvent && (
-              <Modal isOpen={true} onClose={() => setSelectedEvent(null)} title={selectedEvent.title}>
+              <Modal
+                isOpen={true}
+                onClose={() => setSelectedEvent(null)}
+                title={selectedEvent.title}
+              >
                 <div className="space-y-2">
                   <p>{selectedEvent.description}</p>
-                  <p className="text-sm text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
+                  <p className="text-sm text-muted">
+                    {new Date(selectedEvent.start_time).toLocaleString()}
+                  </p>
                 </div>
               </Modal>
             )}

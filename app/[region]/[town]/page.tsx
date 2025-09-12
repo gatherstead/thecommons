@@ -8,11 +8,7 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-// Canvas: app/[region]/[town]/page.tsx - working
-// This is the canonical, up-to-date client-only Town page.
-// It expects `params` as a Promise (Next 15 pattern) and unwraps with React.use().
-
-// Lookup for business tag names
+// --- Lookup for business tag names ---
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
   'live-music': 'Live Music',
@@ -50,23 +46,23 @@ type BusinessType = {
   tag_slugs?: string[];
 };
 
-// Props: params comes in as a Promise in Next 15 App Router for client components
+// --- Props ---
 type Props = {
-  params: Promise<{ region: string; town: string }>;
+  params: any; // client-only, Next 15 passes route params as plain object
 };
 
 export default function TownPage({ params }: Props) {
-  // Unwrap params (Next.js 15 client pattern)
-  const { region, town } = React.use(params as any);
+  const { region, town } = params; // simple destructure
 
-  // Local state
   const [events, setEvents] = useState<EventType[]>([]);
   const [posts, setPosts] = useState<PostType[]>([]);
   const [businesses, setBusinesses] = useState<BusinessType[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch data from Supabase (uses town slug => resolves town UUID)
+  // ----------------------
+  // Fetch data
+  // ----------------------
   useEffect(() => {
     let mounted = true;
 
@@ -74,17 +70,16 @@ export default function TownPage({ params }: Props) {
       try {
         if (!supabase) throw new Error('Supabase client not initialized');
 
-        // 1) lookup town id by slug
+        // 1) lookup town id
         const { data: townData, error: townError } = await supabase
           .from('towns')
           .select('id, name')
           .eq('slug', town)
           .single();
-
         if (townError || !townData) throw new Error('Town not found');
         const townId = townData.id;
 
-        // 2) fetch events, posts, businesses by UUID
+        // 2) fetch events, posts, businesses
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
           supabase.from('events').select('*').eq('town_id', townId).order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', townId),
@@ -108,15 +103,18 @@ export default function TownPage({ params }: Props) {
     }
 
     fetchData();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [town]);
 
-  // Utility: truncate
-  const truncate = (text: string, maxLength = 120) => (text?.length > maxLength ? text.slice(0, maxLength) + '…' : text || '');
+  // ----------------------
+  // Utilities
+  // ----------------------
+  const truncate = (text: string, maxLength = 120) =>
+    text?.length > maxLength ? text.slice(0, maxLength) + '…' : text || '';
 
+  // ----------------------
+  // Render
+  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
       <header className="space-y-4">
@@ -144,6 +142,7 @@ export default function TownPage({ params }: Props) {
           <TabsTrigger value="businesses">Businesses</TabsTrigger>
         </TabsList>
 
+        {/* Events */}
         <TabsContent value="events">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
             {events.map((event) => (
@@ -157,7 +156,12 @@ export default function TownPage({ params }: Props) {
                 <p>{selectedEvent.description}</p>
                 <p className="text-sm text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
                 {selectedEvent.cta_url && (
-                  <a href={selectedEvent.cta_url} target="_blank" rel="noopener noreferrer" className="text-accent underline block mt-2">
+                  <a
+                    href={selectedEvent.cta_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent underline block mt-2"
+                  >
                     🔗 Link
                   </a>
                 )}
@@ -166,6 +170,7 @@ export default function TownPage({ params }: Props) {
           )}
         </TabsContent>
 
+        {/* Bulletin Board */}
         <TabsContent value="bulletin-board">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
             {posts.map((post) => (
@@ -180,6 +185,7 @@ export default function TownPage({ params }: Props) {
           </div>
         </TabsContent>
 
+        {/* Businesses */}
         <TabsContent value="businesses">
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-6">
             {businesses.map((biz) => {

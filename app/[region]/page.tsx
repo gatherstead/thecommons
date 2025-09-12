@@ -1,7 +1,6 @@
-// app/[region]/page.tsx
-'use client';
+'use client'; // app/[region]/page.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { Card, CardContent } from '@/components/ui/card';
@@ -31,6 +30,11 @@ type EventType = {
   title: string;
   description?: string;
   start_time: string;
+  location?: string;
+  tags?: string[];
+  card_summary?: string;
+  facebook_post?: string;
+  cta_url?: string;
 };
 
 export default function RegionPage({ params }: Props) {
@@ -42,7 +46,7 @@ export default function RegionPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // ----------------------
-  // Fetch towns & events
+  // Fetch data on mount
   // ----------------------
   useEffect(() => {
     async function fetchData() {
@@ -82,9 +86,6 @@ export default function RegionPage({ params }: Props) {
     return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
   }
 
-  // ----------------------
-  // Render
-  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
       <header className="text-center space-y-4">
@@ -104,12 +105,9 @@ export default function RegionPage({ params }: Props) {
           <TabsTrigger value="events">Events</TabsTrigger>
         </TabsList>
 
-        {/* ---------------------- */}
-        {/* Towns Tab */}
-        {/* ---------------------- */}
         <TabsContent value="towns">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mt-6">
-            {towns.map(town => (
+            {towns.map((town) => (
               <Link key={town.id} href={`/${region}/${town.slug}`}>
                 <Card
                   className={`p-5 border border-[#A7A7A2] bg-white shadow hover:shadow-md transition rounded-xl cursor-pointer ${
@@ -133,13 +131,10 @@ export default function RegionPage({ params }: Props) {
           </div>
         </TabsContent>
 
-        {/* ---------------------- */}
-        {/* Events Tab */}
-        {/* ---------------------- */}
         <TabsContent value="events">
           <div className="space-y-4 mt-6">
             {events.length === 0 && <p>No events found.</p>}
-            {events.map(event => (
+            {events.map((event) => (
               <EventCard key={event.id} event={event} onClick={() => setSelectedEvent(event)} />
             ))}
 

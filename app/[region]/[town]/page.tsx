@@ -8,6 +8,10 @@ import { EventCard } from '@/components/ui/eventcard';
 import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
+// Canvas: app/[region]/[town]/page.tsx - working
+// This is the canonical, up-to-date client-only Town page.
+// It expects `params` as a Promise (Next 15 pattern) and unwraps with React.use().
+
 // Lookup for business tag names
 const TAG_NAME_LOOKUP: Record<string, string> = {
   'pet-friendly': 'Pet-Friendly',
@@ -17,6 +21,7 @@ const TAG_NAME_LOOKUP: Record<string, string> = {
   'accessible': 'Accessible',
 };
 
+// --- Types ---
 type EventType = {
   id: string;
   start_time: string;
@@ -25,6 +30,8 @@ type EventType = {
   card_summary?: string;
   facebook_post?: string;
   cta_url?: string;
+  tags?: string[];
+  town_id?: string;
 };
 
 type PostType = {
@@ -43,35 +50,31 @@ type BusinessType = {
   tag_slugs?: string[];
 };
 
+// Props: params comes in as a Promise in Next 15 App Router for client components
 type Props = {
-  params: {
-    region: string;
-    town: string;
-  };
+  params: Promise<{ region: string; town: string }>;
 };
 
 export default function TownPage({ params }: Props) {
-  // ----------------------
-  // Unwrap params using React.use()
-  // ----------------------
-  const { region, town } = React.use(params);
+  // Unwrap params (Next.js 15 client pattern)
+  const { region, town } = React.use(params as any);
 
-  // ----------------------
   // Local state
-  // ----------------------
   const [events, setEvents] = useState<EventType[]>([]);
   const [posts, setPosts] = useState<PostType[]>([]);
   const [businesses, setBusinesses] = useState<BusinessType[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventType | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ----------------------
-  // Fetch data from Supabase
-  // ----------------------
+  // Fetch data from Supabase (uses town slug => resolves town UUID)
   useEffect(() => {
+    let mounted = true;
+
     async function fetchData() {
       try {
-        // First, look up the town UUID by slug
+        if (!supabase) throw new Error('Supabase client not initialized');
+
+        // 1) lookup town id by slug
         const { data: townData, error: townError } = await supabase
           .from('towns')
           .select('id, name')
@@ -81,7 +84,7 @@ export default function TownPage({ params }: Props) {
         if (townError || !townData) throw new Error('Town not found');
         const townId = townData.id;
 
-        // Fetch events, posts, and businesses by town UUID
+        // 2) fetch events, posts, businesses by UUID
         const [eventsRes, postsRes, businessesRes] = await Promise.all([
           supabase.from('events').select('*').eq('town_id', townId).order('start_time'),
           supabase.from('bulletin_board_posts').select('*').eq('town_id', townId),
@@ -94,31 +97,30 @@ export default function TownPage({ params }: Props) {
           );
         }
 
-        setEvents(eventsRes.data);
-        setPosts(postsRes.data);
-        setBusinesses(businessesRes.data);
+        if (!mounted) return;
+        setEvents(eventsRes.data || []);
+        setPosts(postsRes.data || []);
+        setBusinesses(businessesRes.data || []);
       } catch (err: any) {
-        setError(err.message);
+        if (!mounted) return;
+        setError(err?.message || String(err));
       }
     }
 
     fetchData();
+
+    return () => {
+      mounted = false;
+    };
   }, [town]);
 
-  // ----------------------
-  // Helper: truncate text
-  // ----------------------
-  function truncate(text: string, maxLength = 120) {
-    return text.length > maxLength ? text.slice(0, maxLength) + '…' : text;
-  }
+  // Utility: truncate
+  const truncate = (text: string, maxLength = 120) => (text?.length > maxLength ? text.slice(0, maxLength) + '…' : text || '');
 
-  // ----------------------
-  // Render JSX
-  // ----------------------
   return (
     <main className="min-h-screen bg-background text-text px-4 py-12 max-w-5xl mx-auto space-y-16">
       <header className="space-y-4">
-        <h1 className="text-4xl font-display font-extrabold text-primary">{town.replace('-', ' ')}</h1>
+        <h1 className="text-4xl font-display font-extrabold text-primary">{town?.replace('-', ' ')}</h1>
         <p className="text-base text-subtle font-body max-w-prose">
           Explore what’s happening in your community — businesses, events, and local stories.{' '}
           <a
@@ -154,6 +156,11 @@ export default function TownPage({ params }: Props) {
               <div className="space-y-2">
                 <p>{selectedEvent.description}</p>
                 <p className="text-sm text-muted">{new Date(selectedEvent.start_time).toLocaleString()}</p>
+                {selectedEvent.cta_url && (
+                  <a href={selectedEvent.cta_url} target="_blank" rel="noopener noreferrer" className="text-accent underline block mt-2">
+                    🔗 Link
+                  </a>
+                )}
               </div>
             </Modal>
           )}
@@ -185,23 +192,17 @@ export default function TownPage({ params }: Props) {
                     {(biz.website_url || biz.instagram_url) && (
                       <div className="text-sm text-accent flex gap-4 mt-1">
                         {biz.website_url && (
-                          <a href={biz.website_url} target="_blank" rel="noopener noreferrer" className="underline">
-                            Website
-                          </a>
+                          <a href={biz.website_url} target="_blank" rel="noopener noreferrer" className="underline">Website</a>
                         )}
                         {biz.instagram_url && (
-                          <a href={biz.instagram_url} target="_blank" rel="noopener noreferrer" className="underline">
-                            Instagram
-                          </a>
+                          <a href={biz.instagram_url} target="_blank" rel="noopener noreferrer" className="underline">Instagram</a>
                         )}
                       </div>
                     )}
                     {tagNames.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {tagNames.map((name) => (
-                          <span key={name} className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm">
-                            {name}
-                          </span>
+                          <span key={name} className="text-xs font-medium bg-subtle text-text px-2 py-0.5 rounded-full shadow-sm">{name}</span>
                         ))}
                       </div>
                     )}

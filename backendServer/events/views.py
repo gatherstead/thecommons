@@ -1,51 +1,46 @@
-from asyncio import Event
-from django.shortcuts import render
-from django.http import HttpResponse, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from .models import Event
+from .serializers import EventSerializer
 
 
-def index(request):
-    return HttpResponse("Hello, world. You're at the events index.")
-
+@api_view(['GET'])
 def getAll(request):
-    #technically dont need everything, can reduce to increase performance
-    #TODO: Needs specifc values to pull
-    events_queryset = Event.objects.all().values()
-    events_list = list(events_queryset)
-    return JsonResponse(events_list, safe=False)
-
-def getOne(request, event_id):
-    event = Event.objects.filter(uuid=event_id).values().first()
-    if event:
-        return JsonResponse(event)
-    else:
-        return JsonResponse({'error': 'Event not found'}, status=404)
-
-@csrf_exempt # Allows React to POST without a CSRF token
-def createEvent(request):
-    if request.method == 'POST':
-        try:
-            # 1. Parse the JSON sent from React
-            data = json.loads(request.body)
-            
-            # 2. Create the Event object
-            new_event = Event.objects.create(
-                title=data['title'],
-                city=data['city'],
-                date=data['date'], # Ensure React sends "YYYY-MM-DD HH:MM" format
-                venue_name=data['venue_name'],
-                description=data['description'],
-                # For price, we need to ensure it's a number or None
-                price=data.get('price', 0.00)
-            )
-            
-            # 3. Return success and the new UUID
-            return JsonResponse({
-                'status': 'success', 
-                'uuid': new_event.uuid
-            }, status=201)
-
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+    # Query the database
+    events = Event.objects.all().order_by('-date')
     
-    return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    # Serialize the data (many=True means we are converting a list, not just one item)
+    serializer = EventSerializer(events, many=True)
+    
+    # Return the JSON data
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def getOne(request, event_id):
+    # Get the object or return 404 automatically
+    # Note: We use 'uuid' here because that's your model field name
+    event = get_object_or_404(Event, uuid=event_id)
+    
+    # Serialize the single object
+    serializer = EventSerializer(event)
+    
+    return Response(serializer.data)
+
+
+@api_view(['POST'])
+def createEvent(request):
+    # Pass the JSON data (request.data) to the serializer
+    serializer = EventSerializer(data=request.data)
+    
+    # Validate the data (this runs the logic in your serializers.py)
+    if serializer.is_valid():
+        # Save to database
+        serializer.save()
+        # Return success with the new data
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    # If invalid, return the errors (e.g., "Price must be a number")
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

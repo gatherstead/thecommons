@@ -51,11 +51,12 @@ class Event(models.Model):
     
     title = models.CharField(max_length=200)
     
-    city = models.CharField(max_length=100)
+    town = models.CharField(max_length=100)
     
     date = models.DateTimeField() 
     
-    venue_name = models.CharField(max_length=200)
+    #TODO: Github issue #2
+    venue = models.CharField(max_length=200)
     
     description = models.TextField()
     

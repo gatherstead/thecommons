@@ -10,8 +10,8 @@ export interface Event {
     date: Date;
     time: string;
     description: string;
-    tags: TagId[];
-    town: TownId;
+    tags: String[];
+    town: String;
     price: string;
     imageUrl?: string;
 }

@@ -32,7 +32,7 @@ export const mockEvents: Event[] = [
         description: 'Explore the scenic beauty of the Haw River corridor with experienced naturalist Dr. Maria Santos. Learn about native flora, bird watching techniques, and the ecological history of this cherished watershed. Bilingual tour available in English and Spanish.',
         tags: ['weekends', 'nature', 'family-friendly', 'speaks-spanish', 'daytime'],
         town: 'pittsboro',
-        price: '$5 suggested donation',
+        price: '$5',
     },
     {
         id: '4',

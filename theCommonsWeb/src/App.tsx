@@ -1,22 +1,49 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { TagFilter, type TagId } from './components/TagFilter';
 import { TownMultiselect, type TownId } from './components/TownMultiselect';
 import { EventCard } from './components/EventCard';
 import { AddEventModal } from './components/AddEventModal';
-import { EventModal } from './components/EventModal'; // Component for viewing details
+import { EventModal } from './components/EventModal';
 import { CalendarView } from './components/CalendarView';
-import { mockEvents } from './data/mockEvents';
+
+
+import { getEvents } from './services/eventService';
+import { type FrontendEvent } from './models/eventsModels';
 
 type ViewMode = 'feed' | 'calendar';
 
 function App() {
+  const [events, setEvents] = useState<FrontendEvent[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [selectedTags, setSelectedTags] = useState<TagId[]>([]);
   const [selectedTowns, setSelectedTowns] = useState<TownId[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('feed');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // State for viewing a specific event's details
-  const [selectedEvent, setSelectedEvent] = useState<typeof mockEvents[0] | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(null);
+
+
+  // Fetch events when the component loads
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    const data = await getEvents();
+    setEvents(data);
+    setIsLoading(false);
+  };
+
+  // Called when a new event is successfully posted
+  const handleModalClose = () => {
+    setIsAddModalOpen(false);
+    fetchData();
+    // Refresh the feed immediately
+    //TODO: Is this needed?
+  };
 
   const handleTagToggle = (tagId: TagId) => {
     setSelectedTags(prev =>
@@ -34,19 +61,23 @@ function App() {
     );
   };
 
+  // --- FILTERING LOGIC ---
   const filteredEvents = useMemo(() => {
-    return mockEvents
+    return events
       .filter(event => {
+        // Town Filter
         if (selectedTowns.length > 0 && !selectedTowns.includes(event.town as TownId)) {
           return false;
         }
-        if (selectedTags.length > 0 && !selectedTags.some(tag => event.tags.includes(tag as TagId))) {
+        // Tag Filter
+        // Note: Backend tags are strings. We check if the event tags include our filter ID.
+        if (selectedTags.length > 0 && !selectedTags.some(tag => event.tags.includes(tag))) {
           return false;
         }
         return true;
       })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [selectedTags, selectedTowns]);
+  }, [selectedTags, selectedTowns, events]);
 
   const featuredEvent = filteredEvents[0];
   const regularEvents = filteredEvents.slice(1);
@@ -61,6 +92,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--color-paper)]">
+      {/* --- HEADER --- */}
       <header className="border-b-4 border-[var(--color-border)] relative">
         <div className="max-w-6xl mx-auto px-4 py-6">
           <div className="flex justify-between items-start mb-4">
@@ -94,8 +126,11 @@ function App() {
         </div>
       </header>
 
+      {/* --- MAIN CONTENT --- */}
       <main className="max-w-6xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+
+          {/* --- SIDEBAR --- */}
           <aside className="lg:col-span-1 space-y-6">
             <button
               onClick={() => setIsAddModalOpen(true)}
@@ -159,6 +194,7 @@ function App() {
             )}
           </aside>
 
+          {/* --- EVENT FEED / CALENDAR --- */}
           <section className="lg:col-span-3">
             {viewMode === 'feed' ? (
               <>
@@ -167,11 +203,18 @@ function App() {
                     Upcoming Events
                   </h2>
                   <p className="text-sm text-[var(--color-muted)]">
-                    {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''} found
+                    {isLoading
+                      ? 'Checking for local happenings...'
+                      : `${filteredEvents.length} event${filteredEvents.length !== 1 ? 's' : ''} found`
+                    }
                   </p>
                 </div>
 
-                {filteredEvents.length === 0 ? (
+                {isLoading ? (
+                  <div className="text-center py-20 opacity-50">
+                    <p className="font-[var(--font-headline)] uppercase tracking-widest animate-pulse">Loading Events...</p>
+                  </div>
+                ) : filteredEvents.length === 0 ? (
                   <div className="text-center py-12 border-2 border-dashed border-[var(--color-border)]">
                     <p className="text-lg text-[var(--color-muted)] font-[var(--font-headline)]">
                       No events match your current filters.
@@ -214,12 +257,14 @@ function App() {
                 )}
               </>
             ) : (
+              // Calendar View
               <CalendarView events={filteredEvents} />
             )}
           </section>
         </div>
       </main>
 
+      {/* --- FOOTER --- */}
       <footer className="border-t-4 border-[var(--color-border)] mt-12">
         <div className="max-w-6xl mx-auto px-4 py-8">
           <div className="text-center">
@@ -245,13 +290,12 @@ function App() {
         </div>
       </footer>
 
-      {/* Add Event Modal (Form) */}
+      {/* --- MODALS --- */}
       <AddEventModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={handleModalClose} // Now triggers a refresh when closed
       />
 
-      {/* View Details Modal (Clicking a card) */}
       <EventModal
         event={selectedEvent ? { ...selectedEvent, date: selectedEvent.date.toISOString() } as any : null}
         onClose={() => setSelectedEvent(null)}

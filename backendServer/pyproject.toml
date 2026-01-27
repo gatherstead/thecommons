@@ -1,0 +1,17 @@
+[project]
+name = "backendserver"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asgiref==3.11.0",
+    "django==6.0.1",
+    "django-cors-headers>=4.9.0",
+    "djangorestframework>=3.16.1",
+    "pillow>=12.1.0",
+    "psycopg>=3.3.2 ; sys_platform != 'darwin'",
+    "psycopg[binary]>=3.3.2 ; sys_platform == 'darwin'",
+    "python-dotenv==1.2.1",
+    "sqlparse==0.5.5",
+]

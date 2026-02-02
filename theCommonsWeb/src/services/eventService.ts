@@ -4,7 +4,8 @@ import type { FrontendEvent, BackendEvent, EventPayload } from "../models/events
 
 
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+console.log("ENV Variable:", import.meta.env.VITE_API_BASE_URL)
 
 
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {

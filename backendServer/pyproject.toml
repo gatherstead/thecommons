@@ -11,6 +11,7 @@ dependencies = [
     "djangorestframework>=3.16.1",
     "pillow>=12.1.0",
     "psycopg>=3.3.2 ; sys_platform != 'darwin'",
+    "psycopg[binary]>=3.3.2",
     "psycopg[binary]>=3.3.2 ; sys_platform == 'darwin'",
     "python-dotenv==1.2.1",
     "sqlparse==0.5.5",

@@ -5,11 +5,12 @@
             "src": "backend/wsgi.py",
             "use": "@vercel/python",
             "config": {
-                "maxLambdaSize": "15mb"
+                "maxLambdaSize": "15mb",
+                "runtime": "python3.12"
             }
         },
         {
-            "src": "pyproject.toml",
+            "src": "build.sh",
             "use": "@vercel/static-build",
             "config": {
                 "distDir": "staticfiles_build/static"
@@ -25,11 +26,5 @@
             "src": "/(.*)",
             "dest": "backend/wsgi.py"
         }
-    ],
-    "build": {
-        "env": {
-            "PYTHON_VERSION": "3.12"
-        }
-    },
-    "installCommand": "pip install uv && uv sync"
+    ]
 }

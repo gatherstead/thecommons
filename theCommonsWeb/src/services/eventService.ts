@@ -36,7 +36,7 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
 // --- GET ALL EVENTS ---
 export const getEvents = async (): Promise<FrontendEvent[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events`, {
+        const response = await fetch(`${API_BASE}/events/`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });
@@ -56,7 +56,7 @@ export const getEvents = async (): Promise<FrontendEvent[]> => {
 
 // --- CREATE EVENT ---
 export const createEvent = async (eventData: EventPayload) => {
-    const response = await fetch(`${API_BASE}/events/create`, {
+    const response = await fetch(`${API_BASE}/events/create/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(eventData),

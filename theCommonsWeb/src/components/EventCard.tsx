@@ -1,5 +1,3 @@
-import type { TagId } from './TagFilter';
-import type { TownId } from './TownMultiselect';
 import { FILTER_TAGS } from './TagFilter';
 import { TOWNS } from './TownMultiselect';
 

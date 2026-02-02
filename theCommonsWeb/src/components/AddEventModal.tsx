@@ -25,16 +25,6 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
 
     if (!isOpen) return null;
 
-    // Helper: Combine Date string and Time string into ISO format
-    const combineDateAndTime = (dateStr: string, timeStr: string) => {
-        // This is a simple implementation. 
-        // Ideally, user picks a time from a proper time picker to ensure formatting.
-        // Assuming user enters "19:00" or similar 24h format for simplicity, 
-        // or relies on the browser's date object.
-        const combined = new Date(`${dateStr}T${timeStr}`);
-        return combined.toISOString();
-    };
-
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);

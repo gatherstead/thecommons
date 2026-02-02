@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qsl
+from corsheaders.defaults import default_headers
 
 from pathlib import Path
 
@@ -65,8 +66,14 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
+    "https://www.thecommons.town",
 ]
 
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "content-type",
+    "authorization",
+    "x-csrftoken",
+]
 
 ROOT_URLCONF = "backend.urls"
 

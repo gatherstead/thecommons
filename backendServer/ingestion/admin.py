@@ -36,7 +36,7 @@ class RawEventAdmin(ModelAdmin):
 class StagedEventAdmin(ModelAdmin):
     list_display = [
         'title', 'location_name', 'town', 'start_datetime',
-        'status', 'tag_list', 'source_name',
+        'status', 'price', 'link', 'tag_list', 'source_name',
     ]
     list_filter = ['status']
     search_fields = ['title', 'description', 'location_name']
@@ -62,6 +62,8 @@ class StagedEventAdmin(ModelAdmin):
                 date=staged.start_datetime,
                 venue=staged.location_name,
                 description=staged.description,
+                price=staged.price,
+                link=staged.link,
             )
             for tag_name in staged.tags:
                 tag_obj, _ = Tag.objects.get_or_create(

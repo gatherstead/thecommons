@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 from datetime import datetime, date
 
 import requests
@@ -67,7 +68,14 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
         if raw_start < timezone.now():
             continue
 
-        source_url = str(component.get('URL', ''))
+        # Get URL: first try the ICS URL property, then extract from description
+        raw_url = str(component.get('URL', ''))
+        source_url = raw_url if raw_url.startswith(('http://', 'https://')) else ''
+        if not source_url:
+            # Extract first https URL from description
+            url_match = re.search(r'https?://[^\s<>"\']+', raw_description)
+            if url_match:
+                source_url = url_match.group(0)
 
         # Create or skip (unique_together handles dedup)
         raw_event, created = RawEvent.objects.get_or_create(

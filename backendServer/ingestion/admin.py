@@ -1,43 +1,31 @@
 from django.contrib import admin
 from django.core.management import call_command
-from django.http import HttpResponseRedirect
-from django.urls import path, reverse
-from django.utils.html import format_html
+from unfold.admin import ModelAdmin
 
 from events.models import Event, Tag
 from ingestion.models import EventSource, RawEvent, StagedEvent
 
 
 @admin.register(EventSource)
-class EventSourceAdmin(admin.ModelAdmin):
+class EventSourceAdmin(ModelAdmin):
     list_display = ['name', 'source_type', 'active', 'last_polled', 'event_count']
     list_filter = ['source_type', 'active']
     search_fields = ['name', 'url']
     readonly_fields = ['last_polled', 'created_at', 'updated_at']
-    change_list_template = 'ingestion/eventsource_changelist.html'
+    actions = ['run_ingestion_pipeline']
 
     def event_count(self, obj):
         return obj.raw_events.count()
     event_count.short_description = '# Events'
 
-    def get_urls(self):
-        custom_urls = [
-            path(
-                'run-ingestion/',
-                self.admin_site.admin_view(self.run_ingestion_view),
-                name='ingestion_run_pipeline',
-            ),
-        ]
-        return custom_urls + super().get_urls()
-
-    def run_ingestion_view(self, request):
+    @admin.action(description="Run ingestion pipeline (poll → standardize → dedup)")
+    def run_ingestion_pipeline(self, request, queryset):
         call_command('ingest_events')
         self.message_user(request, "Ingestion pipeline completed.")
-        return HttpResponseRedirect(reverse('admin:ingestion_eventsource_changelist'))
 
 
 @admin.register(RawEvent)
-class RawEventAdmin(admin.ModelAdmin):
+class RawEventAdmin(ModelAdmin):
     list_display = ['raw_title', 'source', 'raw_start', 'processed', 'created_at']
     list_filter = ['processed', 'source']
     search_fields = ['raw_title', 'raw_description']
@@ -45,7 +33,7 @@ class RawEventAdmin(admin.ModelAdmin):
 
 
 @admin.register(StagedEvent)
-class StagedEventAdmin(admin.ModelAdmin):
+class StagedEventAdmin(ModelAdmin):
     list_display = [
         'title', 'location_name', 'town', 'start_datetime',
         'status', 'tag_list', 'source_name',
@@ -68,7 +56,6 @@ class StagedEventAdmin(admin.ModelAdmin):
     def approve_events(self, request, queryset):
         approved = 0
         for staged in queryset.filter(status='pending'):
-            # Create the real Event
             event = Event.objects.create(
                 title=staged.title,
                 town=staged.town,
@@ -76,7 +63,6 @@ class StagedEventAdmin(admin.ModelAdmin):
                 venue=staged.location_name,
                 description=staged.description,
             )
-            # Add tags
             for tag_name in staged.tags:
                 tag_obj, _ = Tag.objects.get_or_create(
                     name=tag_name.strip().lower()

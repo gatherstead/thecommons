@@ -46,6 +46,7 @@ dependencies = [
     { name = "asgiref" },
     { name = "django" },
     { name = "django-cors-headers" },
+    { name = "django-unfold" },
     { name = "djangorestframework" },
     { name = "google-genai" },
     { name = "icalendar" },
@@ -62,6 +63,7 @@ requires-dist = [
     { name = "asgiref", specifier = "==3.11.0" },
     { name = "django", specifier = "==6.0.1" },
     { name = "django-cors-headers", specifier = ">=4.9.0" },
+    { name = "django-unfold", specifier = ">=0.83.1" },
     { name = "djangorestframework", specifier = ">=3.16.1" },
     { name = "google-genai", specifier = ">=1.66.0" },
     { name = "icalendar", specifier = ">=6.1.0" },
@@ -257,6 +259,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/21/39/55822b15b7ec87410f34cd16ce04065ff390e50f9e29f31d6d116fc80456/django_cors_headers-4.9.0.tar.gz", hash = "sha256:fe5d7cb59fdc2c8c646ce84b727ac2bca8912a247e6e68e1fb507372178e59e8", size = 21458 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/30/d8/19ed1e47badf477d17fb177c1c19b5a21da0fd2d9f093f23be3fb86c5fab/django_cors_headers-4.9.0-py3-none-any.whl", hash = "sha256:15c7f20727f90044dcee2216a9fd7303741a864865f0c3657e28b7056f61b449", size = 12809 },
+]
+
+[[package]]
+name = "django-unfold"
+version = "0.83.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/66/5ddc3a921a6b4540b3bb319faa9a0a097efb5c2b86e4386ddffd349ec248/django_unfold-0.83.1.tar.gz", hash = "sha256:af3f9710496d172f0079343d1ba3128528da6d8ef4a57b070efcfc6456d8ed2b", size = 1111682 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/fb/f3822627068f99de66989e3f2bdb9cf0eaafa50cbe49615011c74de41706/django_unfold-0.83.1-py3-none-any.whl", hash = "sha256:233cca8f7d9d173518597ce4dbafb0167f3075b556d7fb2b97e44217a1c6ba0f", size = 1227058 },
 ]
 
 [[package]]

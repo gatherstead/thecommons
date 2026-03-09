@@ -19,4 +19,5 @@ dependencies = [
     "requests>=2.32.0",
     "thefuzz>=0.22.0",
     "google-genai>=1.66.0",
+    "django-unfold>=0.83.1",
 ]

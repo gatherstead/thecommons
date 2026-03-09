@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "events.apps.EventsConfig",
+    "ingestion.apps.IngestionConfig",
 ]
 
 MIDDLEWARE = [
@@ -149,3 +150,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+# Ingestion pipeline
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+CRON_SECRET = os.environ.get('CRON_SECRET', '')

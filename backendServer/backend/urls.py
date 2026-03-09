@@ -18,7 +18,10 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from ingestion.views import cron_ingest
+
 urlpatterns = [
     path("events/", include("events.urls")),
     path("admin/", admin.site.urls),
+    path("api/cron/ingest", cron_ingest, name="cron-ingest"),
 ]

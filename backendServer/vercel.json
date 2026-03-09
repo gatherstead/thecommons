@@ -1,5 +1,11 @@
 {
     "version": 2,
+    "crons": [
+        {
+            "path": "/api/cron/ingest",
+            "schedule": "0 8 * * *"
+        }
+    ],
     "headers": [
         {
             "source": "/(.*)",

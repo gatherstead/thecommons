@@ -1,4 +1,8 @@
 from django.contrib import admin
+from django.core.management import call_command
+from django.http import HttpResponseRedirect
+from django.urls import path, reverse
+from django.utils.html import format_html
 
 from events.models import Event, Tag
 from ingestion.models import EventSource, RawEvent, StagedEvent
@@ -10,10 +14,26 @@ class EventSourceAdmin(admin.ModelAdmin):
     list_filter = ['source_type', 'active']
     search_fields = ['name', 'url']
     readonly_fields = ['last_polled', 'created_at', 'updated_at']
+    change_list_template = 'ingestion/eventsource_changelist.html'
 
     def event_count(self, obj):
         return obj.raw_events.count()
     event_count.short_description = '# Events'
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'run-ingestion/',
+                self.admin_site.admin_view(self.run_ingestion_view),
+                name='ingestion_run_pipeline',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def run_ingestion_view(self, request):
+        call_command('ingest_events')
+        self.message_user(request, "Ingestion pipeline completed.")
+        return HttpResponseRedirect(reverse('admin:ingestion_eventsource_changelist'))
 
 
 @admin.register(RawEvent)

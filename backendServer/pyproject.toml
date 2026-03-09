@@ -17,6 +17,6 @@ dependencies = [
     "sqlparse==0.5.5",
     "icalendar>=6.1.0",
     "requests>=2.32.0",
-    "google-generativeai>=0.8.0",
     "thefuzz>=0.22.0",
+    "google-genai>=1.66.0",
 ]

@@ -1,7 +1,8 @@
 import json
 import logging
 
-import google.generativeai as genai
+from google import genai
+
 from django.conf import settings
 
 from ingestion.models import RawEvent, StagedEvent
@@ -33,11 +34,13 @@ STANDARDIZATION_PROMPT = """You are a data processor for a local community event
 Your job is to take raw event data and standardize it into a clean, consistent format.
 
 Given the following raw event data, produce a JSON object with these fields:
-- "title": A clean, concise event title (remove venue name if it's redundant with location)
-- "description": A friendly 2-3 sentence description of the event. Keep the tone warm and community-oriented. If the raw description is empty or minimal, write a brief generic description based on the title.
+- "title": A clean, concise event title 
+- "description": A 2-3 sentence description of the event. Vary your sentence structure and openings — do NOT start every description the same way (e.g. avoid always starting with "Join us for..."). Use a mix of styles: sometimes lead with the event details, sometimes with the venue or vibe, sometimes with what attendees will experience. Summarize the raw description if available, otherwise write a brief description based on the title. Keep it warm and community-oriented.
 - "location_name": The venue or location name, cleaned up
 - "town": The city or town where this event takes place (e.g. "Chapel Hill", "Durham", "Carrboro"). Infer from the location/address if possible. If unclear, use an empty string.
 - "tags": An array of applicable tags from this list ONLY: {tags}
+- "price": A number representing the price in dollars, or 0 if free. If the raw price is a range (e.g. "$10-$20"), use the average. If the price is not specified, return -1 to indicate N/A.
+- "link": a URL string linking to the original event page, if available. Otherwise, return an empty string.
 
 Rules:
 - Only use tags from the provided list. Choose all that apply.
@@ -52,6 +55,8 @@ Description: {description}
 Location: {location}
 Start: {start}
 End: {end}
+Price: {price}
+Link: {link}
 """
 
 
@@ -59,8 +64,8 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
     """
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash-lite')
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    model = 'gemini-2.5-flash-lite'
 
     prompt = STANDARDIZATION_PROMPT.format(
         tags=json.dumps(VALID_TAGS),
@@ -69,9 +74,14 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         location=raw_event.raw_location,
         start=raw_event.raw_start.isoformat(),
         end=raw_event.raw_end.isoformat() if raw_event.raw_end else "Not specified",
+        price="Not specified",
+        link=raw_event.source_url or "Not available",
     )
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model = model,
+        contents = prompt
+    )
 
     try:
         text = response.text.strip()
@@ -87,6 +97,10 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
 
     valid_tags = [t for t in data.get('tags', []) if t in VALID_TAGS]
 
+    # Parse price: -1 means N/A → store as None
+    raw_price = data.get('price', -1)
+    price = None if raw_price == -1 else raw_price
+
     staged = StagedEvent.objects.create(
         raw_event=raw_event,
         title=data.get('title', raw_event.raw_title)[:500],
@@ -96,6 +110,8 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         start_datetime=raw_event.raw_start,
         end_datetime=raw_event.raw_end,
         tags=valid_tags,
+        price=price,
+        link=data.get('link', '')[:500],
         status='pending',
     )
 

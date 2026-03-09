@@ -66,6 +66,8 @@ class Event(models.Model):
     
     tags = models.ManyToManyField(Tag, related_name="events", blank=True)
 
+    link = models.URLField(max_length=500, blank=True)
+
     def __str__(self):
         return self.title
     

@@ -40,6 +40,7 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.vercel.app']
 # Application definition
 
 INSTALLED_APPS = [
+    'unfold',
     'corsheaders',
     'rest_framework',
     "django.contrib.admin",
@@ -154,3 +155,85 @@ STATIC_URL = "static/"
 # Ingestion pipeline
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
+
+# Django Unfold Admin Configuration
+# Docs: https://github.com/unfoldadmin/django-unfold
+UNFOLD = {
+    # Browser tab title
+    "SITE_TITLE": "The Commons Admin",
+
+    # Header text shown in the admin top bar
+    "SITE_HEADER": "The Commons Admin",
+
+    # Subheader below the site header (smaller text)
+    "SITE_SUBHEADER": None,
+
+    # URL the site header links to
+    "SITE_URL": "https://www.thecommons.town",
+
+    # Material Symbols icon name for the site header
+    # Browse icons: https://fonts.google.com/icons
+    "SITE_SYMBOL": None,
+
+    # Path to a logo image (replaces SITE_HEADER text + SITE_SYMBOL)
+    "SITE_LOGO": None,
+
+    # Favicon path
+    "SITE_FAVICONS": [],
+
+    # Show/hide the search bar in the admin header
+    "SHOW_HEADER_SEARCH": True,
+
+    # Show/hide the language switcher
+    "SHOW_LANGUAGES": False,
+
+    # Environment banner shown in the header (e.g. "Development", "Production")
+    # "ENVIRONMENT": "sample_app.environment_callback",
+
+    # Primary color theme — provide a full Tailwind color scale (50-950)
+    # Use https://uicolors.app to generate from a single hex
+    # "COLORS": {
+    #     "primary": {
+    #         "50": "...",
+    #         "100": "...",
+    #         "200": "...",
+    #         "300": "...",
+    #         "400": "...",
+    #         "500": "...",
+    #         "600": "...",
+    #         "700": "...",
+    #         "800": "...",
+    #         "900": "...",
+    #         "950": "...",
+    #     },
+    # },
+
+    # Custom sidebar navigation — groups models into labeled sections with icons
+    # Icons use Material Symbols names: https://fonts.google.com/icons
+    # "SIDEBAR": {
+    #     "navigation": [
+    #         {
+    #             "title": "Section Title",
+    #             "items": [
+    #                 {
+    #                     "title": "Link Label",
+    #                     "link": "/admin/app/model/",
+    #                     "icon": "icon_name",
+    #                     # "badge": "callback.path",  # optional dynamic badge
+    #                     # "permission": "callback.path",  # optional visibility check
+    #                 },
+    #             ],
+    #         },
+    #     ],
+    # },
+
+    # Tabs displayed on model detail/change pages
+    # "TABS": [
+    #     {
+    #         "models": ["app.modelname"],
+    #         "items": [
+    #             {"title": "Tab Label", "link": "/admin/app/model/"},
+    #         ],
+    #     },
+    # ],
+}

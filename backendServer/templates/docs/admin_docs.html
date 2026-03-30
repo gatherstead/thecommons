@@ -1,0 +1,182 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Admin Backend Docs{% endblock %}
+
+{% block content %}
+<style>
+  .admin-docs { max-width: 860px; }
+  .admin-docs h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .admin-docs h2 { font-size: 1.2rem; font-weight: 700; margin: 2rem 0 0.75rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.4rem; }
+  .admin-docs h3 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.4rem; }
+  .admin-docs p { margin: 0.5rem 0; line-height: 1.65; }
+  .admin-docs ol, .admin-docs ul { padding-left: 1.5rem; margin: 0.5rem 0; }
+  .admin-docs li { margin: 0.3rem 0; line-height: 1.6; }
+  .admin-docs pre { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.85rem; margin: 0.75rem 0; }
+  .admin-docs code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.85rem; }
+  .admin-docs pre code { background: none; padding: 0; }
+  .admin-docs table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }
+  .admin-docs th { background: #f9fafb; font-weight: 600; text-align: left; padding: 0.5rem 0.75rem; border: 1px solid #e5e7eb; }
+  .admin-docs td { padding: 0.45rem 0.75rem; border: 1px solid #e5e7eb; vertical-align: top; }
+  .admin-docs .tip { background: #eff6ff; border-left: 3px solid #3b82f6; padding: 0.6rem 1rem; border-radius: 0 4px 4px 0; margin: 0.75rem 0; font-size: 0.9rem; }
+</style>
+
+<div class="admin-docs">
+  <h1>Admin Backend</h1>
+  <p>Reference guide for everything in this dashboard — what each section does, how to use it, and how it all fits together.</p>
+
+  <h2>Access &amp; Authentication</h2>
+  <p>Login uses Django's built-in username/password. Any user with <code>is_staff=True</code> can log in. Superusers (<code>is_superuser=True</code>) have full access including user management.</p>
+  <pre>python manage.py createsuperuser</pre>
+
+  <h2>Sidebar Sections</h2>
+  <table>
+    <tr><th>Section</th><th>Item</th><th>URL</th></tr>
+    <tr><td rowspan="3"><strong>Ingestion</strong></td><td>Event Sources</td><td><a href="/admin/ingestion/eventsource/">/admin/ingestion/eventsource/</a></td></tr>
+    <tr><td>Raw Events</td><td><a href="/admin/ingestion/rawevent/">/admin/ingestion/rawevent/</a></td></tr>
+    <tr><td>Staged Events</td><td><a href="/admin/ingestion/stagedevent/">/admin/ingestion/stagedevent/</a></td></tr>
+    <tr><td rowspan="2"><strong>Events</strong></td><td>Published Events</td><td><a href="/admin/events/event/">/admin/events/event/</a></td></tr>
+    <tr><td>Tags</td><td><a href="/admin/events/tag/">/admin/events/tag/</a></td></tr>
+    <tr><td rowspan="2"><strong>Users</strong></td><td>Users</td><td><a href="/admin/auth/user/">/admin/auth/user/</a></td></tr>
+    <tr><td>User Profiles</td><td><a href="/admin/events/userprofile/">/admin/events/userprofile/</a></td></tr>
+    <tr><td rowspan="2"><strong>Documentation</strong></td><td>Admin Docs</td><td><a href="/admin/docs/admin-docs/">/admin/docs/admin-docs/</a></td></tr>
+    <tr><td>Pipeline Docs</td><td><a href="/admin/docs/pipeline-docs/">/admin/docs/pipeline-docs/</a></td></tr>
+  </table>
+
+  <!-- ── INGESTION ────────────────────────────────────────────── -->
+  <h2>Ingestion Section</h2>
+
+  <h3>Event Sources</h3>
+  <p>The list of ICS calendar feeds the pipeline polls. To add a new calendar source, create a record here with the feed URL and set <code>active = True</code>.</p>
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>name</code></td><td>Human-readable label (e.g. "Northampton Arts Calendar")</td></tr>
+    <tr><td><code>source_type</code></td><td><code>ics</code>, <code>scraper</code>, or <code>email</code></td></tr>
+    <tr><td><code>url</code></td><td>The ICS feed URL</td></tr>
+    <tr><td><code>active</code></td><td>Uncheck to skip this source during ingestion</td></tr>
+    <tr><td><code>poll_interval_hours</code></td><td>How often to re-poll (default: 24h)</td></tr>
+    <tr><td><code>last_polled</code></td><td>Read-only; updated automatically after each poll</td></tr>
+    <tr><td><code>notes</code></td><td>Internal notes</td></tr>
+  </table>
+  <p><strong>Bulk action:</strong> "Run ingestion pipeline (poll → standardize → dedup)" — triggers the full pipeline across all active sources.</p>
+
+  <h3>Raw Events</h3>
+  <p>Events exactly as they were parsed from ICS feeds — no editing or LLM processing. This is a permanent audit log of what was scraped. Use the <code>processed</code> filter to see which events are still waiting for standardization.</p>
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>raw_title</code></td><td>Title exactly as scraped</td></tr>
+    <tr><td><code>raw_description</code></td><td>Description exactly as scraped</td></tr>
+    <tr><td><code>raw_location</code></td><td>Location string from the ICS feed</td></tr>
+    <tr><td><code>source_url</code></td><td>URL extracted from the event (used for webpage scraping)</td></tr>
+    <tr><td><code>source_uid</code></td><td>ICS UID or SHA256 hash — prevents re-importing</td></tr>
+    <tr><td><code>processed</code></td><td><code>True</code> once Gemini standardization has run on this event</td></tr>
+  </table>
+
+  <h3>Staged Events ← main review queue</h3>
+  <p>Events cleaned by the LLM and waiting for admin review before going live. This is where most admin work happens.</p>
+  <p><strong>Filter by <code>status = pending</code></strong> to see your review queue.</p>
+
+  <table>
+    <tr><th>Status</th><th>Meaning</th></tr>
+    <tr><td><code>pending</code></td><td>Needs admin review</td></tr>
+    <tr><td><code>approved</code></td><td>Published (or will be on next publish run)</td></tr>
+    <tr><td><code>rejected</code></td><td>Will not be published</td></tr>
+    <tr><td><code>duplicate</code></td><td>Auto-flagged as near-duplicate of another staged event</td></tr>
+  </table>
+
+  <p><strong>How to review:</strong></p>
+  <ol>
+    <li>Filter by <code>pending</code></li>
+    <li>Check title, description, town, date, price, tags, and the link</li>
+    <li><strong>Option A — Inline:</strong> click the Status dropdown in the list row and save</li>
+    <li><strong>Option B — Bulk action:</strong> check rows → "Approve selected events" or "Reject selected events" → Go</li>
+  </ol>
+
+  <div class="tip">Approving creates the <code>Event</code> record immediately, attaches tags, and links the staged event to it. Rejecting just marks it as rejected — nothing is deleted.</div>
+
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>title</code></td><td>LLM-standardized title</td></tr>
+    <tr><td><code>description</code></td><td>LLM-written 2–3 sentence description</td></tr>
+    <tr><td><code>location_name</code></td><td>Venue or address</td></tr>
+    <tr><td><code>town</code></td><td>Town inferred by LLM</td></tr>
+    <tr><td><code>tags</code></td><td>JSON list of tag strings</td></tr>
+    <tr><td><code>price</code></td><td><code>0</code> = free, <code>-1</code> = N/A, <code>null</code> = unknown</td></tr>
+    <tr><td><code>link</code></td><td>URL to the event's website</td></tr>
+    <tr><td><code>duplicate_of</code></td><td>FK to the earlier staged event it duplicates</td></tr>
+    <tr><td><code>reviewer_notes</code></td><td>Free text for internal comments</td></tr>
+    <tr><td><code>raw_event</code></td><td>Read-only link back to the original scraped data</td></tr>
+  </table>
+
+  <!-- ── EVENTS ───────────────────────────────────────────────── -->
+  <h2>Events Section</h2>
+
+  <h3>Published Events</h3>
+  <p>All events currently live on thecommons.town. These can be created, edited, or deleted directly here — changes take effect immediately on the website.</p>
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>title</code></td><td>Event name</td></tr>
+    <tr><td><code>town</code></td><td>Town/city</td></tr>
+    <tr><td><code>date</code></td><td>Event datetime (UTC)</td></tr>
+    <tr><td><code>venue</code></td><td>Venue name</td></tr>
+    <tr><td><code>description</code></td><td>Full description shown on the site</td></tr>
+    <tr><td><code>price</code></td><td>Decimal; <code>null</code> = unknown, <code>0</code> = free</td></tr>
+    <tr><td><code>photo</code></td><td>Optional image upload</td></tr>
+    <tr><td><code>tags</code></td><td>Many-to-many relationship with Tag</td></tr>
+    <tr><td><code>link</code></td><td>URL to the event's page</td></tr>
+  </table>
+
+  <h3>Tags</h3>
+  <p>Simple lookup table of tag strings (e.g. <code>free</code>, <code>live-music</code>, <code>family-friendly</code>). Shared across events and user profiles.</p>
+  <div class="tip">To add a new tag that the LLM can assign, create it here AND add it to the allowed tags list in <code>ingestion/standardizer.py</code>.</div>
+
+  <!-- ── USERS ────────────────────────────────────────────────── -->
+  <h2>Users Section</h2>
+
+  <h3>Users</h3>
+  <p>Standard Django user management. Use this to create staff accounts, reset passwords, and grant/revoke <code>is_staff</code> or <code>is_superuser</code> flags.</p>
+
+  <h3>User Profiles</h3>
+  <p>Extended profile data attached to each Django user.</p>
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>user</code></td><td>FK to Django's built-in User</td></tr>
+    <tr><td><code>user_type</code></td><td><code>LOCAL</code>, <code>BUSINESS</code>, or <code>VENUE</code></td></tr>
+    <tr><td><code>primary_city</code></td><td>User's home city</td></tr>
+    <tr><td><code>email_preference</code></td><td><code>WEEKLY</code>, <code>MONTHLY</code>, or <code>NEVER</code></td></tr>
+    <tr><td><code>tags</code></td><td>Interest tags for personalization</td></tr>
+  </table>
+
+  <!-- ── API ENDPOINTS ────────────────────────────────────────── -->
+  <h2>API Endpoints</h2>
+  <p>Two backend endpoints exist outside the admin UI but are relevant to admin operations:</p>
+  <table>
+    <tr><th>Endpoint</th><th>Auth</th><th>What it does</th></tr>
+    <tr>
+      <td><code>GET /api/cron/ingest</code></td>
+      <td><code>Bearer CRON_SECRET</code></td>
+      <td>Triggers full ingestion pipeline. Called by Vercel cron at 8 AM UTC daily.</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/events/publish-approved</code></td>
+      <td><code>Bearer THE_COMMONS_API_KEY</code></td>
+      <td>Publishes all approved staged events to the live Events table, then deletes them from staged. Atomic — rolls back on any failure.</td>
+    </tr>
+  </table>
+
+  <!-- ── CONFIG ───────────────────────────────────────────────── -->
+  <h2>Configuration</h2>
+  <p>Admin appearance is configured in <code>backend/settings.py</code> under the <code>UNFOLD</code> dict.</p>
+  <table>
+    <tr><th>Key</th><th>What it controls</th></tr>
+    <tr><td><code>SITE_TITLE</code></td><td>Browser tab title</td></tr>
+    <tr><td><code>SITE_HEADER</code></td><td>Top bar text</td></tr>
+    <tr><td><code>SITE_URL</code></td><td>Where the header logo links</td></tr>
+    <tr><td><code>SHOW_HEADER_SEARCH</code></td><td>Global search bar visibility</td></tr>
+    <tr><td><code>SIDEBAR.navigation</code></td><td>Sidebar sections and links</td></tr>
+    <tr><td><code>COLORS.primary</code></td><td>Brand color (Tailwind scale)</td></tr>
+  </table>
+  <p>Custom admin page templates live in: <code>backendServer/templates/docs/</code></p>
+  <p>Custom admin page routes must be declared <strong>before</strong> <code>path("admin/", admin.site.urls)</code> in <code>backend/urls.py</code> to avoid the admin catch-all swallowing them.</p>
+</div>
+{% endblock %}

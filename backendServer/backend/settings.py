@@ -77,12 +77,14 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-csrftoken",
 ]
 
+APPEND_SLASH = False
+
 ROOT_URLCONF = "backend.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "ingestion" / "templates"],
+        "DIRS": [BASE_DIR / "ingestion" / "templates", BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -155,6 +157,7 @@ STATIC_URL = "static/"
 # Ingestion pipeline
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
+THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
 
 # Django Unfold Admin Configuration
 # Docs: https://github.com/unfoldadmin/django-unfold
@@ -210,22 +213,80 @@ UNFOLD = {
 
     # Custom sidebar navigation — groups models into labeled sections with icons
     # Icons use Material Symbols names: https://fonts.google.com/icons
-    # "SIDEBAR": {
-    #     "navigation": [
-    #         {
-    #             "title": "Section Title",
-    #             "items": [
-    #                 {
-    #                     "title": "Link Label",
-    #                     "link": "/admin/app/model/",
-    #                     "icon": "icon_name",
-    #                     # "badge": "callback.path",  # optional dynamic badge
-    #                     # "permission": "callback.path",  # optional visibility check
-    #                 },
-    #             ],
-    #         },
-    #     ],
-    # },
+    "SIDEBAR": {
+        "navigation": [
+            {
+                "title": "Ingestion",
+                "items": [
+                    {
+                        "title": "Event Sources",
+                        "link": "/admin/ingestion/eventsource/",
+                        "icon": "rss_feed",
+                    },
+                    {
+                        "title": "Raw Events",
+                        "link": "/admin/ingestion/rawevent/",
+                        "icon": "inbox",
+                    },
+                    {
+                        "title": "Staged Events",
+                        "link": "/admin/ingestion/stagedevent/",
+                        "icon": "pending_actions",
+                    },
+                    {
+                        "title": "Publish Approved",
+                        "link": "/admin/docs/publish-approved/",
+                        "icon": "publish",
+                    },
+                ],
+            },
+            {
+                "title": "Events",
+                "items": [
+                    {
+                        "title": "Published Events",
+                        "link": "/admin/events/event/",
+                        "icon": "event",
+                    },
+                    {
+                        "title": "Tags",
+                        "link": "/admin/events/tag/",
+                        "icon": "label",
+                    },
+                ],
+            },
+            {
+                "title": "Users",
+                "items": [
+                    {
+                        "title": "Users",
+                        "link": "/admin/auth/user/",
+                        "icon": "person",
+                    },
+                    {
+                        "title": "User Profiles",
+                        "link": "/admin/events/userprofile/",
+                        "icon": "manage_accounts",
+                    },
+                ],
+            },
+            {
+                "title": "Documentation",
+                "items": [
+                    {
+                        "title": "Admin Docs",
+                        "link": "/admin/docs/admin-docs/",
+                        "icon": "help",
+                    },
+                    {
+                        "title": "Pipeline Docs",
+                        "link": "/admin/docs/pipeline-docs/",
+                        "icon": "menu_book",
+                    },
+                ],
+            },
+        ],
+    },
 
     # Tabs displayed on model detail/change pages
     # "TABS": [

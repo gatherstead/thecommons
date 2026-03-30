@@ -40,6 +40,7 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.vercel.app']
 # Application definition
 
 INSTALLED_APPS = [
+    'unfold',
     'corsheaders',
     'rest_framework',
     "django.contrib.admin",
@@ -76,12 +77,14 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-csrftoken",
 ]
 
+APPEND_SLASH = False
+
 ROOT_URLCONF = "backend.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "ingestion" / "templates"],
+        "DIRS": [BASE_DIR / "ingestion" / "templates", BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -154,3 +157,144 @@ STATIC_URL = "static/"
 # Ingestion pipeline
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
+THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
+
+# Django Unfold Admin Configuration
+# Docs: https://github.com/unfoldadmin/django-unfold
+UNFOLD = {
+    # Browser tab title
+    "SITE_TITLE": "The Commons Admin",
+
+    # Header text shown in the admin top bar
+    "SITE_HEADER": "The Commons Admin",
+
+    # Subheader below the site header (smaller text)
+    "SITE_SUBHEADER": None,
+
+    # URL the site header links to
+    "SITE_URL": "https://www.thecommons.town",
+
+    # Material Symbols icon name for the site header
+    # Browse icons: https://fonts.google.com/icons
+    "SITE_SYMBOL": None,
+
+    # Path to a logo image (replaces SITE_HEADER text + SITE_SYMBOL)
+    "SITE_LOGO": None,
+
+    # Favicon path
+    "SITE_FAVICONS": [],
+
+    # Show/hide the search bar in the admin header
+    "SHOW_HEADER_SEARCH": True,
+
+    # Show/hide the language switcher
+    "SHOW_LANGUAGES": False,
+
+    # Environment banner shown in the header (e.g. "Development", "Production")
+    # "ENVIRONMENT": "sample_app.environment_callback",
+
+    # Primary color theme — provide a full Tailwind color scale (50-950)
+    # Use https://uicolors.app to generate from a single hex
+    # "COLORS": {
+    #     "primary": {
+    #         "50": "...",
+    #         "100": "...",
+    #         "200": "...",
+    #         "300": "...",
+    #         "400": "...",
+    #         "500": "...",
+    #         "600": "...",
+    #         "700": "...",
+    #         "800": "...",
+    #         "900": "...",
+    #         "950": "...",
+    #     },
+    # },
+
+    # Custom sidebar navigation — groups models into labeled sections with icons
+    # Icons use Material Symbols names: https://fonts.google.com/icons
+    "SIDEBAR": {
+        "navigation": [
+            {
+                "title": "Ingestion",
+                "items": [
+                    {
+                        "title": "Event Sources",
+                        "link": "/admin/ingestion/eventsource/",
+                        "icon": "rss_feed",
+                    },
+                    {
+                        "title": "Raw Events",
+                        "link": "/admin/ingestion/rawevent/",
+                        "icon": "inbox",
+                    },
+                    {
+                        "title": "Staged Events",
+                        "link": "/admin/ingestion/stagedevent/",
+                        "icon": "pending_actions",
+                    },
+                    {
+                        "title": "Publish Approved",
+                        "link": "/admin/docs/publish-approved/",
+                        "icon": "publish",
+                    },
+                ],
+            },
+            {
+                "title": "Events",
+                "items": [
+                    {
+                        "title": "Published Events",
+                        "link": "/admin/events/event/",
+                        "icon": "event",
+                    },
+                    {
+                        "title": "Tags",
+                        "link": "/admin/events/tag/",
+                        "icon": "label",
+                    },
+                ],
+            },
+            {
+                "title": "Users",
+                "items": [
+                    {
+                        "title": "Users",
+                        "link": "/admin/auth/user/",
+                        "icon": "person",
+                    },
+                    {
+                        "title": "User Profiles",
+                        "link": "/admin/events/userprofile/",
+                        "icon": "manage_accounts",
+                    },
+                ],
+            },
+            {
+                "title": "Documentation",
+                "items": [
+                    {
+                        "title": "Admin Docs",
+                        "link": "/admin/docs/admin-docs/",
+                        "icon": "help",
+                    },
+                    {
+                        "title": "Pipeline Docs",
+                        "link": "/admin/docs/pipeline-docs/",
+                        "icon": "menu_book",
+                    },
+                ],
+            },
+        ],
+    },
+
+    # Tabs displayed on model detail/change pages
+    # "TABS": [
+    #     {
+    #         "models": ["app.modelname"],
+    #         "items": [
+    #             {"title": "Tab Label", "link": "/admin/app/model/"},
+    #         ],
+    #     },
+    # ],
+}

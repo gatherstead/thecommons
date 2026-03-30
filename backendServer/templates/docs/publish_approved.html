@@ -1,0 +1,74 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Publish Approved Events{% endblock %}
+
+{% block content %}
+<style>
+  .publish-page { max-width: 640px; }
+  .publish-page h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .publish-page p { margin: 0.5rem 0; line-height: 1.65; }
+  .publish-page .description { margin: 1rem 0 2rem; color: #6b7280; }
+  .publish-page .btn-publish {
+    display: inline-block;
+    background: #16a34a;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .publish-page .btn-publish:hover { background: #15803d; }
+  .publish-page .result {
+    margin-top: 2rem;
+    padding: 1rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  .publish-page .result.success { background: #f0fdf4; border-left: 3px solid #16a34a; }
+  .publish-page .result.empty  { background: #fafafa;  border-left: 3px solid #d1d5db; color: #6b7280; }
+  .publish-page .result strong { font-weight: 600; }
+  .publish-page .warning {
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    padding: 0.6rem 1rem;
+    border-radius: 0 4px 4px 0;
+    margin: 1.5rem 0;
+    font-size: 0.9rem;
+  }
+</style>
+
+<div class="publish-page">
+  <h1>Publish Approved Events</h1>
+  <p class="description">
+    Moves all <strong>approved</strong> staged events into the live Events table in one atomic operation.
+    If anything fails, everything is rolled back — no partial publishes.
+  </p>
+
+  <div class="warning">
+    This permanently removes approved events from the Staged Events table. Make sure you have reviewed them first.
+  </div>
+
+  {% if result %}
+    {% if result.removed == 0 %}
+      <div class="result empty">No approved staged events found — nothing to publish.</div>
+    {% else %}
+      <div class="result success">
+        <strong>Done.</strong>
+        Published <strong>{{ result.published }}</strong> event{{ result.published|pluralize }} to the live table.
+        {% if result.already_published %}
+          {{ result.already_published }} were already published.
+        {% endif %}
+        Removed <strong>{{ result.removed }}</strong> staged event{{ result.removed|pluralize }}.
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn-publish">Publish All Approved Events</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,9 +1,11 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from .models import Event
 from .serializers import EventSerializer
+from backend.permissions import HasCommonsAPIKey
+from ingestion.models import StagedEvent
 
 
 @api_view(['GET'])
@@ -31,16 +33,25 @@ def getOne(request, event_id):
 
 
 @api_view(['POST'])
+@permission_classes([HasCommonsAPIKey])
 def createEvent(request):
-    # Pass the JSON data (request.data) to the serializer
-    serializer = EventSerializer(data=request.data)
-    
-    # Validate the data (this runs the logic in your serializers.py)
-    if serializer.is_valid():
-        # Save to database
-        serializer.save()
-        # Return success with the new data
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
-    # If invalid, return the errors (e.g., "Price must be a number")
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    data = request.data
+
+    required = ['title', 'town', 'venue', 'date', 'description']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return Response({'error': f"Missing fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    staged = StagedEvent.objects.create(
+        title=data['title'],
+        town=data['town'],
+        location_name=data['venue'],
+        start_datetime=data['date'],
+        description=data['description'],
+        price=data.get('price') or None,
+        link=data.get('link', ''),
+        tags=data.get('tags', []),
+        status='pending',
+    )
+
+    return Response({'id': staged.id, 'status': staged.status}, status=status.HTTP_201_CREATED)

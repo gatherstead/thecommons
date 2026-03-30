@@ -5,6 +5,7 @@ import type { FrontendEvent, BackendEvent, EventPayload } from "../models/events
 
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_KEY = import.meta.env.VITE_THE_COMMONS_API_KEY || '';
 
 
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
@@ -36,7 +37,7 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
 // --- GET ALL EVENTS ---
 export const getEvents = async (): Promise<FrontendEvent[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events/`, {
+        const response = await fetch(`${API_BASE}/events`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });
@@ -56,9 +57,12 @@ export const getEvents = async (): Promise<FrontendEvent[]> => {
 
 // --- CREATE EVENT ---
 export const createEvent = async (eventData: EventPayload) => {
-    const response = await fetch(`${API_BASE}/events/create/`, {
+    const response = await fetch(`${API_BASE}/events/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${API_KEY}`,
+        },
         body: JSON.stringify(eventData),
     });
 

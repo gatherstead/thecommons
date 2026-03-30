@@ -1,0 +1,132 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Ingestion Pipeline Docs{% endblock %}
+
+{% block content %}
+<style>
+  .pipeline-docs { max-width: 860px; }
+  .pipeline-docs h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .pipeline-docs h2 { font-size: 1.2rem; font-weight: 700; margin: 2rem 0 0.75rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.4rem; }
+  .pipeline-docs h3 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.4rem; }
+  .pipeline-docs p { margin: 0.5rem 0; line-height: 1.65; }
+  .pipeline-docs ol, .pipeline-docs ul { padding-left: 1.5rem; margin: 0.5rem 0; }
+  .pipeline-docs li { margin: 0.3rem 0; line-height: 1.6; }
+  .pipeline-docs pre { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.85rem; margin: 0.75rem 0; }
+  .pipeline-docs code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.85rem; }
+  .pipeline-docs pre code { background: none; padding: 0; }
+  .pipeline-docs table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }
+  .pipeline-docs th { background: #f9fafb; font-weight: 600; text-align: left; padding: 0.5rem 0.75rem; border: 1px solid #e5e7eb; }
+  .pipeline-docs td { padding: 0.45rem 0.75rem; border: 1px solid #e5e7eb; }
+  .pipeline-docs .flow-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1rem 1.25rem; margin: 0.75rem 0; }
+</style>
+
+<div class="pipeline-docs">
+  <h1>Event Ingestion Pipeline</h1>
+  <p>How ICS calendar events get from a source URL to a published event on thecommons.town.</p>
+
+  <h2>Overview</h2>
+  <div class="flow-box">
+    <pre>ICS Source URL
+     ↓  (Phase 1: Poll)
+  RawEvent  (stored as-is)
+     ↓  (Phase 2: Standardize)
+ StagedEvent  (LLM-cleaned, status=pending)
+     ↓  (Phase 3: Deduplicate)
+ StagedEvent  (duplicates marked, status=duplicate)
+     ↓  (Phase 4: Admin Review)  ← you are here
+ StagedEvent  (status=approved or rejected)
+     ↓  (Phase 5: Publish)
+    Event  (live on website)
+     ↓
+  REST API  →  Frontend</pre>
+  </div>
+  <p><strong>Automated trigger:</strong> Vercel cron hits <code>GET /api/cron/ingest</code> every day at 8 AM UTC.</p>
+  <p><strong>Manual trigger:</strong> Admin → EventSources → select source → "Run ingestion pipeline" action.</p>
+  <p><strong>CLI:</strong> <code>python manage.py ingest_events</code></p>
+
+  <h2>Phase 1 — Poll ICS Sources</h2>
+  <p><em>File: <code>ingestion/importers/ics_importer.py</code> · Model: <code>RawEvent</code></em></p>
+  <ol>
+    <li>Load all <code>EventSource</code> records where <code>active=True</code>.</li>
+    <li>Skip sources polled within the last <code>poll_interval_hours</code> (default: 24h).</li>
+    <li>HTTP GET the ICS feed URL (30s timeout).</li>
+    <li>Parse the <code>.ics</code> file with <code>icalendar</code>, extracting each <code>VEVENT</code>: SUMMARY, DESCRIPTION, LOCATION, DTSTART/DTEND, UID, and URL.</li>
+    <li>Skip past events.</li>
+    <li>Save as <code>RawEvent</code> with <code>processed=False</code>. Unique on <code>(source, source_uid)</code> — no re-imports.</li>
+    <li>Update <code>EventSource.last_polled = now()</code>.</li>
+  </ol>
+
+  <h2>Phase 2 — Standardize with LLM</h2>
+  <p><em>File: <code>ingestion/standardizer.py</code> · Model: <code>StagedEvent</code></em></p>
+  <ol>
+    <li>For each unprocessed <code>RawEvent</code>, fetch the event webpage (10s timeout) and extract visible text (max 6000 chars) using BeautifulSoup.</li>
+    <li>Send raw event data + webpage text to <strong>Google Gemini</strong> (<code>gemini-2.5-flash-lite</code> → flash → pro fallback chain, 3 retries with backoff).</li>
+    <li>Gemini returns: clean title, 2–3 sentence description, location name, town, tags (from allowed list), and price.</li>
+    <li>Save as <code>StagedEvent</code> with <code>status='pending'</code>. Mark <code>RawEvent.processed=True</code>.</li>
+  </ol>
+
+  <h3>Allowed Tags</h3>
+  <table>
+    <tr><th>Category</th><th>Tags</th></tr>
+    <tr><td>Schedule</td><td><code>weekends-only</code>, <code>evenings-only</code>, <code>daytime-only</code></td></tr>
+    <tr><td>Cost</td><td><code>free</code></td></tr>
+    <tr><td>Audience</td><td><code>family-friendly</code>, <code>lgbtq-friendly</code>, <code>speaks-spanish</code></td></tr>
+    <tr><td>Accessibility</td><td><code>wheelchair-accessible</code></td></tr>
+    <tr><td>Activity</td><td><code>live-music</code>, <code>food-and-drink</code>, <code>arts-and-culture</code>, <code>fitness-and-wellness</code>, <code>community-meetup</code>, <code>fundraiser</code>, <code>market-or-fair</code>, <code>workshop-or-class</code></td></tr>
+    <tr><td>Business</td><td><code>small-business</code>, <code>nature</code></td></tr>
+  </table>
+
+  <h2>Phase 3 — Deduplicate</h2>
+  <p><em>File: <code>ingestion/deduplicator.py</code></em></p>
+  <ol>
+    <li>For each <code>pending</code> staged event, look for others within a ±3 hour window.</li>
+    <li>Compare using <code>thefuzz</code> (Levenshtein distance): title similarity ≥ 80% <strong>and</strong> location similarity ≥ 75%.</li>
+    <li>If both match, mark the newer one <code>status='duplicate'</code> with a <code>duplicate_of</code> FK.</li>
+  </ol>
+
+  <h2>Phase 4 — Admin Review</h2>
+  <p><em>This page. See <a href="/admin/ingestion/stagedevent/">Staged Events →</a></em></p>
+  <ol>
+    <li>Filter by <code>status=pending</code> to see events awaiting review.</li>
+    <li>Edit <code>status</code> inline in the list view, <strong>or</strong> select events and use the bulk action "Approve selected events".</li>
+    <li>Approving immediately creates the <code>Event</code> record in the database (and attaches tags).</li>
+    <li>"Reject selected events" marks them <code>status=rejected</code> — they won't be published.</li>
+  </ol>
+
+  <h2>Phase 5 — Publish to Website</h2>
+  <p><em>File: <code>ingestion/views.py</code> → <code>publish_approved_events()</code></em></p>
+  <ol>
+    <li>Find all <code>StagedEvent</code> records with <code>status='approved'</code> not yet in the Events table.</li>
+    <li>Within an atomic transaction: create <code>Event</code> records + attach tags.</li>
+    <li>Delete all approved staged events (cleanup).</li>
+  </ol>
+
+  <h2>Frontend Display</h2>
+  <p>The frontend calls <code>GET /events/</code> on load. <code>eventService.ts</code> transforms the response (formats date/time, formats price as "$X.XX" or "Free Entry"), then renders events as cards sorted by date. Users can filter by town and tags.</p>
+
+  <h2>CLI Flags (for debugging)</h2>
+  <pre>python manage.py ingest_events                   # full pipeline
+python manage.py ingest_events --skip-poll        # skip ICS fetch
+python manage.py ingest_events --skip-standardize # skip Gemini step
+python manage.py ingest_events --skip-dedup       # skip dedup</pre>
+
+  <h2>Database Tables</h2>
+  <table>
+    <tr><th>Table</th><th>Purpose</th></tr>
+    <tr><td><code>ingestion_eventsource</code></td><td>ICS source URLs and polling config</td></tr>
+    <tr><td><code>ingestion_rawevent</code></td><td>Raw parsed ICS data</td></tr>
+    <tr><td><code>ingestion_stagedevent</code></td><td>LLM-cleaned events awaiting review</td></tr>
+    <tr><td><code>events_event</code></td><td>Published events (live on site)</td></tr>
+    <tr><td><code>events_tag</code></td><td>Tag lookup table</td></tr>
+  </table>
+
+  <h2>Environment Variables</h2>
+  <table>
+    <tr><th>Variable</th><th>Purpose</th></tr>
+    <tr><td><code>GEMINI_API_KEY</code></td><td>Google Gemini API access</td></tr>
+    <tr><td><code>CRON_SECRET</code></td><td>Bearer token for cron endpoint auth</td></tr>
+    <tr><td><code>DATABASE_URL</code></td><td>Neon PostgreSQL connection string</td></tr>
+  </table>
+</div>
+{% endblock %}

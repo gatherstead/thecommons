@@ -14,6 +14,10 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
+            '--skip-cleanup', action='store_true',
+            help='Skip deletion of past events'
+        )
+        parser.add_argument(
             '--skip-poll', action='store_true',
             help='Skip polling sources (only process existing raw events)'
         )
@@ -28,6 +32,17 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write("Starting event ingestion pipeline...\n")
+
+        # Step 0: Clean up past events
+        if not options['skip_cleanup']:
+            self.stdout.write("Step 0: Cleaning up past events...")
+            try:
+                from django.core.management import call_command
+                call_command('cleanup_old_events')
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
+        else:
+            self.stdout.write("Step 0: Skipped (--skip-cleanup)\n")
 
         # Step 1: Poll ICS feeds
         if not options['skip_poll']:

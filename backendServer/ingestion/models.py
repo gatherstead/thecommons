@@ -62,7 +62,8 @@ class StagedEvent(models.Model):
     ]
 
     raw_event = models.OneToOneField(
-        RawEvent, on_delete=models.CASCADE, related_name='staged'
+        RawEvent, on_delete=models.CASCADE, related_name='staged',
+        null=True, blank=True,
     )
 
     # LLM-standardized fields

@@ -27,7 +27,9 @@
 
   <h2>Overview</h2>
   <div class="flow-box">
-    <pre>ICS Source URL
+    <pre>(Step 0: Cleanup)  ← delete past RawEvents + StagedEvents
+     ↓
+ICS Source URL
      ↓  (Phase 1: Poll)
   RawEvent  (stored as-is)
      ↓  (Phase 2: Standardize)
@@ -44,6 +46,22 @@
   <p><strong>Automated trigger:</strong> Vercel cron hits <code>GET /api/cron/ingest</code> every day at 8 AM UTC.</p>
   <p><strong>Manual trigger:</strong> Admin → EventSources → select source → "Run ingestion pipeline" action.</p>
   <p><strong>CLI:</strong> <code>python manage.py ingest_events</code></p>
+
+  <h2>Step 0 — Cleanup (runs first, every time)</h2>
+  <p><em>File: <code>ingestion/management/commands/cleanup_old_events.py</code></em></p>
+  <p>Runs automatically at the start of every pipeline run before any new events are fetched.</p>
+  <ol>
+    <li>Delete all <code>StagedEvent</code> records where <code>start_datetime</code> is in the past — <strong>except</strong> those with <code>status='approved'</code> and no <code>published_event</code> yet.</li>
+    <li>Delete all <code>RawEvent</code> records where <code>raw_start</code> is in the past — <strong>except</strong> those still backing an approved+unpublished staged event.</li>
+  </ol>
+  <table>
+    <tr><th>Preserved</th><th>Deleted</th></tr>
+    <tr>
+      <td>Approved staged events not yet pushed to Events table (<code>status='approved'</code> + <code>published_event=null</code>) and their raw events</td>
+      <td>All past <code>pending</code>, <code>rejected</code>, and <code>duplicate</code> staged events and their raw events</td>
+    </tr>
+  </table>
+  <p>Can also be run standalone: <code>python manage.py cleanup_old_events</code></p>
 
   <h2>Phase 1 — Poll ICS Sources</h2>
   <p><em>File: <code>ingestion/importers/ics_importer.py</code> · Model: <code>RawEvent</code></em></p>
@@ -106,10 +124,13 @@
   <p>The frontend calls <code>GET /events/</code> on load. <code>eventService.ts</code> transforms the response (formats date/time, formats price as "$X.XX" or "Free Entry"), then renders events as cards sorted by date. Users can filter by town and tags.</p>
 
   <h2>CLI Flags (for debugging)</h2>
-  <pre>python manage.py ingest_events                   # full pipeline
+  <pre>python manage.py ingest_events                   # full pipeline (includes cleanup)
+python manage.py ingest_events --skip-cleanup     # skip past-event deletion
 python manage.py ingest_events --skip-poll        # skip ICS fetch
 python manage.py ingest_events --skip-standardize # skip Gemini step
-python manage.py ingest_events --skip-dedup       # skip dedup</pre>
+python manage.py ingest_events --skip-dedup       # skip dedup
+
+python manage.py cleanup_old_events               # run cleanup standalone</pre>
 
   <h2>Database Tables</h2>
   <table>

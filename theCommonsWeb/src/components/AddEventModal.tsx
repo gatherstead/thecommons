@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { TOWNS, type TownId } from './TownMultiselect';
+import { type TownId } from './TownMultiselect';
+import type { TownOption } from '../models/eventsModels';
 import { FILTER_TAGS, type TagId } from './TagFilter';
 import { createEvent } from '../services/eventService';
 
 interface AddEventModalProps {
     isOpen: boolean;
     onClose: () => void;
+    towns: TownOption[];
 }
 
-export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
+export function AddEventModal({ isOpen, onClose, towns }: AddEventModalProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -21,6 +23,7 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
         price: '', // We keep this as string in state for easier input handling
         town: '' as TownId,
         tags: [] as TagId[],
+        link: '',
     });
 
     if (!isOpen) return null;
@@ -45,6 +48,7 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
                 description: formData.description,
                 price: parseFloat(formData.price) || 0.00,
                 tags: formData.tags, // Sending the array of IDs ['family', 'outdoor']
+                link: formData.link,
             });
 
             // Success!
@@ -118,6 +122,17 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
                         />
                     </div>
 
+                    <div>
+                        <label className="block font-[var(--font-headline)] uppercase tracking-wider text-sm font-bold mb-1">Link (optional)</label>
+                        <input
+                            type="url"
+                            placeholder="https://..."
+                            className="w-full bg-transparent border-2 border-[var(--color-border)] p-2 font-[var(--font-body)] focus:border-[var(--color-accent)] outline-none"
+                            value={formData.link}
+                            onChange={e => setFormData({ ...formData, link: e.target.value })}
+                        />
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
                             <label className="block font-[var(--font-headline)] uppercase tracking-wider text-sm font-bold mb-1">Date</label>
@@ -146,6 +161,7 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
                             <input
                                 type="number"
                                 step="0.01"
+                                min="0"
                                 placeholder="0.00"
                                 required
                                 className="w-full bg-transparent border-2 border-[var(--color-border)] p-2 font-[var(--font-body)] focus:border-[var(--color-accent)] outline-none"
@@ -167,8 +183,8 @@ export function AddEventModal({ isOpen, onClose }: AddEventModalProps) {
                                 onChange={e => setFormData({ ...formData, town: e.target.value as TownId })}
                             >
                                 <option value="">Select a town</option>
-                                {TOWNS.map(town => (
-                                    <option key={town.id} value={town.id}>{town.name}</option>
+                                {towns.map(town => (
+                                    <option key={town.slug} value={town.slug}>{town.name}</option>
                                 ))}
                             </select>
                         </div>

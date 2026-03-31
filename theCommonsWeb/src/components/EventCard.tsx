@@ -1,5 +1,5 @@
 import { FILTER_TAGS } from './TagFilter';
-import { TOWNS } from './TownMultiselect';
+import type { TownOption } from '../models/eventsModels';
 
 export interface Event {
     id: string;
@@ -11,13 +11,15 @@ export interface Event {
     tags: String[];
     town: String;
     price: string;
+    link?: string;
     imageUrl?: string;
 }
 
 interface EventCardProps {
     event: Event;
     featured?: boolean;
-    onClick?: (event: Event) => void; // Add this prop
+    onClick?: (event: Event) => void;
+    towns?: TownOption[];
 }
 
 function formatDate(date: Date): string {
@@ -29,8 +31,8 @@ function formatDate(date: Date): string {
     });
 }
 
-export function EventCard({ event, featured = false, onClick }: EventCardProps) {
-    const townName = TOWNS.find(t => t.id === event.town)?.name || event.town;
+export function EventCard({ event, featured = false, onClick, towns = [] }: EventCardProps) {
+    const townName = towns.find(t => t.slug === event.town)?.name || String(event.town);
     const tagLabels = event.tags
         .map(tagId => FILTER_TAGS.find(t => t.id === tagId)?.label)
         .filter(Boolean);

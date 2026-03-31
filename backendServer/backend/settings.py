@@ -253,6 +253,11 @@ UNFOLD = {
                         "link": "/admin/events/tag/",
                         "icon": "label",
                     },
+                    {
+                        "title": "Towns",
+                        "link": "/admin/events/town/",
+                        "icon": "location_city",
+                    },
                 ],
             },
             {

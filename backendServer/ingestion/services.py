@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from events.models import Event, Tag
+from events.models import Event, Tag, Town
 from ingestion.models import StagedEvent
 
 
@@ -25,9 +25,12 @@ def publish_all_approved():
 
         for staged in approved_staged:
             if staged.published_event_id is None:
+                town_obj = Town.objects.filter(slug=staged.town.lower()).first() if staged.town else None
+                if town_obj is None:
+                    continue
                 event = Event.objects.create(
                     title=staged.title,
-                    town=staged.town,
+                    town=town_obj,
                     date=staged.start_datetime,
                     venue=staged.location_name,
                     description=staged.description,

@@ -1,24 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
+import type { TownOption } from '../models/eventsModels';
 
-export const TOWNS = [
-    { id: 'carrboro', name: 'Carrboro' },
-    { id: 'chapel-hill', name: 'Chapel Hill' },
-    { id: 'pittsboro', name: 'Pittsboro' },
-    { id: 'hillsborough', name: 'Hillsborough' },
-    { id: 'durham', name: 'Durham' },
-    { id: 'raleigh', name: 'Raleigh' },
-    { id: 'cary', name: 'Cary' },
-    { id: 'apex', name: 'Apex' },
-] as const;
-
-export type TownId = typeof TOWNS[number]['id'];
+export type TownId = string;
 
 interface TownMultiselectProps {
+    towns: TownOption[];
     selectedTowns: TownId[];
     onTownToggle: (townId: TownId) => void;
 }
 
-export function TownMultiselect({ selectedTowns, onTownToggle }: TownMultiselectProps) {
+export function TownMultiselect({ towns, selectedTowns, onTownToggle }: TownMultiselectProps) {
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -33,7 +24,7 @@ export function TownMultiselect({ selectedTowns, onTownToggle }: TownMultiselect
     }, []);
 
     const selectedNames = selectedTowns.length > 0
-        ? TOWNS.filter(t => selectedTowns.includes(t.id)).map(t => t.name).join(', ')
+        ? towns.filter(t => selectedTowns.includes(t.slug)).map(t => t.name).join(', ')
         : 'All Towns';
 
     return (
@@ -57,12 +48,12 @@ export function TownMultiselect({ selectedTowns, onTownToggle }: TownMultiselect
 
             {isOpen && (
                 <div className="absolute z-50 w-full mt-1 border-2 border-[var(--color-border)] bg-[var(--color-paper)] shadow-lg max-h-64 overflow-y-auto">
-                    {TOWNS.map((town) => {
-                        const isSelected = selectedTowns.includes(town.id);
+                    {towns.map((town) => {
+                        const isSelected = selectedTowns.includes(town.slug);
                         return (
                             <button
-                                key={town.id}
-                                onClick={() => onTownToggle(town.id)}
+                                key={town.slug}
+                                onClick={() => onTownToggle(town.slug)}
                                 className={`w-full px-4 py-2 text-left flex items-center gap-3 cursor-pointer transition-colors ${isSelected ? 'bg-[var(--color-ink)] text-[var(--color-paper)]' : 'hover:bg-[#ebe7de]'
                                     }`}
                             >

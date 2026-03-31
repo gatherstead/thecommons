@@ -7,13 +7,14 @@ import { EventModal } from './components/EventModal';
 import { CalendarView } from './components/CalendarView';
 
 
-import { getEvents } from './services/eventService';
-import { type FrontendEvent } from './models/eventsModels';
+import { getEvents, getTowns } from './services/eventService';
+import { type FrontendEvent, type TownOption } from './models/eventsModels';
 
 type ViewMode = 'feed' | 'calendar';
 
 function App() {
   const [events, setEvents] = useState<FrontendEvent[]>([]);
+  const [towns, setTowns] = useState<TownOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const [selectedTags, setSelectedTags] = useState<TagId[]>([]);
@@ -32,8 +33,9 @@ function App() {
 
   const fetchData = async () => {
     setIsLoading(true);
-    const data = await getEvents();
+    const [data, townData] = await Promise.all([getEvents(), getTowns()]);
     setEvents(data);
+    setTowns(townData);
     setIsLoading(false);
   };
 
@@ -146,6 +148,7 @@ function App() {
                 Select Your Town
               </h3>
               <TownMultiselect
+                towns={towns}
                 selectedTowns={selectedTowns}
                 onTownToggle={handleTownToggle}
               />
@@ -229,6 +232,7 @@ function App() {
                       <EventCard
                         event={featuredEvent}
                         featured
+                        towns={towns}
                         onClick={() => setSelectedEvent(featuredEvent)}
                       />
                     )}
@@ -239,6 +243,7 @@ function App() {
                           <EventCard
                             key={event.id}
                             event={event}
+                            towns={towns}
                             onClick={() => setSelectedEvent(event)}
                           />
                         ))}
@@ -248,6 +253,7 @@ function App() {
                           <EventCard
                             key={event.id}
                             event={event}
+                            towns={towns}
                             onClick={() => setSelectedEvent(event)}
                           />
                         ))}
@@ -293,12 +299,14 @@ function App() {
       {/* --- MODALS --- */}
       <AddEventModal
         isOpen={isAddModalOpen}
-        onClose={handleModalClose} // Now triggers a refresh when closed
+        onClose={handleModalClose}
+        towns={towns}
       />
 
       <EventModal
         event={selectedEvent ? { ...selectedEvent, date: selectedEvent.date.toISOString() } as any : null}
         onClose={() => setSelectedEvent(null)}
+        towns={towns}
       />
     </div>
   );

@@ -2,10 +2,16 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
-from .models import Event
+from .models import Event, Town
 from .serializers import EventSerializer
 from backend.permissions import HasCommonsAPIKey
 from ingestion.models import StagedEvent
+
+
+@api_view(['GET'])
+def getTowns(request):
+    towns = Town.objects.all().order_by('name')
+    return Response([{'slug': t.slug, 'name': t.name} for t in towns])
 
 
 @api_view(['GET'])

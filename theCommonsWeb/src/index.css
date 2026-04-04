@@ -1,15 +1,25 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&display=swap');
 
 :root {
-  --color-paper: #f5f1e8;
-  --color-ink: #1a1a1a;
+  /* Newsprint palette */
+  --color-bg: #f4f1eb;
+  --color-bg-alt: #eae6dd;
+  --color-text: #1a1a1a;
+  --color-text-muted: #555555;
+  --color-link: #1a1a1a;
+  --color-link-hover: #8b0000;
+  --color-border: #1a1a1a;
+  --color-border-light: #c8c3b8;
   --color-accent: #8b0000;
-  --color-border: #2a2a2a;
-  --color-muted: #666;
-  --font-headline: 'Playfair Display', Georgia, 'Times New Roman', serif;
-  --font-body: 'Libre Baskerville', Georgia, 'Times New Roman', serif;
-  --font-accent: 'Source Serif 4', Georgia, serif;
+
+  /* Readable serif stack -- Georgia is on every system, no network requests */
+  --font-headline: Georgia, "Times New Roman", Times, serif;
+  --font-body: Georgia, "Times New Roman", Times, serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  --focus-ring: 2px solid #1a1a1a;
+  --focus-ring-offset: 2px;
 }
 
 * {
@@ -19,9 +29,10 @@
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--color-paper);
-  color: var(--color-ink);
+  background-color: var(--color-bg);
+  color: var(--color-text);
   font-family: var(--font-body);
+  font-size: 15px;
   line-height: 1.6;
   min-height: 100vh;
 }
@@ -31,52 +42,53 @@ body {
   min-height: 100vh;
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
+h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-headline);
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.02em;
+  margin: 0 0 0.5rem 0;
 }
 
-.newspaper-border {
-  border: 2px solid var(--color-border);
-  box-shadow: 3px 3px 0 var(--color-border);
+a {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+a:hover {
+  color: var(--color-link-hover);
 }
 
-.newspaper-divider {
-  border: none;
-  border-top: 2px solid var(--color-border);
-  margin: 1rem 0;
-}
-
-.newspaper-divider-thin {
-  border: none;
-  border-top: 1px solid var(--color-border);
-  margin: 0.5rem 0;
-}
-
-.newspaper-double-border {
-  border-top: 3px double var(--color-border);
-  border-bottom: 3px double var(--color-border);
-  padding: 0.5rem 0;
-}
-
-.drop-cap::first-letter {
-  float: left;
-  font-size: 3.5rem;
-  line-height: 1;
-  font-family: var(--font-headline);
-  font-weight: 700;
-  margin-right: 0.5rem;
-  margin-top: 0.1rem;
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 ::selection {
   background-color: var(--color-accent);
   color: white;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-border-light);
+  margin: 0.75rem 0;
+}
+
+/* Newspaper utility classes */
+.rule-thick {
+  border-top: 3px solid var(--color-border);
+}
+
+.rule-double {
+  border-top: 3px double var(--color-border);
+}
+
+.drop-cap::first-letter {
+  float: left;
+  font-family: var(--font-headline);
+  font-size: 3.2rem;
+  line-height: 1;
+  font-weight: 700;
+  margin-right: 0.4rem;
+  margin-top: 0.1rem;
 }

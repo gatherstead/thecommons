@@ -7,6 +7,8 @@ How ICS calendar events get from a source URL to a published event on thecommons
 ## Overview
 
 ```
+(Step 0: Cleanup)  ← delete past RawEvents + StagedEvents
+     ↓
 ICS Source URL
      ↓  (Phase 1: Poll)
   RawEvent  (stored as-is)
@@ -25,6 +27,25 @@ ICS Source URL
 **Trigger:** Vercel cron job hits `GET /api/cron/ingest` every day at 8 AM UTC.
 **Manual trigger:** Django admin → EventSources → select source → "Run ingestion pipeline" action.
 **CLI trigger:** `python manage.py ingest_events`
+
+---
+
+## Step 0 — Cleanup (runs first, every time)
+
+**File:** `backendServer/ingestion/management/commands/cleanup_old_events.py`
+
+Runs automatically at the start of every pipeline run before any new events are fetched.
+
+1. Delete all `StagedEvent` records where `start_datetime` is in the past — **except** those with `status='approved'` and no `published_event` yet (approved-but-not-yet-published events are preserved so they don't get lost).
+2. Delete all `RawEvent` records where `raw_start` is in the past — **except** those still backing an approved+unpublished staged event (same preservation logic).
+
+**What is preserved:**
+- Approved staged events that haven't been pushed to the Events table yet (`status='approved'` + `published_event=null`)
+- Their corresponding raw events
+
+**What gets deleted:**
+- All past `pending`, `rejected`, and `duplicate` staged events
+- All past raw events that are no longer needed
 
 ---
 
@@ -171,13 +192,17 @@ Approving a staged event immediately creates the corresponding `Event` in the da
 ## CLI Flags (for testing/debugging)
 
 ```bash
-# Full pipeline
+# Full pipeline (includes cleanup)
 python manage.py ingest_events
 
 # Skip individual phases
+python manage.py ingest_events --skip-cleanup       # skip past-event deletion
 python manage.py ingest_events --skip-poll          # skip ICS fetch
 python manage.py ingest_events --skip-standardize   # skip Gemini LLM step
 python manage.py ingest_events --skip-dedup         # skip duplicate detection
+
+# Run cleanup standalone
+python manage.py cleanup_old_events
 ```
 
 ---

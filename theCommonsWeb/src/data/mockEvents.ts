@@ -1,6 +1,6 @@
-import type { Event } from '../components/EventCard';
+import type { FrontendEvent } from '../models/eventsModels';
 
-export const mockEvents: Event[] = [
+export const mockEvents: Partial<FrontendEvent>[] = [
     {
         id: '1',
         title: 'Carrboro Farmers Market: Spring Celebration',

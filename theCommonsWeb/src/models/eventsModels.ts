@@ -1,3 +1,8 @@
+export interface TownOption {
+    slug: string;
+    name: string;
+}
+
 // 1. Define what the Django API actually sends us
 export interface BackendEvent {
     uuid: string;
@@ -9,6 +14,7 @@ export interface BackendEvent {
     price: string; // Django DecimalField sends a string like "10.00" or number
     tag_names: string[];
     photo: string | null;
+    link: string;
 }
 
 //format the frontend expects
@@ -22,6 +28,8 @@ export interface FrontendEvent {
     tags: string[];
     town: string;
     price: string;
+    link: string;
+    photo: string | null;
 }
 
 // Define the payload for creating events
@@ -33,4 +41,5 @@ export interface EventPayload {
     description: string;
     price: number;
     tags: string[];
+    link: string;
 }

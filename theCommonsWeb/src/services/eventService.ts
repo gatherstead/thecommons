@@ -1,6 +1,6 @@
 // src/services/eventService.ts
 
-import type { FrontendEvent, BackendEvent, EventPayload } from "../models/eventsModels";
+import type { FrontendEvent, BackendEvent, EventPayload, TownOption } from "../models/eventsModels";
 
 
 
@@ -18,8 +18,11 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
     });
 
     // Format price
-    const priceVal = parseFloat(backendEvent.price);
-    const priceString = priceVal === 0 ? "Free Entry" : `$${priceVal.toFixed(2)}`;
+    const priceVal = backendEvent.price == null ? null : parseFloat(backendEvent.price);
+    const priceString =
+        priceVal == null || priceVal < 0 ? "Not Listed" :
+        priceVal === 0 ? "Free" :
+        `$${priceVal.toFixed(2)}`;
 
     return {
         id: backendEvent.uuid, // Map uuid -> id
@@ -31,13 +34,27 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
         date: dateObj,
         time: timeString,
         price: priceString,
+        link: backendEvent.link || '',
+        photo: backendEvent.photo,
     };
+};
+
+// --- GET ALL TOWNS ---
+export const getTowns = async (): Promise<TownOption[]> => {
+    try {
+        const response = await fetch(`${API_BASE}/events/towns/`);
+        if (!response.ok) throw new Error('Failed to fetch towns');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching towns:', error);
+        return [];
+    }
 };
 
 // --- GET ALL EVENTS ---
 export const getEvents = async (): Promise<FrontendEvent[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events`, {
+        const response = await fetch(`${API_BASE}/events/`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });

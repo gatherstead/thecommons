@@ -10,6 +10,14 @@ class Tag(models.Model):
         return self.name
 
 
+class Town(models.Model):
+    slug = models.CharField(max_length=100, unique=True)  # e.g. 'carrboro'
+    name = models.CharField(max_length=100)               # e.g. 'Carrboro'
+
+    def __str__(self):
+        return self.name
+
+
 class UserProfile(models.Model):
     # Link to the built-in User
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
@@ -51,7 +59,7 @@ class Event(models.Model):
     
     title = models.CharField(max_length=200)
     
-    town = models.CharField(max_length=100)
+    town = models.ForeignKey('Town', null=True, blank=True, on_delete=models.SET_NULL, related_name='events')
     
     date = models.DateTimeField() 
     

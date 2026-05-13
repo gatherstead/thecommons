@@ -1,16 +1,16 @@
-import { useState, useMemo } from 'react';
-import { useEvents } from './hooks/useEvents';
-import { type FrontendEvent } from './models/eventsModels';
-import { Header } from './components/layout/Header';
-import { Footer } from './components/layout/Footer';
-import { Sidebar } from './components/layout/Sidebar';
-import { TopBar } from './components/layout/TopBar';
-import { EventFeed } from './components/events/EventFeed';
-import { CalendarView } from './components/events/CalendarView';
-import { AddEventModal } from './components/events/AddEventModal';
-import { EventDetailModal } from './components/events/EventDetailModal';
+'use client';
 
-type ViewMode = 'feed' | 'calendar';
+import { useState, useMemo } from 'react';
+import { useEvents, type ViewMode } from '../hooks/useEvents';
+import { useAuth } from '../hooks/useAuth';
+import { type FrontendEvent } from '../models/eventsModels';
+import { Sidebar } from '../components/layout/Sidebar';
+import { TopBar } from '../components/layout/TopBar';
+import { EventFeed } from '../components/events/EventFeed';
+import { CalendarView } from '../components/events/CalendarView';
+import { AddEventModal } from '../components/events/AddEventModal';
+import { EventDetailModal } from '../components/events/EventDetailModal';
+import { AuthModal } from '../components/auth/AuthModal';
 
 function isSameDay(a: Date, b: Date) {
   return (
@@ -20,29 +20,34 @@ function isSameDay(a: Date, b: Date) {
   );
 }
 
-function App() {
+export default function HomePage() {
+  const [viewMode, setViewMode] = useState<ViewMode>('feed');
+  const { user, logout } = useAuth();
+
   const {
     filteredEvents,
     towns,
     isLoading,
+    showingPastEvents,
+    isLoadingPast,
+    loadPastEvents,
     selectedTags,
     selectedTowns,
     toggleTag,
     toggleTown,
     clearFilters,
     refetch,
-  } = useEvents();
-
-  const [viewMode, setViewMode] = useState<ViewMode>('feed');
+  } = useEvents(viewMode);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(
+    null,
+  );
 
-  // Date selected via mini calendar — drives both feed filter and calendar jump
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   const toggleView = () => {
-    setViewMode(v => {
-      // Clear the selected date when returning to feed so nothing stays filtered
+    setViewMode((v) => {
       if (v === 'calendar') setSelectedDate(null);
       return v === 'feed' ? 'calendar' : 'feed';
     });
@@ -58,46 +63,48 @@ function App() {
     setSelectedDate(null);
   };
 
-  // Clicking a day in the mini calendar: switch to calendar view and open that day
   const handleDayClick = (date: Date | null) => {
     setSelectedDate(date);
     if (date) setViewMode('calendar');
   };
 
-  // Feed-mode date filter (only used when staying in feed view)
+  const handlePostEvent = () => {
+    if (user) {
+      setIsAddModalOpen(true);
+    } else {
+      setIsAuthModalOpen(true);
+    }
+  };
+
   const displayedEvents = useMemo(() => {
     if (viewMode !== 'feed' || !selectedDate) return filteredEvents;
-    return filteredEvents.filter(e => isSameDay(e.date, selectedDate));
+    return filteredEvents.filter((e) => isSameDay(e.date, selectedDate));
   }, [filteredEvents, selectedDate, viewMode]);
 
-  const hasFilters = selectedTags.length > 0 || selectedTowns.length > 0 || selectedDate !== null;
+  const hasFilters =
+    selectedTags.length > 0 ||
+    selectedTowns.length > 0 ||
+    selectedDate !== null;
 
   const sidebarProps = {
     isLoading,
     hasFilters,
     onClearFilters: handleClearFilters,
-    onPostEvent: () => setIsAddModalOpen(true),
-    viewMode,
+    onPostEvent: handlePostEvent,
+    viewMode: viewMode as 'feed' | 'calendar',
     onToggleView: toggleView,
     events: filteredEvents,
     selectedDate,
     onDayClick: handleDayClick,
     selectedTags,
     onTagToggle: toggleTag,
+    currentUser: user,
+    onSignIn: () => setIsAuthModalOpen(true),
+    onSignOut: logout,
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg)]">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1 focus:bg-[var(--color-accent)] focus:text-white focus:text-sm"
-      >
-        Skip to content
-      </a>
-
-      <Header />
-
-      {/* Towns bar — horizontal strip below masthead */}
+    <>
       <TopBar
         towns={towns}
         selectedTowns={selectedTowns}
@@ -114,10 +121,16 @@ function App() {
                 isLoading={isLoading}
                 onEventClick={setSelectedEvent}
                 towns={towns}
+                showingPastEvents={showingPastEvents}
+                isLoadingPast={isLoadingPast}
+                onLoadPastEvents={loadPastEvents}
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">
-              <Sidebar filteredCount={displayedEvents.length} {...sidebarProps} />
+              <Sidebar
+                filteredCount={displayedEvents.length}
+                {...sidebarProps}
+              />
             </div>
           </div>
         ) : (
@@ -131,13 +144,14 @@ function App() {
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">
-              <Sidebar filteredCount={filteredEvents.length} {...sidebarProps} />
+              <Sidebar
+                filteredCount={filteredEvents.length}
+                {...sidebarProps}
+              />
             </div>
           </div>
         )}
       </main>
-
-      <Footer />
 
       <AddEventModal
         isOpen={isAddModalOpen}
@@ -150,8 +164,16 @@ function App() {
         onClose={() => setSelectedEvent(null)}
         towns={towns}
       />
-    </div>
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthenticated={() => {
+          setIsAuthModalOpen(false);
+          setIsAddModalOpen(true);
+        }}
+        intro="Create an account to post events to The Commons."
+      />
+    </>
   );
 }
-
-export default App;

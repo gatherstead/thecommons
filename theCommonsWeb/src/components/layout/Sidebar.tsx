@@ -2,6 +2,7 @@ import { Button } from '../ui/Button';
 import { MiniCalendar } from './MiniCalendar';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import type { FrontendEvent } from '../../models/eventsModels';
+import type { AuthUser } from '../../models/authModels';
 
 type ViewMode = 'feed' | 'calendar';
 
@@ -18,6 +19,9 @@ interface SidebarProps {
     onDayClick: (date: Date | null) => void;
     selectedTags: TagId[];
     onTagToggle: (tagId: TagId) => void;
+    currentUser: AuthUser | null;
+    onSignIn: () => void;
+    onSignOut: () => void;
 }
 
 export function Sidebar({
@@ -33,6 +37,9 @@ export function Sidebar({
     onDayClick,
     selectedTags,
     onTagToggle,
+    currentUser,
+    onSignIn,
+    onSignOut,
 }: SidebarProps) {
     const today = new Date();
     const formattedDate = today.toLocaleDateString('en-US', {
@@ -47,6 +54,33 @@ export function Sidebar({
             <Button variant="primary" onClick={onPostEvent} className="w-full">
                 Post an Event +
             </Button>
+
+            {currentUser ? (
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] flex items-baseline justify-between gap-2">
+                    <span className="truncate">
+                        Signed in as{' '}
+                        <span className="not-italic font-black text-[var(--color-text)]">
+                            {currentUser.business_name || currentUser.email}
+                        </span>
+                    </span>
+                    <button
+                        onClick={onSignOut}
+                        className="underline hover:text-[var(--color-accent)] bg-transparent border-none cursor-pointer p-0 shrink-0"
+                    >
+                        Sign out
+                    </button>
+                </p>
+            ) : (
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                    Posting an event requires an account.{' '}
+                    <button
+                        onClick={onSignIn}
+                        className="underline hover:text-[var(--color-accent)] bg-transparent border-none cursor-pointer p-0"
+                    >
+                        Sign in
+                    </button>
+                </p>
+            )}
 
             <hr />
 
@@ -65,12 +99,9 @@ export function Sidebar({
 
             <hr />
 
-            <button
-                onClick={onToggleView}
-                className="text-xs uppercase tracking-wider cursor-pointer bg-transparent border-none underline hover:text-[var(--color-accent)] block"
-            >
-                {viewMode === 'feed' ? '[ View Full Calendar ]' : '[ View Feed ]'}
-            </button>
+            <Button variant="secondary" onClick={onToggleView} className="w-full">
+                {viewMode === 'feed' ? 'View Full Calendar' : 'View Feed'}
+            </Button>
 
             <hr />
 

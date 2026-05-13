@@ -1,10 +1,13 @@
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from .models import Event, Town
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from .models import Event, Town, UserProfile
 from .serializers import EventSerializer
-from backend.permissions import HasCommonsAPIKey
+from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUser
 from ingestion.models import StagedEvent
 
 
@@ -16,30 +19,38 @@ def getTowns(request):
 
 @api_view(['GET'])
 def getAll(request):
-    # Query the database
     events = Event.objects.all().order_by('-date')
-    
-    # Serialize the data (many=True means we are converting a list, not just one item)
+
+    include_past = request.query_params.get('include_past', '').lower() == 'true'
+
+    after_param = request.query_params.get('after')
+    if after_param:
+        after_dt = parse_datetime(after_param)
+        if after_dt:
+            events = events.filter(date__gte=after_dt)
+    elif not include_past:
+        events = events.filter(date__gte=timezone.now())
+
+    before_param = request.query_params.get('before')
+    if before_param:
+        before_dt = parse_datetime(before_param)
+        if before_dt:
+            events = events.filter(date__lte=before_dt)
+
     serializer = EventSerializer(events, many=True)
-    
-    # Return the JSON data
     return Response(serializer.data)
 
 
 @api_view(['GET'])
 def getOne(request, event_id):
-    # Get the object or return 404 automatically
-    # Note: We use 'uuid' here because that's your model field name
     event = get_object_or_404(Event, uuid=event_id)
-    
-    # Serialize the single object
     serializer = EventSerializer(event)
-    
     return Response(serializer.data)
 
 
 @api_view(['POST'])
-@permission_classes([HasCommonsAPIKey])
+@authentication_classes([BearerTokenAuthentication])
+@permission_classes([HasCommonsAPIKeyOrUser])
 def createEvent(request):
     data = request.data
 
@@ -61,3 +72,20 @@ def createEvent(request):
     )
 
     return Response({'id': staged.id, 'status': staged.status}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@authentication_classes([BearerTokenAuthentication])
+@permission_classes([IsAuthenticated])
+def getMyProfile(request):
+    profile = UserProfile.objects.filter(user_id=request.user.id).select_related('user').first()
+    if profile is None:
+        return Response({'detail': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+    return Response({
+        'id': profile.user.id,
+        'email': profile.user.email,
+        'business_name': profile.user.name,
+        'user_type': profile.user_type,
+        'primary_city': profile.primary_city,
+        'email_preference': profile.email_preference,
+    })

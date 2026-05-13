@@ -1,3 +1,5 @@
+'use client';
+
 import { useId, type TextareaHTMLAttributes } from 'react';
 
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {

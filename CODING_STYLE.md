@@ -14,7 +14,7 @@ Key principles:
 
 ## Frontend: CSS Design Tokens
 
-All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/index.css`. **Do not hardcode hex values in components** — reference the variables.
+All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/app/globals.css`. **Do not hardcode hex values in components** — reference the variables.
 
 ```css
 --color-bg:           #f4f1eb   /* newsprint cream — page background */
@@ -32,8 +32,11 @@ All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/
 --font-sans:      system-ui, ...  /* only for UI chrome that must feel modern */
 ```
 
-Utility classes defined in `index.css`:
+Utility classes defined in `globals.css`:
 - `.rule-thick` — `border-top: 3px solid var(--color-border)`
+- `.rule-double` — `border-top: 3px double var(--color-border)`
+- `.drop-cap` — floated large first letter (headline serif, 3.2rem)
+- `.skeleton-block` — ebbing pulse animation for loading skeletons (respects `prefers-reduced-motion`)
 
 ---
 
@@ -44,7 +47,10 @@ Utility classes defined in `index.css`:
 - Use Tailwind utility classes for layout/spacing; use CSS variables for all colors (via `var(--color-*)` inline or via Tailwind's `bg-[var(--color-bg)]` syntax).
 - No `useState` in pure display components — lift state to the nearest shared ancestor or into a hook.
 - The main data hook is `useEvents` in `src/hooks/`. Add filtering/sorting logic there, not in components.
+- Auth state lives in `useAuth` (context provider in `src/hooks/useAuth.tsx`). Don't manage tokens or user state in components directly.
 - Event data flows as `FrontendEvent` (see `src/models/eventsModels.ts`). Map API responses to this type in `eventService.ts`, not in components.
+- **Next.js App Router:** Pages live in `src/app/`. Mark interactive components with `'use client'`. Server components are preferred for static/SEO pages (e.g., About). Route-level `metadata` exports provide SEO titles/descriptions.
+- Environment variables exposed to the browser must use the `NEXT_PUBLIC_` prefix.
 
 ---
 

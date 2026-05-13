@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useMemo, useEffect } from 'react';
 import type { FrontendEvent, TownOption } from '../../models/eventsModels';
 import { EventRow } from './EventRow';

@@ -1,7 +1,10 @@
+'use client';
+
 import { useState } from 'react';
 import type { TownOption } from '../../models/eventsModels';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import { createEvent } from '../../services/eventService';
+import { useAuth } from '../../hooks/useAuth';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
@@ -15,6 +18,7 @@ interface AddEventModalProps {
 }
 
 export function AddEventModal({ isOpen, onClose, towns }: AddEventModalProps) {
+    const { token } = useAuth();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -47,7 +51,7 @@ export function AddEventModal({ isOpen, onClose, towns }: AddEventModalProps) {
                 price: parseFloat(formData.price) || 0.00,
                 tags: formData.tags,
                 link: formData.link,
-            });
+            }, token);
 
             alert('Event Created Successfully!');
             onClose();

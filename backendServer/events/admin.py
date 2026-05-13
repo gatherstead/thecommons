@@ -16,7 +16,10 @@ class TownAdmin(ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(ModelAdmin):
-    pass
+    # `user` points to a managed=False model in neon_auth — no FK constraint
+    # and no <select> widget makes sense; show a raw id lookup instead.
+    raw_id_fields = ('user',)
+    list_display = ['user', 'user_type', 'primary_city']
 
 
 @admin.register(Event)

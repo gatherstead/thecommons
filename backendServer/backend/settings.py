@@ -159,6 +159,11 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
 
+# Better Auth bridge (Next.js owns auth; Django validates issued JWTs via JWKS)
+BETTER_AUTH_JWKS_URL = os.environ.get('BETTER_AUTH_JWKS_URL', '')
+BETTER_AUTH_ISSUER = os.environ.get('BETTER_AUTH_ISSUER', '')
+BETTER_AUTH_AUDIENCE = os.environ.get('BETTER_AUTH_AUDIENCE', '')
+
 # Django Unfold Admin Configuration
 # Docs: https://github.com/unfoldadmin/django-unfold
 UNFOLD = {

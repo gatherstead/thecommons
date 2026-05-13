@@ -4,8 +4,8 @@ import type { FrontendEvent, BackendEvent, EventPayload, TownOption } from "../m
 
 
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
-const API_KEY = import.meta.env.VITE_THE_COMMONS_API_KEY || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_KEY = process.env.NEXT_PUBLIC_THE_COMMONS_API_KEY || '';
 
 
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
@@ -52,9 +52,21 @@ export const getTowns = async (): Promise<TownOption[]> => {
 };
 
 // --- GET ALL EVENTS ---
-export const getEvents = async (): Promise<FrontendEvent[]> => {
+export const getEvents = async (params?: {
+    after?: string;
+    before?: string;
+    include_past?: boolean;
+}): Promise<FrontendEvent[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events/`, {
+        const query = new URLSearchParams();
+        if (params?.after) query.set('after', params.after);
+        if (params?.before) query.set('before', params.before);
+        if (params?.include_past) query.set('include_past', 'true');
+
+        const qs = query.toString();
+        const url = `${API_BASE}/events/${qs ? `?${qs}` : ''}`;
+
+        const response = await fetch(url, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });
@@ -73,12 +85,12 @@ export const getEvents = async (): Promise<FrontendEvent[]> => {
 };
 
 // --- CREATE EVENT ---
-export const createEvent = async (eventData: EventPayload) => {
+export const createEvent = async (eventData: EventPayload, authToken?: string | null) => {
     const response = await fetch(`${API_BASE}/events/create`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`,
+            'Authorization': `Bearer ${authToken || API_KEY}`,
         },
         body: JSON.stringify(eventData),
     });

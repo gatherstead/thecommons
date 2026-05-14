@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@better-auth/infra": "^0.2.7",
     "@tailwindcss/postcss": "^4.3.0",
     "better-auth": "^1.2.0",
     "drizzle-orm": "^0.36.0",
@@ -17,6 +18,14 @@
     "pg": "^8.13.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "better-sqlite3",
+      "@prisma/client"
+    ]
   },
   "devDependencies": {
     "@better-auth/cli": "^1.2.0",
@@ -26,7 +35,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.23",
-    "drizzle-kit": "^0.30.0",
+    "drizzle-kit": "^0.31.4",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

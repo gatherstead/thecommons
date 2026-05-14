@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEvents, type ViewMode } from '../hooks/useEvents';
 import { useAuth } from '../hooks/useAuth';
-import { type FrontendEvent } from '../models/eventsModels';
+import { type EventPayload, type FrontendEvent } from '../models/eventsModels';
+import { createEvent } from '../services/eventService';
 import { Sidebar } from '../components/layout/Sidebar';
 import { TopBar } from '../components/layout/TopBar';
 import { EventFeed } from '../components/events/EventFeed';
@@ -22,7 +23,7 @@ function isSameDay(a: Date, b: Date) {
 
 export default function HomePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('feed');
-  const { user, logout } = useAuth();
+  const { user, token, isAuthenticated, isInitializing, logout } = useAuth();
 
   const {
     filteredEvents,
@@ -31,6 +32,9 @@ export default function HomePage() {
     showingPastEvents,
     isLoadingPast,
     loadPastEvents,
+    fetchMonth,
+    prefetchMonth,
+    isLoadingMonth,
     selectedTags,
     selectedTowns,
     toggleTag,
@@ -38,13 +42,44 @@ export default function HomePage() {
     clearFilters,
     refetch,
   } = useEvents(viewMode);
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(
-    null,
-  );
-
+  const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [calendarDisplayDate, setCalendarDisplayDate] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d;
+  });
+
+  // Holds the event payload the user filled in before hitting the auth wall.
+  // Using a ref so the auto-submit effect always reads the latest value without
+  // needing it as a reactive dependency.
+  const pendingPayloadRef = useRef<EventPayload | null>(null);
+
+  // Fire the pending submission as soon as the user finishes authenticating.
+  useEffect(() => {
+    if (isInitializing || !isAuthenticated || !token) return;
+    const payload = pendingPayloadRef.current;
+    if (!payload) return;
+
+    pendingPayloadRef.current = null;
+    setIsAuthModalOpen(false);
+
+    createEvent(payload, token)
+      .then(() => { alert('Event submitted for review!'); refetch(); })
+      .catch((err: Error) => { alert(`Submission failed: ${err.message}`); });
+  // refetch and createEvent are stable references; no need to list them.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, isInitializing, token]);
+
+  // Called by AddEventModal when the user tries to submit without being logged in.
+  const handleNeedsAuth = useCallback((payload: EventPayload) => {
+    pendingPayloadRef.current = payload;
+    setIsAddModalOpen(false);
+    setIsAuthModalOpen(true);
+  }, []);
 
   const toggleView = () => {
     setViewMode((v) => {
@@ -63,16 +98,18 @@ export default function HomePage() {
     setSelectedDate(null);
   };
 
-  const handleDayClick = (date: Date | null) => {
-    setSelectedDate(date);
-    if (date) setViewMode('calendar');
+  const handleNavigateMonth = (date: Date) => {
+    setCalendarDisplayDate(date);
+    fetchMonth(date.getFullYear(), date.getMonth() + 1);
   };
 
-  const handlePostEvent = () => {
-    if (user) {
-      setIsAddModalOpen(true);
-    } else {
-      setIsAuthModalOpen(true);
+  const handleDayClick = (date: Date | null) => {
+    setSelectedDate(date);
+    if (date) {
+      setViewMode('calendar');
+      const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+      setCalendarDisplayDate(monthStart);
+      fetchMonth(date.getFullYear(), date.getMonth() + 1);
     }
   };
 
@@ -90,12 +127,15 @@ export default function HomePage() {
     isLoading,
     hasFilters,
     onClearFilters: handleClearFilters,
-    onPostEvent: handlePostEvent,
+    onPostEvent: () => setIsAddModalOpen(true),
     viewMode: viewMode as 'feed' | 'calendar',
     onToggleView: toggleView,
     events: filteredEvents,
     selectedDate,
     onDayClick: handleDayClick,
+    displayDate: calendarDisplayDate,
+    onNavigateMonth: handleNavigateMonth,
+    isLoadingMonth,
     selectedTags,
     onTagToggle: toggleTag,
     currentUser: user,
@@ -127,10 +167,7 @@ export default function HomePage() {
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">
-              <Sidebar
-                filteredCount={displayedEvents.length}
-                {...sidebarProps}
-              />
+              <Sidebar filteredCount={displayedEvents.length} {...sidebarProps} />
             </div>
           </div>
         ) : (
@@ -140,14 +177,14 @@ export default function HomePage() {
                 events={filteredEvents}
                 onEventClick={setSelectedEvent}
                 towns={towns}
-                jumpToDay={selectedDate}
+                displayDate={calendarDisplayDate}
+                onNavigateMonth={handleNavigateMonth}
+                onPrefetchMonth={prefetchMonth}
+                isLoadingMonth={isLoadingMonth}
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">
-              <Sidebar
-                filteredCount={filteredEvents.length}
-                {...sidebarProps}
-              />
+              <Sidebar filteredCount={filteredEvents.length} {...sidebarProps} />
             </div>
           </div>
         )}
@@ -157,22 +194,20 @@ export default function HomePage() {
         isOpen={isAddModalOpen}
         onClose={handleModalClose}
         towns={towns}
+        onNeedsAuth={handleNeedsAuth}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthenticated={() => setIsAuthModalOpen(false)}
+        intro="Create an account to post your event to The Commons."
       />
 
       <EventDetailModal
         event={selectedEvent}
         onClose={() => setSelectedEvent(null)}
         towns={towns}
-      />
-
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onAuthenticated={() => {
-          setIsAuthModalOpen(false);
-          setIsAddModalOpen(true);
-        }}
-        intro="Create an account to post events to The Commons."
       />
     </>
   );

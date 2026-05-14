@@ -7,13 +7,26 @@ import { db } from './db';
 import * as schema from './auth-schema';
 
 export const auth = betterAuth({
+    baseURL: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
+    secret: process.env.BETTER_AUTH_SECRET,
     database: drizzleAdapter(db, {
         provider: 'pg',
-        schema,
+        schema: {
+            user: schema.user,
+            session: schema.session,
+            account: schema.account,
+            verification: schema.verification,
+        },
     }),
-    emailAndPassword: {
-        enabled: true,
-        autoSignIn: true,
+    // Neon pre-creates neon_auth.user.id as a real UUID column. Better Auth's
+    // ID generator only reads advanced.database.generateId (not advanced.generateId).
+    advanced: { database: { generateId: 'uuid' } },
+    emailAndPassword: { enabled: true, autoSignIn: true },
+    socialProviders: {
+        google: {
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        },
     },
     user: {
         additionalFields: {

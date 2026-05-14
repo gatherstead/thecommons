@@ -17,6 +17,9 @@ interface SidebarProps {
     events: FrontendEvent[];
     selectedDate: Date | null;
     onDayClick: (date: Date | null) => void;
+    displayDate: Date;
+    onNavigateMonth: (date: Date) => void;
+    isLoadingMonth?: boolean;
     selectedTags: TagId[];
     onTagToggle: (tagId: TagId) => void;
     currentUser: AuthUser | null;
@@ -35,6 +38,9 @@ export function Sidebar({
     events,
     selectedDate,
     onDayClick,
+    displayDate,
+    onNavigateMonth,
+    isLoadingMonth = false,
     selectedTags,
     onTagToggle,
     currentUser,
@@ -55,7 +61,7 @@ export function Sidebar({
                 Post an Event +
             </Button>
 
-            {currentUser ? (
+            {/* {currentUser ? (
                 <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] flex items-baseline justify-between gap-2">
                     <span className="truncate">
                         Signed in as{' '}
@@ -80,7 +86,7 @@ export function Sidebar({
                         Sign in
                     </button>
                 </p>
-            )}
+            )} */}
 
             <hr />
 
@@ -95,6 +101,9 @@ export function Sidebar({
                 events={events}
                 selectedDate={selectedDate}
                 onDayClick={onDayClick}
+                displayDate={displayDate}
+                onNavigateMonth={onNavigateMonth}
+                isLoadingMonth={isLoadingMonth}
             />
 
             <hr />

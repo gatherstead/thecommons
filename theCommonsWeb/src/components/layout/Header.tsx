@@ -22,10 +22,11 @@ export function Header() {
 
                     <Link
                         href="/"
-                        className="flex-1 text-center no-underline"
+                        className="flex-1 text-center no-underline hover:no-underline"
+                        style={{ color: 'inherit', textDecoration: 'none' }}
                     >
                         <h1
-                            className="font-black tracking-tight leading-none mx-4"
+                            className="font-black tracking-tight leading-none mx-4 no-underline hover:text-black"
                             style={{
                                 fontSize: 'clamp(2.75rem, 8vw, 6rem)',
                                 fontFamily: 'var(--font-headline)',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { TownOption } from '../../models/eventsModels';
+import type { TownOption, EventPayload } from '../../models/eventsModels';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import { createEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/useAuth';
@@ -15,10 +15,14 @@ interface AddEventModalProps {
     isOpen: boolean;
     onClose: () => void;
     towns: TownOption[];
+    /** Called when a submit is attempted while the user is not authenticated.
+     *  Receives the serialized payload so the caller can persist it across a
+     *  possible OAuth redirect. */
+    onNeedsAuth?: (payload: EventPayload) => void;
 }
 
-export function AddEventModal({ isOpen, onClose, towns }: AddEventModalProps) {
-    const { token } = useAuth();
+export function AddEventModal({ isOpen, onClose, towns, onNeedsAuth }: AddEventModalProps) {
+    const { token, isAuthenticated } = useAuth();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -34,26 +38,32 @@ export function AddEventModal({ isOpen, onClose, towns }: AddEventModalProps) {
         link: '',
     });
 
+    const buildPayload = (): EventPayload => ({
+        title: formData.name,
+        town: formData.town,
+        venue: formData.place,
+        date: new Date(`${formData.date}T${formData.time}`).toISOString(),
+        description: formData.description,
+        price: parseFloat(formData.price) || 0,
+        tags: formData.tags,
+        link: formData.link,
+    });
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+
+        const payload = buildPayload();
+
+        if (!isAuthenticated) {
+            onNeedsAuth?.(payload);
+            return;
+        }
+
         setIsLoading(true);
-
         try {
-            const isoDate = new Date(`${formData.date}T${formData.time}`).toISOString();
-
-            await createEvent({
-                title: formData.name,
-                town: formData.town,
-                venue: formData.place,
-                date: isoDate,
-                description: formData.description,
-                price: parseFloat(formData.price) || 0.00,
-                tags: formData.tags,
-                link: formData.link,
-            }, token);
-
-            alert('Event Created Successfully!');
+            await createEvent(payload, token);
+            alert('Event submitted for review!');
             onClose();
         } catch (err: any) {
             setError(err.message);

@@ -225,23 +225,21 @@ function CompactRow({
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 // Mirrors the feed layout (FeaturedCard -> PairColumn -> CompactRow briefs)
-// with an ebbing opacity pulse. Staggered animation-delay keeps it organic.
+// with a synchronized ebbing opacity pulse.
 
 function SkeletonLine({
     width = '100%',
     height = '0.75rem',
     className = '',
-    delay = 0,
 }: {
     width?: string;
     height?: string;
     className?: string;
-    delay?: number;
 }) {
     return (
         <span
             className={`skeleton-block block ${className}`}
-            style={{ width, height, animationDelay: `${delay}s` }}
+            style={{ width, height }}
             aria-hidden="true"
         />
     );
@@ -251,30 +249,30 @@ function FeaturedSkeleton() {
     return (
         <div className="py-5" aria-hidden="true">
             <div className="flex items-center gap-2 mb-3">
-                <SkeletonLine width="5rem" height="0.6rem" delay={0} />
+                <SkeletonLine width="5rem" height="0.6rem" />
                 <span className="flex-1 border-t border-[var(--color-border-light)]" />
             </div>
-            <SkeletonLine width="92%" height="2.6rem" className="mb-2" delay={0.05} />
-            <SkeletonLine width="70%" height="2.6rem" className="mb-4" delay={0.1} />
-            <SkeletonLine width="80%" height="0.7rem" className="mb-3" delay={0.15} />
-            <SkeletonLine width="55%" height="0.6rem" className="mb-4" delay={0.2} />
+            <SkeletonLine width="92%" height="2.6rem" className="mb-2" />
+            <SkeletonLine width="70%" height="2.6rem" className="mb-4" />
+            <SkeletonLine width="80%" height="0.7rem" className="mb-3" />
+            <SkeletonLine width="55%" height="0.6rem" className="mb-4" />
             <div className="space-y-2 mb-4">
-                <SkeletonLine width="100%" delay={0.25} />
-                <SkeletonLine width="98%" delay={0.3} />
-                <SkeletonLine width="94%" delay={0.35} />
-                <SkeletonLine width="60%" delay={0.4} />
+                <SkeletonLine width="100%" />
+                <SkeletonLine width="98%" />
+                <SkeletonLine width="94%" />
+                <SkeletonLine width="60%" />
             </div>
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border-light)]">
-                <SkeletonLine width="3rem" height="0.9rem" delay={0.45} />
-                <SkeletonLine width="3rem" height="0.9rem" delay={0.5} />
+                <SkeletonLine width="3rem" height="0.9rem" />
+                <SkeletonLine width="3rem" height="0.9rem" />
                 <span className="ml-auto" />
-                <SkeletonLine width="2.5rem" height="0.8rem" delay={0.55} />
+                <SkeletonLine width="2.5rem" height="0.8rem" />
             </div>
         </div>
     );
 }
 
-function PairSkeleton({ baseDelay = 0 }: { baseDelay?: number }) {
+function PairSkeleton() {
     return (
         <div className="grid grid-cols-2 border-t-2 border-[var(--color-border)]" aria-hidden="true">
             {[0, 1].map(i => (
@@ -287,14 +285,14 @@ function PairSkeleton({ baseDelay = 0 }: { baseDelay?: number }) {
                             : 'pl-5',
                     ].join(' ')}
                 >
-                    <SkeletonLine width="4rem" height="0.55rem" className="mb-2" delay={baseDelay + i * 0.1} />
-                    <SkeletonLine width="90%" height="1.2rem" className="mb-1.5" delay={baseDelay + 0.05 + i * 0.1} />
-                    <SkeletonLine width="65%" height="1.2rem" className="mb-2" delay={baseDelay + 0.1 + i * 0.1} />
-                    <SkeletonLine width="75%" height="0.55rem" className="mb-2" delay={baseDelay + 0.15 + i * 0.1} />
+                    <SkeletonLine width="4rem" height="0.55rem" className="mb-2" />
+                    <SkeletonLine width="90%" height="1.2rem" className="mb-1.5" />
+                    <SkeletonLine width="65%" height="1.2rem" className="mb-2" />
+                    <SkeletonLine width="75%" height="0.55rem" className="mb-2" />
                     <div className="space-y-1.5">
-                        <SkeletonLine width="100%" delay={baseDelay + 0.2 + i * 0.1} />
-                        <SkeletonLine width="92%" delay={baseDelay + 0.25 + i * 0.1} />
-                        <SkeletonLine width="70%" delay={baseDelay + 0.3 + i * 0.1} />
+                        <SkeletonLine width="100%" />
+                        <SkeletonLine width="92%" />
+                        <SkeletonLine width="70%" />
                     </div>
                 </div>
             ))}
@@ -302,18 +300,18 @@ function PairSkeleton({ baseDelay = 0 }: { baseDelay?: number }) {
     );
 }
 
-function BriefSkeleton({ delay = 0 }: { delay?: number }) {
+function BriefSkeleton() {
     return (
         <div
             className="flex items-baseline gap-3 border-t border-[var(--color-border-light)] py-3 -mx-1 px-1"
             aria-hidden="true"
         >
-            <SkeletonLine width="2.5rem" height="0.6rem" delay={delay} />
+            <SkeletonLine width="2.5rem" height="0.6rem" />
             <span className="flex-1">
-                <SkeletonLine width="85%" height="0.85rem" delay={delay + 0.05} />
+                <SkeletonLine width="85%" height="0.85rem" />
             </span>
-            <SkeletonLine width="6rem" height="0.6rem" className="hidden md:block" delay={delay + 0.1} />
-            <SkeletonLine width="2rem" height="0.7rem" delay={delay + 0.15} />
+            <SkeletonLine width="6rem" height="0.6rem" className="hidden md:block" />
+            <SkeletonLine width="2rem" height="0.7rem" />
         </div>
     );
 }
@@ -326,11 +324,11 @@ function FeedSkeleton() {
             aria-label="Loading events"
         >
             <FeaturedSkeleton />
-            <PairSkeleton baseDelay={0.2} />
-            <PairSkeleton baseDelay={0.4} />
+            <PairSkeleton />
+            <PairSkeleton />
             <SectionRule label="On the Horizon" />
             {[0, 1, 2, 3].map(i => (
-                <BriefSkeleton key={i} delay={0.5 + i * 0.08} />
+                <BriefSkeleton key={i} />
             ))}
             <span className="sr-only">Loading events…</span>
         </div>
@@ -346,9 +344,23 @@ export function EventFeed({ events, isLoading, onEventClick, towns, showingPastE
 
     if (events.length === 0) {
         return (
-            <div className="text-center py-16">
-                <p className="italic text-[var(--color-text-muted)]">No events match your current filters.</p>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your selections.</p>
+            <div className="border-t-2 border-[var(--color-border)]">
+                <div className="text-center py-16">
+                    <p className="italic text-[var(--color-text-muted)]">No upcoming events.</p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your filters, or browse past events below.</p>
+                </div>
+                {!showingPastEvents && onLoadPastEvents && (
+                    <div className="border-t-2 border-[var(--color-border)]">
+                        <button
+                            onClick={onLoadPastEvents}
+                            disabled={isLoadingPast}
+                            className="w-full py-3 border-b-2 border-[var(--color-border)] text-xs uppercase tracking-[0.2em] font-bold cursor-pointer bg-transparent hover:bg-[var(--color-bg-alt)] transition-colors disabled:opacity-50"
+                            style={{ fontFamily: 'var(--font-headline)' }}
+                        >
+                            {isLoadingPast ? 'Loading…' : 'See Past Events'}
+                        </button>
+                    </div>
+                )}
             </div>
         );
     }

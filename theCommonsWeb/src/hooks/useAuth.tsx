@@ -9,7 +9,12 @@ import {
     useState,
     type ReactNode,
 } from 'react';
-import type { AuthUser, LoginPayload, SignupPayload, UserType } from '../models/authModels';
+import type {
+    AuthUser,
+    LoginPayload,
+    SignupPayload,
+    UserType,
+} from '../models/authModels';
 import { authClient } from '../lib/auth-client';
 
 interface AuthContextValue {
@@ -20,6 +25,9 @@ interface AuthContextValue {
     login: (payload: LoginPayload) => Promise<AuthUser>;
     signup: (payload: SignupPayload) => Promise<AuthUser>;
     logout: () => Promise<void>;
+    /** Re-validates the Better Auth session and refreshes user + token state.
+     *  Called after Google popup OAuth completes. */
+    refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -31,8 +39,6 @@ interface ProfileResponse {
     email: string;
     business_name: string;
     user_type: UserType;
-    primary_city: string;
-    email_preference: string;
 }
 
 async function fetchJwt(): Promise<string | null> {
@@ -68,14 +74,27 @@ type BaSessionUser = {
 function buildAuthUser(
     sessionUser: BaSessionUser,
     profile: ProfileResponse | null,
-    fallbackUserType: UserType,
+    fallbackUserType: UserType = 'LOCAL',
 ): AuthUser {
     return {
         id: sessionUser.id,
         email: profile?.email ?? sessionUser.email,
         business_name: profile?.business_name ?? sessionUser.name ?? '',
-        user_type: profile?.user_type ?? (sessionUser.user_type as UserType | undefined) ?? fallbackUserType,
+        user_type:
+            profile?.user_type ??
+            (sessionUser.user_type as UserType | undefined) ??
+            fallbackUserType,
     };
+}
+
+async function resolveSession(): Promise<{ user: AuthUser; token: string } | null> {
+    const sessionRes = await authClient.getSession();
+    const sessionUser = sessionRes.data?.user as BaSessionUser | undefined;
+    if (!sessionUser) return null;
+    const jwt = await fetchJwt();
+    if (!jwt) return null;
+    const profile = await fetchProfileFromDjango(jwt);
+    return { user: buildAuthUser(sessionUser, profile), token: jwt };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -85,30 +104,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         let cancelled = false;
-        (async () => {
-            try {
-                const sessionRes = await authClient.getSession();
-                const sessionUser = sessionRes.data?.user as BaSessionUser | undefined;
-                if (!sessionUser) {
-                    if (!cancelled) {
-                        setUser(null);
-                        setToken(null);
-                    }
-                    return;
-                }
-                const jwt = await fetchJwt();
+        resolveSession()
+            .then(result => {
                 if (cancelled) return;
-                setToken(jwt);
-                const profile = jwt ? await fetchProfileFromDjango(jwt) : null;
-                if (cancelled) return;
-                setUser(buildAuthUser(sessionUser, profile, 'LOCAL'));
-            } finally {
-                if (!cancelled) setIsInitializing(false);
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
+                if (result) { setUser(result.user); setToken(result.token); }
+                else { setUser(null); setToken(null); }
+            })
+            .finally(() => { if (!cancelled) setIsInitializing(false); });
+        return () => { cancelled = true; };
     }, []);
 
     const login = useCallback(async (payload: LoginPayload) => {
@@ -122,7 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const jwt = await fetchJwt();
         setToken(jwt);
         const profile = jwt ? await fetchProfileFromDjango(jwt) : null;
-        const next = buildAuthUser(sessionUser, profile, 'LOCAL');
+        const next = buildAuthUser(sessionUser, profile);
         setUser(next);
         return next;
     }, []);
@@ -147,12 +150,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return next;
     }, []);
 
+    const refreshSession = useCallback(async () => {
+        const result = await resolveSession();
+        if (result) { setUser(result.user); setToken(result.token); }
+        else { setUser(null); setToken(null); }
+    }, []);
+
     const logout = useCallback(async () => {
-        try {
-            await authClient.signOut();
-        } catch {
-            // best-effort
-        }
+        try { await authClient.signOut(); } catch { /* best-effort */ }
         setUser(null);
         setToken(null);
     }, []);
@@ -166,8 +171,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             login,
             signup,
             logout,
+            refreshSession,
         }),
-        [user, token, isInitializing, login, signup, logout],
+        [user, token, isInitializing, login, signup, logout, refreshSession],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

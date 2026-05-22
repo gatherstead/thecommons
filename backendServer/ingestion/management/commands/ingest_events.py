@@ -5,6 +5,8 @@ from django.core.management.base import BaseCommand
 from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
+from ingestion.safety_scorer import score_all_unscored
+from ingestion.services import auto_publish_safe_events
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,14 @@ class Command(BaseCommand):
         parser.add_argument(
             '--skip-dedup', action='store_true',
             help='Skip deduplication'
+        )
+        parser.add_argument(
+            '--skip-safety', action='store_true',
+            help='Skip safety scoring'
+        )
+        parser.add_argument(
+            '--skip-autopublish', action='store_true',
+            help='Skip auto-publishing safe events'
         )
 
     def handle(self, *args, **options):
@@ -77,6 +87,31 @@ class Command(BaseCommand):
         else:
             self.stdout.write("Step 3: Skipped (--skip-dedup)\n")
 
+        # Step 4: Safety scoring
+        if not options['skip_safety']:
+            self.stdout.write("Step 4: Safety scoring with Gemini...")
+            try:
+                scored_count = score_all_unscored()
+                self.stdout.write(self.style.SUCCESS(f"  → {scored_count} events scored\n"))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
+        else:
+            self.stdout.write("Step 4: Skipped (--skip-safety)\n")
+
+        # Step 5: Auto-publish safe events
+        if not options['skip_autopublish']:
+            self.stdout.write("Step 5: Auto-publishing safe events...")
+            try:
+                result = auto_publish_safe_events()
+                self.stdout.write(self.style.SUCCESS(
+                    f"  → {result['auto_approved']} auto-published, "
+                    f"{result['held_for_review']} held for review\n"
+                ))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
+        else:
+            self.stdout.write("Step 5: Skipped (--skip-autopublish)\n")
+
         self.stdout.write(self.style.SUCCESS(
-            "\nPipeline complete. Review staged events in Django Admin.\n"
+            "\nPipeline complete. Check Django Admin for events held for review.\n"
         ))

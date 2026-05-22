@@ -87,10 +87,23 @@ class StagedEvent(models.Model):
         on_delete=models.SET_NULL, related_name='duplicates',
     )
 
+    # Safety scoring
+    safety_score = models.FloatField(null=True, blank=True)
+    safety_notes = models.TextField(blank=True, default='')
+
     # Link to the real Event once approved
     published_event = models.ForeignKey(
         'events.Event', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='staged_source',
+    )
+
+    # Tracks who submitted this event via the public API; null for pipeline events.
+    submitted_by = models.ForeignKey(
+        'events.BetterAuthUser',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='submitted_staged_events',
+        db_constraint=False,
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

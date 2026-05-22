@@ -1,7 +1,7 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
 
-from .models import Tag, Town, UserProfile, Event
+from .models import Tag, Town, UserProfile, Event, NewsletterSubscriber
 
 
 @admin.register(Tag)
@@ -20,6 +20,13 @@ class UserProfileAdmin(ModelAdmin):
     # and no <select> widget makes sense; show a raw id lookup instead.
     raw_id_fields = ('user',)
     list_display = ['user', 'user_type', 'primary_city']
+
+
+@admin.register(NewsletterSubscriber)
+class NewsletterSubscriberAdmin(ModelAdmin):
+    list_display = ['email', 'frequency', 'is_active', 'subscribed_at']
+    list_filter = ['frequency', 'is_active']
+    search_fields = ['email']
 
 
 @admin.register(Event)

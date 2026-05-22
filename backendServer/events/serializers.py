@@ -19,7 +19,7 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = ['uuid', 'title', 'town', 'date', 'venue', 'description', 'price', 'photo', 'link', 'tags', 'tag_names']
+        fields = ['uuid', 'title', 'town', 'date', 'venue', 'description', 'price', 'photo', 'link', 'tags', 'tag_names', 'is_verified', 'source_name']
 
     def create(self, validated_data):
         tags_data = validated_data.pop('tags', [])

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.core.management import call_command
 from unfold.admin import ModelAdmin
 
-from events.models import Event, Tag
+from events.models import Event, Tag, Town
 from ingestion.models import EventSource, RawEvent, StagedEvent
 
 
@@ -36,11 +36,11 @@ class RawEventAdmin(ModelAdmin):
 class StagedEventAdmin(ModelAdmin):
     list_display = [
         'title', 'location_name', 'town', 'start_datetime',
-        'status', 'price', 'link', 'tag_list', 'source_name',
+        'status', 'safety_score_display', 'price', 'link', 'tag_list', 'source_name',
     ]
     list_filter = ['status']
     search_fields = ['title', 'description', 'location_name']
-    readonly_fields = ['raw_event', 'created_at', 'updated_at']
+    readonly_fields = ['raw_event', 'safety_score', 'safety_notes', 'created_at', 'updated_at']
     list_editable = ['status']
     actions = ['approve_events', 'reject_events']
 
@@ -52,13 +52,25 @@ class StagedEventAdmin(ModelAdmin):
         return obj.raw_event.source.name if obj.raw_event else "—"
     source_name.short_description = 'Source'
 
+    def safety_score_display(self, obj):
+        if obj.safety_score is None:
+            return "—"
+        return f"{obj.safety_score:.2f}"
+    safety_score_display.short_description = 'Safety'
+    safety_score_display.admin_order_field = 'safety_score'
+
     @admin.action(description="Approve selected events")
     def approve_events(self, request, queryset):
         approved = 0
         for staged in queryset.filter(status='pending'):
+            town_slug = staged.town.lower().replace(' ', '-') if staged.town else None
+            town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
+            if town_obj is None:
+                self.message_user(request, f"Skipped '{staged.title}': unknown town '{staged.town}'.", level='warning')
+                continue
             event = Event.objects.create(
                 title=staged.title,
-                town=staged.town,
+                town=town_obj,
                 date=staged.start_datetime,
                 venue=staged.location_name,
                 description=staged.description,

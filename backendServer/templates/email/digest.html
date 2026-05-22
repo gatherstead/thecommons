@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ subject }}</title>
+<style>
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #f4f1eb;
+    font-family: Georgia, "Times New Roman", Times, serif;
+    color: #1a1a1a;
+  }
+  .wrapper {
+    max-width: 620px;
+    margin: 0 auto;
+    background-color: #f4f1eb;
+    padding: 32px 24px;
+  }
+  .masthead {
+    border-top: 4px solid #1a1a1a;
+    border-bottom: 3px double #1a1a1a;
+    padding: 12px 0;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .masthead h1 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .masthead .dateline {
+    font-size: 11px;
+    color: #555555;
+    margin-top: 4px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .section-rule {
+    border: none;
+    border-top: 3px solid #1a1a1a;
+    margin: 20px 0 16px;
+  }
+  .section-heading {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #555555;
+    margin: 0 0 16px;
+  }
+  .event-block {
+    border-bottom: 1px solid #c8c3b8;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+  }
+  .event-block:last-child {
+    border-bottom: none;
+  }
+  .event-date {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #555555;
+    margin: 0 0 4px;
+  }
+  .event-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin: 0 0 4px;
+    line-height: 1.25;
+  }
+  .event-title a {
+    color: #1a1a1a;
+    text-decoration: none;
+  }
+  .event-title a:hover {
+    color: #8b0000;
+  }
+  .event-meta {
+    font-size: 12px;
+    color: #555555;
+    margin: 0 0 6px;
+  }
+  .event-description {
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0;
+    color: #1a1a1a;
+  }
+  .no-events {
+    font-style: italic;
+    color: #555555;
+    font-size: 14px;
+  }
+  .footer {
+    border-top: 3px double #1a1a1a;
+    margin-top: 32px;
+    padding-top: 16px;
+    font-size: 11px;
+    color: #555555;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .footer a {
+    color: #555555;
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <div class="masthead">
+    <h1>The Commons</h1>
+    <div class="dateline">
+      Chapel Hill &amp; Carrboro &mdash; {% now "N j, Y" %}
+    </div>
+  </div>
+
+  <p class="section-heading">
+    {% if frequency == 'WEEKLY' %}Events this week{% else %}Events this month{% endif %}
+  </p>
+
+  {% if events %}
+    {% for event in events %}
+    <div class="event-block">
+      <p class="event-date">{{ event.date|date:"l, F j" }} &middot; {{ event.date|time:"g:i A" }}</p>
+      <p class="event-title">
+        {% if event.link %}
+          <a href="{{ event.link }}">{{ event.title }}</a>
+        {% else %}
+          {{ event.title }}
+        {% endif %}
+      </p>
+      <p class="event-meta">
+        {{ event.venue }}{% if event.town %} &middot; {{ event.town.name }}{% endif %}
+        {% if event.price %} &middot; ${{ event.price }}{% endif %}
+      </p>
+      {% if event.description %}
+      <p class="event-description">{{ event.description|truncatewords:35 }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="no-events">No upcoming events found for this period.</p>
+  {% endif %}
+
+  <hr class="section-rule">
+
+  <div class="footer">
+    <a href="{{ site_url }}">thecommons.town</a><br>
+    You're receiving this because you subscribed to the {{ frequency|lower }} digest.<br>
+    To unsubscribe, reply to this email with &ldquo;unsubscribe&rdquo; in the subject.
+  </div>
+
+</div>
+</body>
+</html>

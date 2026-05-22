@@ -24,7 +24,7 @@ class BetterAuthUser(models.Model):
     emits `FROM "neon_auth"."user"` — a valid cross-schema reference.
     """
 
-    id = models.TextField(primary_key=True)
+    id = models.UUIDField(primary_key=True)
     name = models.TextField()
     email = models.EmailField(unique=True)
     email_verified = models.BooleanField(db_column='emailVerified', default=False)
@@ -145,6 +145,20 @@ class UserProfile(models.Model):
         return f"{self.user.email}'s Profile"
 
 
+class NewsletterSubscriber(models.Model):
+    class Frequency(models.TextChoices):
+        WEEKLY = 'WEEKLY', 'Weekly'
+        MONTHLY = 'MONTHLY', 'Monthly'
+
+    email = models.EmailField(unique=True)
+    frequency = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.WEEKLY)
+    is_active = models.BooleanField(default=True)
+    subscribed_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.email} ({self.frequency})"
+
+
 class Event(models.Model):
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -165,6 +179,18 @@ class Event(models.Model):
     tags = models.ManyToManyField(Tag, related_name="events", blank=True)
 
     link = models.URLField(max_length=500, blank=True)
+
+    is_verified = models.BooleanField(default=False)
+    source_name = models.CharField(max_length=200, blank=True, default='')
+
+    # Tracks who submitted this event; null for pipeline-ingested events.
+    created_by = models.ForeignKey(
+        'BetterAuthUser',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='created_events',
+        db_constraint=False,
+    )
 
     def __str__(self):
         return self.title

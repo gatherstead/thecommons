@@ -1,17 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useEvents, type ViewMode } from '../hooks/useEvents';
 import { useAuth } from '../hooks/useAuth';
-import { type EventPayload, type FrontendEvent } from '../models/eventsModels';
-import { createEvent } from '../services/eventService';
+import { type FrontendEvent } from '../models/eventsModels';
 import { Sidebar } from '../components/layout/Sidebar';
 import { TopBar } from '../components/layout/TopBar';
 import { EventFeed } from '../components/events/EventFeed';
+import { FeedStatusBar } from '../components/events/FeedStatusBar';
 import { CalendarView } from '../components/events/CalendarView';
-import { AddEventModal } from '../components/events/AddEventModal';
 import { EventDetailModal } from '../components/events/EventDetailModal';
-import { AuthModal } from '../components/auth/AuthModal';
 
 function isSameDay(a: Date, b: Date) {
   return (
@@ -23,28 +22,35 @@ function isSameDay(a: Date, b: Date) {
 
 export default function HomePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('feed');
-  const { user, token, isAuthenticated, isInitializing, logout } = useAuth();
+  const router = useRouter();
+  const { user, logout } = useAuth();
 
   const {
     filteredEvents,
     towns,
+    categories,
     isLoading,
-    showingPastEvents,
-    isLoadingPast,
-    loadPastEvents,
+    currentWindow,
+    isLoadingWindow,
+    setWindow,
+    nextPage,
+    prevPage,
+    isLoadingPage,
+    currentPage,
+    totalPages,
+    totalCount,
     fetchMonth,
     prefetchMonth,
     isLoadingMonth,
     selectedTags,
     selectedTowns,
+    selectedCategory,
     toggleTag,
     toggleTown,
+    setCategory,
     clearFilters,
-    refetch,
   } = useEvents(viewMode);
 
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<FrontendEvent | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [calendarDisplayDate, setCalendarDisplayDate] = useState(() => {
@@ -53,44 +59,11 @@ export default function HomePage() {
     return d;
   });
 
-  // Holds the event payload the user filled in before hitting the auth wall.
-  // Using a ref so the auto-submit effect always reads the latest value without
-  // needing it as a reactive dependency.
-  const pendingPayloadRef = useRef<EventPayload | null>(null);
-
-  // Fire the pending submission as soon as the user finishes authenticating.
-  useEffect(() => {
-    if (isInitializing || !isAuthenticated || !token) return;
-    const payload = pendingPayloadRef.current;
-    if (!payload) return;
-
-    pendingPayloadRef.current = null;
-    setIsAuthModalOpen(false);
-
-    createEvent(payload, token)
-      .then(() => { alert('Event submitted for review!'); refetch(); })
-      .catch((err: Error) => { alert(`Submission failed: ${err.message}`); });
-  // refetch and createEvent are stable references; no need to list them.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, isInitializing, token]);
-
-  // Called by AddEventModal when the user tries to submit without being logged in.
-  const handleNeedsAuth = useCallback((payload: EventPayload) => {
-    pendingPayloadRef.current = payload;
-    setIsAddModalOpen(false);
-    setIsAuthModalOpen(true);
-  }, []);
-
   const toggleView = () => {
     setViewMode((v) => {
       if (v === 'calendar') setSelectedDate(null);
       return v === 'feed' ? 'calendar' : 'feed';
     });
-  };
-
-  const handleModalClose = () => {
-    setIsAddModalOpen(false);
-    refetch();
   };
 
   const handleClearFilters = () => {
@@ -118,16 +91,20 @@ export default function HomePage() {
     return filteredEvents.filter((e) => isSameDay(e.date, selectedDate));
   }, [filteredEvents, selectedDate, viewMode]);
 
+  const selectedSectionName =
+    categories.find((c) => c.slug === selectedCategory)?.display_name ?? null;
+
   const hasFilters =
     selectedTags.length > 0 ||
     selectedTowns.length > 0 ||
+    selectedCategory !== null ||
     selectedDate !== null;
 
   const sidebarProps = {
     isLoading,
     hasFilters,
     onClearFilters: handleClearFilters,
-    onPostEvent: () => setIsAddModalOpen(true),
+    onPostEvent: () => router.push('/post'),
     viewMode: viewMode as 'feed' | 'calendar',
     onToggleView: toggleView,
     events: filteredEvents,
@@ -139,7 +116,7 @@ export default function HomePage() {
     selectedTags,
     onTagToggle: toggleTag,
     currentUser: user,
-    onSignIn: () => setIsAuthModalOpen(true),
+    onSignIn: () => router.push('/auth/login?redirect=/'),
     onSignOut: logout,
   };
 
@@ -156,14 +133,40 @@ export default function HomePage() {
         {viewMode === 'feed' ? (
           <div className="grid grid-cols-1 lg:grid-cols-6 gap-0">
             <div className="lg:col-span-4 lg:pr-10">
+              <FeedStatusBar
+                countLabel={displayedEvents.length < totalCount
+                  ? `${displayedEvents.length} of ${totalCount} events`
+                  : `${displayedEvents.length} event${displayedEvents.length !== 1 ? 's' : ''}`}
+                currentWindow={currentWindow}
+                onWindowChange={setWindow}
+                categories={categories}
+                selectedCategory={selectedCategory}
+                onCategorySelect={setCategory}
+              />
               <EventFeed
                 events={displayedEvents}
                 isLoading={isLoading}
                 onEventClick={setSelectedEvent}
                 towns={towns}
-                showingPastEvents={showingPastEvents}
-                isLoadingPast={isLoadingPast}
-                onLoadPastEvents={loadPastEvents}
+                footer={
+                  <FeedStatusBar
+                    countLabel={displayedEvents.length < totalCount
+                      ? `${displayedEvents.length} of ${totalCount} events`
+                      : `${displayedEvents.length} event${displayedEvents.length !== 1 ? 's' : ''}`}
+                    currentWindow={currentWindow}
+                    onWindowChange={setWindow}
+                    categories={categories}
+                    selectedCategory={selectedCategory}
+                    onCategorySelect={setCategory}
+                  />
+                }
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalCount={totalCount}
+                onNextPage={nextPage}
+                onPrevPage={prevPage}
+                isLoadingPage={isLoadingPage}
+                sectionName={selectedSectionName}
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">
@@ -189,20 +192,6 @@ export default function HomePage() {
           </div>
         )}
       </main>
-
-      <AddEventModal
-        isOpen={isAddModalOpen}
-        onClose={handleModalClose}
-        towns={towns}
-        onNeedsAuth={handleNeedsAuth}
-      />
-
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onAuthenticated={() => setIsAuthModalOpen(false)}
-        intro="Create an account to post your event to The Commons."
-      />
 
       <EventDetailModal
         event={selectedEvent}

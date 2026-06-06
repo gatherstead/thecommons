@@ -13,6 +13,18 @@ function formatShortDate(date: Date): string {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function VerifiedStamp() {
+    return (
+        <span
+            title="Posted by a verified local business"
+            className="inline-block border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-[9px] uppercase tracking-widest font-black px-1.5 py-0.5 leading-none align-middle select-none"
+            style={{ fontFamily: 'var(--font-sans)' }}
+        >
+            ✦ Verified
+        </span>
+    );
+}
+
 export function EventRow({ event, onClick, towns = [], featured = false }: EventRowProps) {
     const townName = towns.find(t => t.slug === event.town)?.name || String(event.town);
     const tagLabels = event.tags
@@ -31,8 +43,9 @@ export function EventRow({ event, onClick, towns = [], featured = false }: Event
                 <p className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] mb-2 border-b border-[var(--color-border)] pb-1">
                     Featured Event
                 </p>
-                <h3 className="text-2xl md:text-3xl font-bold leading-tight mb-2">
-                    {event.title}
+                <h3 className="text-2xl md:text-3xl font-bold leading-tight mb-2 flex items-baseline gap-2 flex-wrap">
+                    <span>{event.title}</span>
+                    {event.isVerified && <VerifiedStamp />}
                 </h3>
                 <p className="text-xs text-[var(--color-text-muted)] mb-3">
                     {townName} &bull; {event.venue} &bull; {formatShortDate(event.date)} &bull; {event.time}
@@ -66,8 +79,9 @@ export function EventRow({ event, onClick, towns = [], featured = false }: Event
                     {formatShortDate(event.date)}
                 </span>
             </div>
-            <h3 className="text-base font-bold leading-snug mb-1 hover:text-[var(--color-accent)] transition-colors">
-                {event.title}
+            <h3 className="text-base font-bold leading-snug mb-1 hover:text-[var(--color-accent)] transition-colors flex items-baseline gap-2 flex-wrap">
+                <span>{event.title}</span>
+                {event.isVerified && <VerifiedStamp />}
             </h3>
             <p className="text-xs text-[var(--color-text-muted)] mb-1">
                 {event.venue} &bull; {event.time}

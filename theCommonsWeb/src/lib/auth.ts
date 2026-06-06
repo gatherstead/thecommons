@@ -5,6 +5,7 @@ import { jwt } from 'better-auth/plugins';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import * as schema from './auth-schema';
+import { lazyAuth } from './lazy-auth-plugin';
 
 export const auth = betterAuth({
     baseURL: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
@@ -16,18 +17,21 @@ export const auth = betterAuth({
             session: schema.session,
             account: schema.account,
             verification: schema.verification,
+            jwks: schema.jwks,
         },
     }),
     // Neon pre-creates neon_auth.user.id as a real UUID column. Better Auth's
     // ID generator only reads advanced.database.generateId (not advanced.generateId).
     advanced: { database: { generateId: 'uuid' } },
     emailAndPassword: { enabled: true, autoSignIn: true },
-    socialProviders: {
-        google: {
-            clientId: process.env.GOOGLE_CLIENT_ID!,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        },
-    },
+    // Google sign-in temporarily disabled — revisit later. It returned
+    // `invalid_code` and bypassed user-type selection during signup.
+    // socialProviders: {
+    //     google: {
+    //         clientId: process.env.GOOGLE_CLIENT_ID!,
+    //         clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    //     },
+    // },
     user: {
         additionalFields: {
             user_type: {
@@ -38,7 +42,7 @@ export const auth = betterAuth({
             },
         },
     },
-    plugins: [jwt(), nextCookies()],
+    plugins: [jwt(), lazyAuth(), nextCookies()],
     databaseHooks: {
         user: {
             create: {
@@ -46,8 +50,8 @@ export const auth = betterAuth({
                     const userType =
                         (createdUser as { user_type?: string }).user_type ?? 'LOCAL';
                     await db.execute(sql`
-                        INSERT INTO public.events_userprofile (uuid, user_id, user_type, primary_city, email_preference)
-                        VALUES (gen_random_uuid(), ${createdUser.id}, ${userType}, '', 'WEEKLY')
+                        INSERT INTO public.events_userprofile (uuid, user_id, user_type, primary_city, address, email_preference)
+                        VALUES (gen_random_uuid(), ${createdUser.id}, ${userType}, '', '', 'NEVER')
                     `);
                 },
             },

@@ -11,8 +11,9 @@ import {
 } from 'react';
 import type {
     AuthUser,
+    EnterPayload,
+    EnterResult,
     LoginPayload,
-    SignupPayload,
     UserType,
 } from '../models/authModels';
 import { authClient } from '../lib/auth-client';
@@ -22,11 +23,15 @@ interface AuthContextValue {
     token: string | null;
     isAuthenticated: boolean;
     isInitializing: boolean;
+    /** Lazy login/signup by email. Sets a session unless the account requires a password. */
+    enter: (payload: EnterPayload) => Promise<EnterResult>;
+    /** Password sign-in for accounts that have set one (the `requiresPassword` path). */
     login: (payload: LoginPayload) => Promise<AuthUser>;
-    signup: (payload: SignupPayload) => Promise<AuthUser>;
+    /** Secure a passwordless account by setting a password. */
+    setPassword: (password: string) => Promise<void>;
     logout: () => Promise<void>;
     /** Re-validates the Better Auth session and refreshes user + token state.
-     *  Called after Google popup OAuth completes. */
+     *  Called after Google popup OAuth and the email `enter` flow complete. */
     refreshSession: () => Promise<void>;
 }
 
@@ -39,6 +44,7 @@ interface ProfileResponse {
     email: string;
     business_name: string;
     user_type: UserType;
+    has_password?: boolean;
 }
 
 async function fetchJwt(): Promise<string | null> {
@@ -84,6 +90,7 @@ function buildAuthUser(
             profile?.user_type ??
             (sessionUser.user_type as UserType | undefined) ??
             fallbackUserType,
+        hasPassword: profile?.has_password ?? false,
     };
 }
 
@@ -114,6 +121,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return () => { cancelled = true; };
     }, []);
 
+    const refreshSession = useCallback(async () => {
+        const result = await resolveSession();
+        if (result) { setUser(result.user); setToken(result.token); }
+        else { setUser(null); setToken(null); }
+    }, []);
+
+    const enter = useCallback(async (payload: EnterPayload): Promise<EnterResult> => {
+        const res = await fetch('/api/auth/enter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.message || data.error || 'Could not continue.');
+        }
+        const result = (await res.json()) as EnterResult;
+        // A session cookie was set unless the account needs a password first.
+        if (!result.requiresPassword) {
+            await refreshSession();
+        }
+        return result;
+    }, [refreshSession]);
+
     const login = useCallback(async (payload: LoginPayload) => {
         const { data, error } = await authClient.signIn.email({
             email: payload.email,
@@ -130,30 +162,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return next;
     }, []);
 
-    const signup = useCallback(async (payload: SignupPayload) => {
-        const signUpInput = {
-            email: payload.email,
-            password: payload.password,
-            name: payload.business_name,
-            user_type: payload.user_type,
-        };
-        const { data, error } = await authClient.signUp.email(
-            signUpInput as Parameters<typeof authClient.signUp.email>[0],
-        );
-        if (error) throw new Error(error.message || 'Sign-up failed');
-        const sessionUser = data?.user as BaSessionUser | undefined;
-        if (!sessionUser) throw new Error('Sign-up returned no user');
-        const jwt = await fetchJwt();
-        setToken(jwt);
-        const next = buildAuthUser(sessionUser, null, payload.user_type);
-        setUser(next);
-        return next;
-    }, []);
-
-    const refreshSession = useCallback(async () => {
-        const result = await resolveSession();
-        if (result) { setUser(result.user); setToken(result.token); }
-        else { setUser(null); setToken(null); }
+    const setPassword = useCallback(async (password: string) => {
+        const res = await fetch('/api/auth/set-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Could not set password.');
+        }
+        setUser(prev => (prev ? { ...prev, hasPassword: true } : prev));
     }, []);
 
     const logout = useCallback(async () => {
@@ -168,12 +188,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             token,
             isAuthenticated: !!user && !!token,
             isInitializing,
+            enter,
             login,
-            signup,
+            setPassword,
             logout,
             refreshSession,
         }),
-        [user, token, isInitializing, login, signup, logout, refreshSession],
+        [user, token, isInitializing, enter, login, setPassword, logout, refreshSession],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

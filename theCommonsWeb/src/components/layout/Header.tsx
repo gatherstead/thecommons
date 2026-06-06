@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { HeaderAuthNav } from './HeaderAuthNav';
 
 export function Header() {
     const today = new Date();
@@ -56,6 +57,9 @@ export function Header() {
 
                 {/* ── Closing rule ─────────────────────────────────────── */}
                 <div className="border-t border-(--color-border)" />
+
+                {/* ── Auth nav — only renders when signed in ────────────── */}
+                <HeaderAuthNav />
 
             </div>
         </header>

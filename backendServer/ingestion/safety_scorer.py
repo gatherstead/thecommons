@@ -76,7 +76,7 @@ def score_event(staged: StagedEvent) -> tuple[float, str]:
         text = text.rsplit('```', 1)[0]
 
     data = json.loads(text)
-    score = float(data['score'])
+    score = max(0.0, min(1.0, float(data['score'])))
     notes = data.get('notes', '')
     return score, notes
 

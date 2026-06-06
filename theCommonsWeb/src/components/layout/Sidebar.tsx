@@ -1,8 +1,10 @@
+import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
 import { MiniCalendar } from './MiniCalendar';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import type { FrontendEvent } from '../../models/eventsModels';
 import type { AuthUser } from '../../models/authModels';
+import { DIGEST_SIGNUP_HREF } from '../layout/DigestCTAPusher';
 
 type ViewMode = 'feed' | 'calendar';
 
@@ -47,6 +49,7 @@ export function Sidebar({
     onSignIn,
     onSignOut,
 }: SidebarProps) {
+    const router = useRouter();
     const today = new Date();
     const formattedDate = today.toLocaleDateString('en-US', {
         weekday: 'long',
@@ -201,6 +204,27 @@ export function Sidebar({
                     </p>
                 </>
             )}
+
+            <hr />
+
+            <div className="border border-[var(--color-border)] px-3 py-5">
+                <p className="text-[9px] uppercase tracking-[0.18em] font-black text-[var(--color-accent)] mb-[0.165rem]">
+                    The Commons Digest
+                </p>
+                <p className="text-sm font-serif font-bold text-[var(--color-text)] leading-snug mb-[0.8rem]">
+                    Every week's events, delivered to your inbox.
+                </p>
+                <p className="text-xs text-[var(--color-text-muted)] leading-snug mb-6">
+                    The weekly digest lands every Sunday — a curated roundup of upcoming happenings in Chapel Hill &amp; Carrboro, no algorithm required.
+                </p>
+                <button
+                    type="button"
+                    onClick={() => router.push(currentUser ? '/profile' : DIGEST_SIGNUP_HREF)}
+                    className="w-full text-xs uppercase tracking-[0.15em] font-black border border-[var(--color-accent)] text-[var(--color-accent)] bg-transparent py-2.5 cursor-pointer hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors"
+                >
+                    {currentUser ? 'Manage digest' : "Subscribe — it's free"}
+                </button>
+            </div>
         </aside>
     );
 }

@@ -1,14 +1,12 @@
 import logging
-import os
 
 from django.db import transaction
 
-from events.models import Event, Tag, Town
+from events.models import Event, Tag, Town, Category
 from ingestion.models import StagedEvent
+from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD
 
 logger = logging.getLogger(__name__)
-
-SAFETY_SCORE_THRESHOLD = float(os.environ.get('SAFETY_SCORE_THRESHOLD', '0.3'))
 
 
 def publish_all_approved():
@@ -62,6 +60,10 @@ def publish_all_approved():
                 for tag_name in staged.tags:
                     tag_obj, _ = Tag.objects.get_or_create(name=tag_name.strip().lower())
                     event.tags.add(tag_obj)
+                if staged.category:
+                    cat = Category.objects.filter(slug=staged.category).first()
+                    if cat:
+                        event.categories.add(cat)
                 staged.published_event = event
                 staged.save(update_fields=['published_event'])
                 published_count += 1

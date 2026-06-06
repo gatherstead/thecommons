@@ -17,6 +17,17 @@ class Town(models.Model):
         return self.name
 
 
+class Category(models.Model):
+    slug = models.SlugField(unique=True)
+    display_name = models.CharField(max_length=100)
+
+    class Meta:
+        verbose_name_plural = "categories"
+
+    def __str__(self):
+        return self.display_name
+
+
 class BetterAuthUser(models.Model):
     """Read-only mirror of `neon_auth.user`. Better Auth (Next.js) owns writes.
 
@@ -127,6 +138,7 @@ class UserProfile(models.Model):
     )
 
     primary_city = models.CharField(max_length=100, blank=True)
+    address = models.CharField(max_length=255, blank=True)
 
     class EmailFrequency(models.TextChoices):
         WEEKLY = 'WEEKLY', 'Weekly'
@@ -143,6 +155,29 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.email}'s Profile"
+
+
+class BusinessProfile(models.Model):
+    user = models.OneToOneField(
+        BetterAuthUser,
+        on_delete=models.CASCADE,
+        related_name='business_profile',
+        db_column='user_id',
+        db_constraint=False,
+    )
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    business_name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    tags = models.ManyToManyField(Tag, related_name='businesses', blank=True)
+    service_area = models.ManyToManyField(Town, related_name='businesses', blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=30, blank=True)
+    is_published = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.business_name or f"{self.user.email}'s Business"
 
 
 class NewsletterSubscriber(models.Model):
@@ -177,6 +212,8 @@ class Event(models.Model):
     photo = models.ImageField(upload_to='event_photos/', null=True, blank=True)
 
     tags = models.ManyToManyField(Tag, related_name="events", blank=True)
+
+    categories = models.ManyToManyField('Category', related_name='events', blank=True)
 
     link = models.URLField(max_length=500, blank=True)
 

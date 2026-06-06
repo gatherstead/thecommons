@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
 import { FILTER_TAGS } from '../../constants/tags';
 import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
 import type { FrontendEvent, TownOption } from '../../models/eventsModels';
 
 interface EventFeedProps {
@@ -7,9 +9,29 @@ interface EventFeedProps {
     isLoading: boolean;
     onEventClick: (event: FrontendEvent) => void;
     towns: TownOption[];
-    showingPastEvents?: boolean;
-    isLoadingPast?: boolean;
-    onLoadPastEvents?: () => void;
+    footer?: ReactNode;
+    currentPage?: number;
+    totalPages?: number;
+    totalCount?: number;
+    onNextPage?: () => void;
+    onPrevPage?: () => void;
+    isLoadingPage?: boolean;
+    sectionName?: string | null;
+}
+
+// Section front nameplate — shown when a single category ("section") is active
+function SectionNameplate({ name }: { name: string }) {
+    return (
+        <div className="text-center pt-5 pb-4">
+            <h2
+                className="font-black uppercase leading-none tracking-[0.12em]"
+                style={{ fontSize: 'clamp(1.6rem, 3.2vw, 2.5rem)', fontFamily: 'var(--font-headline)' }}
+            >
+                {name}
+            </h2>
+            <span className="block mx-auto mt-3 w-20 border-t-2 border-[var(--color-accent)]" aria-hidden="true" />
+        </div>
+    );
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -335,9 +357,53 @@ function FeedSkeleton() {
     );
 }
 
+// ─── PageNav ──────────────────────────────────────────────────────────────────
+
+function PageNav({
+    currentPage,
+    totalPages,
+    onPrevPage,
+    onNextPage,
+    isLoadingPage,
+}: {
+    currentPage: number;
+    totalPages: number;
+    onPrevPage?: () => void;
+    onNextPage?: () => void;
+    isLoadingPage?: boolean;
+}) {
+    if (totalPages <= 1) return null;
+    return (
+        <div className="flex items-center justify-between border-t-2 border-[var(--color-border)] mt-5 pt-4">
+            <Button
+                variant="secondary"
+                size="sm"
+                onClick={onPrevPage}
+                disabled={currentPage <= 1 || isLoadingPage}
+                className="disabled:opacity-30"
+            >
+                ← Prev
+            </Button>
+            <span className="text-[10px] uppercase tracking-[0.2em] font-black text-[var(--color-text-muted)]">
+                {isLoadingPage ? 'Loading…' : `Page ${currentPage} of ${totalPages}`}
+            </span>
+            <Button
+                variant="secondary"
+                size="sm"
+                onClick={onNextPage}
+                disabled={currentPage >= totalPages || isLoadingPage}
+                className="disabled:opacity-30"
+            >
+                Next →
+            </Button>
+        </div>
+    );
+}
+
+
 // ─── EventFeed (main export) ──────────────────────────────────────────────────
 
-export function EventFeed({ events, isLoading, onEventClick, towns, showingPastEvents = false, isLoadingPast = false, onLoadPastEvents }: EventFeedProps) {
+export function EventFeed({ events, isLoading, onEventClick, towns, footer, currentPage = 1, totalPages = 1, totalCount = 0, onNextPage, onPrevPage, isLoadingPage = false, sectionName = null }: EventFeedProps) {
     if (isLoading) {
         return <FeedSkeleton />;
     }
@@ -345,22 +411,13 @@ export function EventFeed({ events, isLoading, onEventClick, towns, showingPastE
     if (events.length === 0) {
         return (
             <div className="border-t-2 border-[var(--color-border)]">
+                {sectionName && <SectionNameplate name={sectionName} />}
                 <div className="text-center py-16">
                     <p className="italic text-[var(--color-text-muted)]">No upcoming events.</p>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your filters, or browse past events below.</p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your filters or changing the date range in the sidebar.</p>
                 </div>
-                {!showingPastEvents && onLoadPastEvents && (
-                    <div className="border-t-2 border-[var(--color-border)]">
-                        <button
-                            onClick={onLoadPastEvents}
-                            disabled={isLoadingPast}
-                            className="w-full py-3 border-b-2 border-[var(--color-border)] text-xs uppercase tracking-[0.2em] font-bold cursor-pointer bg-transparent hover:bg-[var(--color-bg-alt)] transition-colors disabled:opacity-50"
-                            style={{ fontFamily: 'var(--font-headline)' }}
-                        >
-                            {isLoadingPast ? 'Loading…' : 'See Past Events'}
-                        </button>
-                    </div>
-                )}
+                <PageNav currentPage={currentPage} totalPages={totalPages} onPrevPage={onPrevPage} onNextPage={onNextPage} isLoadingPage={isLoadingPage} />
+                {footer && <div className="mt-4 border-t border-[var(--color-border-light)]">{footer}</div>}
             </div>
         );
     }
@@ -379,6 +436,8 @@ export function EventFeed({ events, isLoading, onEventClick, towns, showingPastE
 
     return (
         <div className="border-t-2 border-[var(--color-border)]">
+            {sectionName && <SectionNameplate name={sectionName} />}
+
             <FeaturedCard event={featured} onClick={onEventClick} towns={towns} />
 
             {pairs.map((pair, pi) => (
@@ -399,18 +458,9 @@ export function EventFeed({ events, isLoading, onEventClick, towns, showingPastE
                 </>
             )}
 
-            {!showingPastEvents && onLoadPastEvents && (
-                <div className="mt-6 border-t-2 border-[var(--color-border)]">
-                    <button
-                        onClick={onLoadPastEvents}
-                        disabled={isLoadingPast}
-                        className="w-full py-3 border-b-2 border-[var(--color-border)] text-xs uppercase tracking-[0.2em] font-bold cursor-pointer bg-transparent hover:bg-[var(--color-bg-alt)] transition-colors disabled:opacity-50"
-                        style={{ fontFamily: 'var(--font-headline)' }}
-                    >
-                        {isLoadingPast ? 'Loading…' : 'See Past Events'}
-                    </button>
-                </div>
-            )}
+            <PageNav currentPage={currentPage} totalPages={totalPages} onPrevPage={onPrevPage} onNextPage={onNextPage} isLoadingPage={isLoadingPage} />
+
+            {footer && <div className="mt-4 border-t border-[var(--color-border-light)]">{footer}</div>}
         </div>
     );
 }

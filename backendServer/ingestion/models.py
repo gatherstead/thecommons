@@ -74,6 +74,7 @@ class StagedEvent(models.Model):
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
     tags = models.JSONField(default=list)
+    category = models.CharField(max_length=100, blank=True, default='')
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     link = models.URLField(max_length=500, blank=True)
 

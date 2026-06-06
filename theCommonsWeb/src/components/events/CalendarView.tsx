@@ -18,7 +18,7 @@ interface CalendarViewProps {
 function CalendarSkeleton() {
     const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     return (
-        <table className="w-full border-collapse border border-[var(--color-border)]" role="status" aria-label="Loading calendar">
+        <table className="w-full table-fixed border-collapse border border-[var(--color-border)]" role="status" aria-label="Loading calendar">
             <thead>
                 <tr>
                     {dayHeaders.map(day => (
@@ -95,7 +95,7 @@ export function CalendarView({ events, onEventClick, towns = [], displayDate, on
     const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return (
-        <div>
+        <div className="min-w-0 overflow-hidden">
             {/* Calendar header */}
             <div className="flex justify-between items-center mb-3 border-b-2 border-[var(--color-border)] pb-2">
                 <button
@@ -119,7 +119,7 @@ export function CalendarView({ events, onEventClick, towns = [], displayDate, on
             {isLoadingMonth ? (
                 <CalendarSkeleton />
             ) : (
-                <table className="w-full border-collapse border border-[var(--color-border)]">
+                <table className="w-full table-fixed border-collapse border border-[var(--color-border)]">
                     <thead>
                         <tr>
                             {dayHeaders.map(day => (

@@ -16,6 +16,40 @@ def _get_brevo_client():
     return brevo_python.TransactionalEmailsApi(brevo_python.ApiClient(configuration))
 
 
+def _get_sender():
+    return brevo_python.SendSmtpEmailSender(
+        name="The Commons",
+        email=os.environ.get('DIGEST_FROM_EMAIL', 'digest@thecommons.town'),
+    )
+
+
+def send_email(to: str, subject: str, html: str, text: str | None = None) -> bool:
+    """Send one transactional email via Brevo.
+
+    Low-level primitive used by every digest path. Returns True on success and
+    False (after logging) on failure, so callers can tally results without
+    each having to catch ApiException.
+    """
+    email = brevo_python.SendSmtpEmail(
+        to=[brevo_python.SendSmtpEmailTo(email=to)],
+        sender=_get_sender(),
+        subject=subject,
+        html_content=html,
+    )
+    if text:
+        email.text_content = text
+
+    try:
+        _get_brevo_client().send_transac_email(email)
+        return True
+    except ApiException as e:
+        logger.error("Brevo send failed for %s: %s", to, e)
+        return False
+    except Exception as e:  # noqa: BLE001 — config/network errors shouldn't crash a batch
+        logger.error("Unexpected error sending to %s: %s", to, e)
+        return False
+
+
 def _build_recipients(frequency: str) -> list[dict]:
     """Return [{email, tags: set[str]}] for all subscribers of this frequency.
 
@@ -76,11 +110,6 @@ def send_digest(frequency: str) -> dict:
         logger.info("No active %s subscribers — skipping digest.", frequency)
         return {'sent': 0, 'failed': 0}
 
-    client = _get_brevo_client()
-    sender = brevo_python.SendSmtpEmailSender(
-        name="The Commons",
-        email=os.environ.get('DIGEST_FROM_EMAIL', 'digest@thecommons.town'),
-    )
     site_url = os.environ.get('SITE_URL', 'https://www.thecommons.town')
 
     sent = failed = 0
@@ -101,17 +130,9 @@ def send_digest(frequency: str) -> dict:
             'site_url': site_url,
         })
 
-        send_email = brevo_python.SendSmtpEmail(
-            to=[brevo_python.SendSmtpEmailTo(email=recipient['email'])],
-            sender=sender,
-            subject=subject,
-            html_content=html_body,
-        )
-        try:
-            client.send_transac_email(send_email)
+        if send_email(recipient['email'], subject, html_body):
             sent += 1
-        except ApiException as e:
-            logger.error("Brevo send failed for %s: %s", recipient['email'], e)
+        else:
             failed += 1
 
     logger.info("Digest sent: %d succeeded, %d failed.", sent, failed)

@@ -24,3 +24,8 @@ Thumbs.db
 
 # Node
 node_modules/
+
+#ssh keys
+*.key
+commonsvps.key
+ssh.sh

@@ -1,3 +1,5 @@
+'use client';
+
 import { useId, type SelectHTMLAttributes } from 'react';
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {

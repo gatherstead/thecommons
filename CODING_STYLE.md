@@ -14,7 +14,7 @@ Key principles:
 
 ## Frontend: CSS Design Tokens
 
-All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/index.css`. **Do not hardcode hex values in components** — reference the variables.
+All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/app/globals.css`. **Do not hardcode hex values in components** — reference the variables.
 
 ```css
 --color-bg:           #f4f1eb   /* newsprint cream — page background */
@@ -32,8 +32,11 @@ All colors and fonts are defined as CSS custom properties in `theCommonsWeb/src/
 --font-sans:      system-ui, ...  /* only for UI chrome that must feel modern */
 ```
 
-Utility classes defined in `index.css`:
+Utility classes defined in `globals.css`:
 - `.rule-thick` — `border-top: 3px solid var(--color-border)`
+- `.rule-double` — `border-top: 3px double var(--color-border)`
+- `.drop-cap` — floated large first letter (headline serif, 3.2rem)
+- `.skeleton-block` — ebbing pulse animation for loading skeletons (respects `prefers-reduced-motion`)
 
 ---
 
@@ -44,7 +47,10 @@ Utility classes defined in `index.css`:
 - Use Tailwind utility classes for layout/spacing; use CSS variables for all colors (via `var(--color-*)` inline or via Tailwind's `bg-[var(--color-bg)]` syntax).
 - No `useState` in pure display components — lift state to the nearest shared ancestor or into a hook.
 - The main data hook is `useEvents` in `src/hooks/`. Add filtering/sorting logic there, not in components.
-- Event data flows as `FrontendEvent` (see `src/models/eventsModels.ts`). Map API responses to this type in `eventService.ts`, not in components.
+- **Auth state lives in `useAuth`** (context provider in `src/hooks/useAuth.tsx`). It wraps Better Auth — don't call `authClient` or manage sessions/JWTs in components directly. Better Auth is configured in `src/lib/auth.ts` (server) and `src/lib/auth-client.ts` (client); the `neon_auth` Drizzle schema lives in `src/lib/auth-schema.ts`. Don't reach into those from feature code.
+- Event data flows as `FrontendEvent` (see `src/models/eventsModels.ts`). Map API responses to this type in `eventService.ts`, not in components. Profile reads/writes go through `profileService.ts`.
+- **Next.js App Router:** Pages live in `src/app/`. Mark interactive components with `'use client'`. Server components are preferred for static/SEO pages (e.g., About). Route-level `metadata` exports provide SEO titles/descriptions.
+- Environment variables exposed to the browser must use the `NEXT_PUBLIC_` prefix. Keep `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `GOOGLE_CLIENT_SECRET` server-side only.
 
 ---
 
@@ -53,9 +59,10 @@ Utility classes defined in `index.css`:
 - **Apps are domain-scoped**: `events` = public-facing data, `ingestion` = pipeline internals. Don't bleed ingestion logic into the events app.
 - DRF serializers live in `{app}/serializers.py`. Views in `{app}/views.py` should stay thin — business logic goes in a `services.py` module.
 - Database transactions for anything that touches multiple models (`transaction.atomic()`).
-- New models need a migration before any other work.
+- New models need a migration before any other work — **except** the `neon_auth` mirror models, which are `managed = False`. Never generate or apply migrations for `BetterAuthUser`, `BetterAuthSession`, etc.; Better Auth (Next.js) owns those tables.
+- **Auth is delegated to Better Auth.** Don't add Django login/signup/logout views or use `django.contrib.auth.User` for app users. New authenticated endpoints should use `BearerTokenAuthentication` + the appropriate permission class (`HasCommonsAPIKeyOrUser`, `IsAuthenticated`). `UserProfile` is keyed to `BetterAuthUser`.
 - Admin registration goes in `{app}/admin.py`. Use django-unfold decorators for custom display.
-- The `Town` model is the canonical authority on valid towns. The ingestion pipeline resolves `town` slug from `StagedEvent` to a `Town` FK — if the slug doesn't exist in the `Town` table, the event is skipped during publishing.
+- The `Town` and `Category` models are the canonical authorities on valid towns/categories. The ingestion pipeline resolves a `town` slug from `StagedEvent` to a `Town` FK — if the slug doesn't exist in the `Town` table, the event is skipped during publishing.
 
 ---
 

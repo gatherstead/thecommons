@@ -1,9 +1,11 @@
+import Link from 'next/link';
+
 const FOOTER_LINKS = {
     About: [
-        { label: 'About The Commons', href: '#' },
-        { label: 'Our Mission', href: '#' },
-        { label: 'How It Works', href: '#' },
-        { label: 'FAQ', href: '#' },
+        { label: 'About The Commons', href: '/about' },
+        { label: 'Our Mission', href: '/about#mission' },
+        { label: 'How It Works', href: '/about#how-it-works' },
+        { label: 'FAQ', href: '/about#faq' },
     ],
     Contribute: [
         { label: 'Post an Event', href: '#' },
@@ -18,6 +20,10 @@ const FOOTER_LINKS = {
         { label: 'Feedback', href: '#' },
     ],
 };
+
+function isExternal(href: string) {
+    return href.startsWith('http');
+}
 
 export function Footer() {
     const year = new Date().getFullYear();
@@ -79,14 +85,23 @@ export function Footer() {
                             <ul className="space-y-1.5 list-none p-0 m-0">
                                 {links.map(link => (
                                     <li key={link.label}>
-                                        <a
-                                            href={link.href}
-                                            target={link.href.startsWith('http') ? '_blank' : undefined}
-                                            rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                                            className="text-xs no-underline text-(--color-text) hover:text-(--color-accent) transition-colors"
-                                        >
-                                            {link.label}
-                                        </a>
+                                        {isExternal(link.href) ? (
+                                            <a
+                                                href={link.href}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-xs no-underline text-(--color-text) hover:text-(--color-accent) transition-colors"
+                                            >
+                                                {link.label}
+                                            </a>
+                                        ) : (
+                                            <Link
+                                                href={link.href}
+                                                className="text-xs no-underline text-(--color-text) hover:text-(--color-accent) transition-colors"
+                                            >
+                                                {link.label}
+                                            </Link>
+                                        )}
                                     </li>
                                 ))}
                             </ul>

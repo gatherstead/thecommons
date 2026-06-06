@@ -37,7 +37,7 @@ body {
   min-height: 100vh;
 }
 
-#root {
+#__next {
   width: 100%;
   min-height: 100vh;
 }
@@ -91,4 +91,20 @@ hr {
   font-weight: 700;
   margin-right: 0.4rem;
   margin-top: 0.1rem;
+}
+
+/* Skeleton loading -- gentle ebbing pulse, newsprint-toned */
+@keyframes ebb {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.7; }
+}
+
+.skeleton-block {
+  background-color: var(--color-border-light);
+  animation: ebb 1.8s ease-in-out infinite;
+  border-radius: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block { animation: none; opacity: 0.5; }
 }

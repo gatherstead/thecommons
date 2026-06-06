@@ -1,3 +1,6 @@
+import Link from 'next/link';
+import { HeaderAuthNav } from './HeaderAuthNav';
+
 export function Header() {
     const today = new Date();
     const dateStr = today.toLocaleDateString('en-US', {
@@ -18,15 +21,21 @@ export function Header() {
                         Est. 2026
                     </span>
 
-                    <h1
-                        className="flex-1 text-center font-black tracking-tight leading-none mx-4"
-                        style={{
-                            fontSize: 'clamp(2.75rem, 8vw, 6rem)',
-                            fontFamily: 'var(--font-headline)',
-                        }}
+                    <Link
+                        href="/"
+                        className="flex-1 text-center no-underline hover:no-underline"
+                        style={{ color: 'inherit', textDecoration: 'none' }}
                     >
-                        The Commons
-                    </h1>
+                        <h1
+                            className="font-black tracking-tight leading-none mx-4 no-underline hover:text-black"
+                            style={{
+                                fontSize: 'clamp(2.75rem, 8vw, 6rem)',
+                                fontFamily: 'var(--font-headline)',
+                            }}
+                        >
+                            The Commons
+                        </h1>
+                    </Link>
 
                     <span className="text-[12px] text-(--color-text-muted) shrink-0 pt-2">
                         {dateStr}
@@ -48,6 +57,9 @@ export function Header() {
 
                 {/* ── Closing rule ─────────────────────────────────────── */}
                 <div className="border-t border-(--color-border)" />
+
+                {/* ── Auth nav — only renders when signed in ────────────── */}
+                <HeaderAuthNav />
 
             </div>
         </header>

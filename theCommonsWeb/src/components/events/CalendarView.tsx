@@ -1,4 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
+'use client';
+
+import { useState, useMemo } from 'react';
 import type { FrontendEvent, TownOption } from '../../models/eventsModels';
 import { EventRow } from './EventRow';
 import { Modal } from '../ui/Modal';
@@ -7,23 +9,50 @@ interface CalendarViewProps {
     events: FrontendEvent[];
     onEventClick?: (event: FrontendEvent) => void;
     towns?: TownOption[];
-    jumpToDay?: Date | null;
+    displayDate: Date;
+    onNavigateMonth: (date: Date) => void;
+    onPrefetchMonth?: (year: number, month: number) => void;
+    isLoadingMonth?: boolean;
 }
 
-export function CalendarView({ events, onEventClick, towns = [], jumpToDay }: CalendarViewProps) {
-    const [currentDate, setCurrentDate] = useState(new Date());
+function CalendarSkeleton() {
+    const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return (
+        <table className="w-full table-fixed border-collapse border border-[var(--color-border)]" role="status" aria-label="Loading calendar">
+            <thead>
+                <tr>
+                    {dayHeaders.map(day => (
+                        <th key={day} scope="col" className="border border-[var(--color-border)] bg-[var(--color-bg-alt)] p-1.5 text-[10px] uppercase tracking-widest font-bold text-center">
+                            {day}
+                        </th>
+                    ))}
+                </tr>
+            </thead>
+            <tbody>
+                {Array.from({ length: 5 }).map((_, weekIdx) => (
+                    <tr key={weekIdx}>
+                        {Array.from({ length: 7 }).map((_, dayIdx) => (
+                            <td
+                                key={dayIdx}
+                                className="border border-[var(--color-border-light)] min-h-[100px] h-24 p-1.5 align-top"
+                            >
+                                <div className="skeleton-block h-3 w-4 mb-2 rounded-sm" />
+                                <div className="skeleton-block h-2.5 w-full rounded-sm mb-1" />
+                                <div className="skeleton-block h-2.5 w-3/4 rounded-sm" />
+                            </td>
+                        ))}
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    );
+}
+
+export function CalendarView({ events, onEventClick, towns = [], displayDate, onNavigateMonth, onPrefetchMonth, isLoadingMonth = false }: CalendarViewProps) {
     const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-    // When a day is clicked in the mini calendar, navigate to its month and open it
-    useEffect(() => {
-        if (jumpToDay) {
-            setCurrentDate(new Date(jumpToDay.getFullYear(), jumpToDay.getMonth(), 1));
-            setSelectedDay(jumpToDay);
-        }
-    }, [jumpToDay]);
-
-    const currentMonth = currentDate.getMonth();
-    const currentYear = currentDate.getFullYear();
+    const currentMonth = displayDate.getMonth();
+    const currentYear = displayDate.getFullYear();
 
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
@@ -39,10 +68,20 @@ export function CalendarView({ events, onEventClick, towns = [], jumpToDay }: Ca
         return days;
     }, [currentMonth, currentYear, daysInMonth, firstDayOfMonth]);
 
-    const monthName = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const monthName = displayDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-    const nextMonth = () => setCurrentDate(new Date(currentYear, currentMonth + 1, 1));
-    const prevMonth = () => setCurrentDate(new Date(currentYear, currentMonth - 1, 1));
+    const prevMonth = () => onNavigateMonth(new Date(currentYear, currentMonth - 1, 1));
+    const nextMonth = () => onNavigateMonth(new Date(currentYear, currentMonth + 1, 1));
+
+    const handlePrevHover = () => {
+        const twoBack = new Date(currentYear, currentMonth - 2, 1);
+        onPrefetchMonth?.(twoBack.getFullYear(), twoBack.getMonth() + 1);
+    };
+
+    const handleNextHover = () => {
+        const twoFwd = new Date(currentYear, currentMonth + 2, 1);
+        onPrefetchMonth?.(twoFwd.getFullYear(), twoFwd.getMonth() + 1);
+    };
 
     const selectedDayEvents = useMemo(() => {
         if (!selectedDay) return [];
@@ -56,11 +95,12 @@ export function CalendarView({ events, onEventClick, towns = [], jumpToDay }: Ca
     const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return (
-        <div>
+        <div className="min-w-0 overflow-hidden">
             {/* Calendar header */}
             <div className="flex justify-between items-center mb-3 border-b-2 border-[var(--color-border)] pb-2">
                 <button
                     onClick={prevMonth}
+                    onMouseEnter={handlePrevHover}
                     className="text-xs uppercase tracking-wider font-bold cursor-pointer bg-transparent border-none hover:text-[var(--color-accent)]"
                 >
                     &larr; Prev
@@ -68,65 +108,70 @@ export function CalendarView({ events, onEventClick, towns = [], jumpToDay }: Ca
                 <h2 className="text-2xl font-bold">{monthName}</h2>
                 <button
                     onClick={nextMonth}
+                    onMouseEnter={handleNextHover}
                     className="text-xs uppercase tracking-wider font-bold cursor-pointer bg-transparent border-none hover:text-[var(--color-accent)]"
                 >
                     Next &rarr;
                 </button>
             </div>
 
-            {/* Calendar grid */}
-            <table className="w-full border-collapse border border-[var(--color-border)]">
-                <thead>
-                    <tr>
-                        {dayHeaders.map(day => (
-                            <th key={day} scope="col" className="border border-[var(--color-border)] bg-[var(--color-bg-alt)] p-1.5 text-[10px] uppercase tracking-widest font-bold text-center">
-                                {day}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {Array.from({ length: Math.ceil(calendarDays.length / 7) }).map((_, weekIdx) => (
-                        <tr key={weekIdx}>
-                            {calendarDays.slice(weekIdx * 7, weekIdx * 7 + 7).map((day, dayIdx) => {
-                                if (!day) {
-                                    return <td key={`empty-${dayIdx}`} className="border border-[var(--color-border-light)] min-h-[100px] h-24 bg-[var(--color-bg-alt)]" />;
-                                }
-
-                                const dayEvents = events.filter(e =>
-                                    e.date.getDate() === day.getDate() &&
-                                    e.date.getMonth() === day.getMonth() &&
-                                    e.date.getFullYear() === day.getFullYear()
-                                );
-
-                                return (
-                                    <td
-                                        key={day.toISOString()}
-                                        onClick={() => setSelectedDay(day)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDay(day); } }}
-                                        tabIndex={0}
-                                        className="border border-[var(--color-border-light)] min-h-[100px] h-24 p-1.5 align-top cursor-pointer hover:bg-[var(--color-bg-alt)] transition-colors"
-                                    >
-                                        <div className="text-xs font-bold mb-0.5">{day.getDate()}</div>
-                                        <div className="space-y-0.5">
-                                            {dayEvents.slice(0, 2).map(event => (
-                                                <div key={event.id} className="text-[10px] leading-tight truncate border-b border-[var(--color-border-light)] pb-0.5">
-                                                    <span className="font-bold">{event.title}</span>
-                                                </div>
-                                            ))}
-                                            {dayEvents.length > 2 && (
-                                                <div className="text-[10px] italic text-[var(--color-text-muted)]">
-                                                    +{dayEvents.length - 2} more...
-                                                </div>
-                                            )}
-                                        </div>
-                                    </td>
-                                );
-                            })}
+            {/* Calendar grid or skeleton */}
+            {isLoadingMonth ? (
+                <CalendarSkeleton />
+            ) : (
+                <table className="w-full table-fixed border-collapse border border-[var(--color-border)]">
+                    <thead>
+                        <tr>
+                            {dayHeaders.map(day => (
+                                <th key={day} scope="col" className="border border-[var(--color-border)] bg-[var(--color-bg-alt)] p-1.5 text-[10px] uppercase tracking-widest font-bold text-center">
+                                    {day}
+                                </th>
+                            ))}
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {Array.from({ length: Math.ceil(calendarDays.length / 7) }).map((_, weekIdx) => (
+                            <tr key={weekIdx}>
+                                {calendarDays.slice(weekIdx * 7, weekIdx * 7 + 7).map((day, dayIdx) => {
+                                    if (!day) {
+                                        return <td key={`empty-${dayIdx}`} className="border border-[var(--color-border-light)] min-h-[100px] h-24 bg-[var(--color-bg-alt)]" />;
+                                    }
+
+                                    const dayEvents = events.filter(e =>
+                                        e.date.getDate() === day.getDate() &&
+                                        e.date.getMonth() === day.getMonth() &&
+                                        e.date.getFullYear() === day.getFullYear()
+                                    );
+
+                                    return (
+                                        <td
+                                            key={day.toISOString()}
+                                            onClick={() => setSelectedDay(day)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDay(day); } }}
+                                            tabIndex={0}
+                                            className="border border-[var(--color-border-light)] min-h-[100px] h-24 p-1.5 align-top cursor-pointer hover:bg-[var(--color-bg-alt)] transition-colors"
+                                        >
+                                            <div className="text-xs font-bold mb-0.5">{day.getDate()}</div>
+                                            <div className="space-y-0.5">
+                                                {dayEvents.slice(0, 2).map(event => (
+                                                    <div key={event.id} className="text-[10px] leading-tight truncate border-b border-[var(--color-border-light)] pb-0.5">
+                                                        <span className="font-bold">{event.title}</span>
+                                                    </div>
+                                                ))}
+                                                {dayEvents.length > 2 && (
+                                                    <div className="text-[10px] italic text-[var(--color-text-muted)]">
+                                                        +{dayEvents.length - 2} more...
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </td>
+                                    );
+                                })}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
 
             {/* Day detail modal */}
             {selectedDay && (

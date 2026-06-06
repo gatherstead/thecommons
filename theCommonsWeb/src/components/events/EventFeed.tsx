@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
 import { FILTER_TAGS } from '../../constants/tags';
 import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
 import type { FrontendEvent, TownOption } from '../../models/eventsModels';
 
 interface EventFeedProps {
@@ -7,6 +9,29 @@ interface EventFeedProps {
     isLoading: boolean;
     onEventClick: (event: FrontendEvent) => void;
     towns: TownOption[];
+    footer?: ReactNode;
+    currentPage?: number;
+    totalPages?: number;
+    totalCount?: number;
+    onNextPage?: () => void;
+    onPrevPage?: () => void;
+    isLoadingPage?: boolean;
+    sectionName?: string | null;
+}
+
+// Section front nameplate — shown when a single category ("section") is active
+function SectionNameplate({ name }: { name: string }) {
+    return (
+        <div className="text-center pt-5 pb-4">
+            <h2
+                className="font-black uppercase leading-none tracking-[0.12em]"
+                style={{ fontSize: 'clamp(1.6rem, 3.2vw, 2.5rem)', fontFamily: 'var(--font-headline)' }}
+            >
+                {name}
+            </h2>
+            <span className="block mx-auto mt-3 w-20 border-t-2 border-[var(--color-accent)]" aria-hidden="true" />
+        </div>
+    );
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -220,22 +245,179 @@ function CompactRow({
     );
 }
 
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+// Mirrors the feed layout (FeaturedCard -> PairColumn -> CompactRow briefs)
+// with a synchronized ebbing opacity pulse.
+
+function SkeletonLine({
+    width = '100%',
+    height = '0.75rem',
+    className = '',
+}: {
+    width?: string;
+    height?: string;
+    className?: string;
+}) {
+    return (
+        <span
+            className={`skeleton-block block ${className}`}
+            style={{ width, height }}
+            aria-hidden="true"
+        />
+    );
+}
+
+function FeaturedSkeleton() {
+    return (
+        <div className="py-5" aria-hidden="true">
+            <div className="flex items-center gap-2 mb-3">
+                <SkeletonLine width="5rem" height="0.6rem" />
+                <span className="flex-1 border-t border-[var(--color-border-light)]" />
+            </div>
+            <SkeletonLine width="92%" height="2.6rem" className="mb-2" />
+            <SkeletonLine width="70%" height="2.6rem" className="mb-4" />
+            <SkeletonLine width="80%" height="0.7rem" className="mb-3" />
+            <SkeletonLine width="55%" height="0.6rem" className="mb-4" />
+            <div className="space-y-2 mb-4">
+                <SkeletonLine width="100%" />
+                <SkeletonLine width="98%" />
+                <SkeletonLine width="94%" />
+                <SkeletonLine width="60%" />
+            </div>
+            <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border-light)]">
+                <SkeletonLine width="3rem" height="0.9rem" />
+                <SkeletonLine width="3rem" height="0.9rem" />
+                <span className="ml-auto" />
+                <SkeletonLine width="2.5rem" height="0.8rem" />
+            </div>
+        </div>
+    );
+}
+
+function PairSkeleton() {
+    return (
+        <div className="grid grid-cols-2 border-t-2 border-[var(--color-border)]" aria-hidden="true">
+            {[0, 1].map(i => (
+                <div
+                    key={i}
+                    className={[
+                        'pt-3 pb-4',
+                        i === 0
+                            ? 'pr-5 border-r border-[var(--color-border-light)]'
+                            : 'pl-5',
+                    ].join(' ')}
+                >
+                    <SkeletonLine width="4rem" height="0.55rem" className="mb-2" />
+                    <SkeletonLine width="90%" height="1.2rem" className="mb-1.5" />
+                    <SkeletonLine width="65%" height="1.2rem" className="mb-2" />
+                    <SkeletonLine width="75%" height="0.55rem" className="mb-2" />
+                    <div className="space-y-1.5">
+                        <SkeletonLine width="100%" />
+                        <SkeletonLine width="92%" />
+                        <SkeletonLine width="70%" />
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function BriefSkeleton() {
+    return (
+        <div
+            className="flex items-baseline gap-3 border-t border-[var(--color-border-light)] py-3 -mx-1 px-1"
+            aria-hidden="true"
+        >
+            <SkeletonLine width="2.5rem" height="0.6rem" />
+            <span className="flex-1">
+                <SkeletonLine width="85%" height="0.85rem" />
+            </span>
+            <SkeletonLine width="6rem" height="0.6rem" className="hidden md:block" />
+            <SkeletonLine width="2rem" height="0.7rem" />
+        </div>
+    );
+}
+
+function FeedSkeleton() {
+    return (
+        <div
+            className="border-t-2 border-[var(--color-border)]"
+            role="status"
+            aria-label="Loading events"
+        >
+            <FeaturedSkeleton />
+            <PairSkeleton />
+            <PairSkeleton />
+            <SectionRule label="On the Horizon" />
+            {[0, 1, 2, 3].map(i => (
+                <BriefSkeleton key={i} />
+            ))}
+            <span className="sr-only">Loading events…</span>
+        </div>
+    );
+}
+
+// ─── PageNav ──────────────────────────────────────────────────────────────────
+
+function PageNav({
+    currentPage,
+    totalPages,
+    onPrevPage,
+    onNextPage,
+    isLoadingPage,
+}: {
+    currentPage: number;
+    totalPages: number;
+    onPrevPage?: () => void;
+    onNextPage?: () => void;
+    isLoadingPage?: boolean;
+}) {
+    if (totalPages <= 1) return null;
+    return (
+        <div className="flex items-center justify-between border-t-2 border-[var(--color-border)] mt-5 pt-4">
+            <Button
+                variant="secondary"
+                size="sm"
+                onClick={onPrevPage}
+                disabled={currentPage <= 1 || isLoadingPage}
+                className="disabled:opacity-30"
+            >
+                ← Prev
+            </Button>
+            <span className="text-[10px] uppercase tracking-[0.2em] font-black text-[var(--color-text-muted)]">
+                {isLoadingPage ? 'Loading…' : `Page ${currentPage} of ${totalPages}`}
+            </span>
+            <Button
+                variant="secondary"
+                size="sm"
+                onClick={onNextPage}
+                disabled={currentPage >= totalPages || isLoadingPage}
+                className="disabled:opacity-30"
+            >
+                Next →
+            </Button>
+        </div>
+    );
+}
+
+
 // ─── EventFeed (main export) ──────────────────────────────────────────────────
 
-export function EventFeed({ events, isLoading, onEventClick, towns }: EventFeedProps) {
+export function EventFeed({ events, isLoading, onEventClick, towns, footer, currentPage = 1, totalPages = 1, totalCount = 0, onNextPage, onPrevPage, isLoadingPage = false, sectionName = null }: EventFeedProps) {
     if (isLoading) {
-        return (
-            <p className="text-center py-16 italic text-[var(--color-text-muted)]">
-                Loading events...
-            </p>
-        );
+        return <FeedSkeleton />;
     }
 
     if (events.length === 0) {
         return (
-            <div className="text-center py-16">
-                <p className="italic text-[var(--color-text-muted)]">No events match your current filters.</p>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your selections.</p>
+            <div className="border-t-2 border-[var(--color-border)]">
+                {sectionName && <SectionNameplate name={sectionName} />}
+                <div className="text-center py-16">
+                    <p className="italic text-[var(--color-text-muted)]">No upcoming events.</p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your filters or changing the date range in the sidebar.</p>
+                </div>
+                <PageNav currentPage={currentPage} totalPages={totalPages} onPrevPage={onPrevPage} onNextPage={onNextPage} isLoadingPage={isLoadingPage} />
+                {footer && <div className="mt-4 border-t border-[var(--color-border-light)]">{footer}</div>}
             </div>
         );
     }
@@ -254,6 +436,8 @@ export function EventFeed({ events, isLoading, onEventClick, towns }: EventFeedP
 
     return (
         <div className="border-t-2 border-[var(--color-border)]">
+            {sectionName && <SectionNameplate name={sectionName} />}
+
             <FeaturedCard event={featured} onClick={onEventClick} towns={towns} />
 
             {pairs.map((pair, pi) => (
@@ -273,6 +457,10 @@ export function EventFeed({ events, isLoading, onEventClick, towns }: EventFeedP
                     ))}
                 </>
             )}
+
+            <PageNav currentPage={currentPage} totalPages={totalPages} onPrevPage={onPrevPage} onNextPage={onNextPage} isLoadingPage={isLoadingPage} />
+
+            {footer && <div className="mt-4 border-t border-[var(--color-border-light)]">{footer}</div>}
         </div>
     );
 }

@@ -1,7 +1,10 @@
+import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
 import { MiniCalendar } from './MiniCalendar';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import type { FrontendEvent } from '../../models/eventsModels';
+import type { AuthUser } from '../../models/authModels';
+import { DIGEST_SIGNUP_HREF } from '../layout/DigestCTAPusher';
 
 type ViewMode = 'feed' | 'calendar';
 
@@ -16,8 +19,14 @@ interface SidebarProps {
     events: FrontendEvent[];
     selectedDate: Date | null;
     onDayClick: (date: Date | null) => void;
+    displayDate: Date;
+    onNavigateMonth: (date: Date) => void;
+    isLoadingMonth?: boolean;
     selectedTags: TagId[];
     onTagToggle: (tagId: TagId) => void;
+    currentUser: AuthUser | null;
+    onSignIn: () => void;
+    onSignOut: () => void;
 }
 
 export function Sidebar({
@@ -31,9 +40,16 @@ export function Sidebar({
     events,
     selectedDate,
     onDayClick,
+    displayDate,
+    onNavigateMonth,
+    isLoadingMonth = false,
     selectedTags,
     onTagToggle,
+    currentUser,
+    onSignIn,
+    onSignOut,
 }: SidebarProps) {
+    const router = useRouter();
     const today = new Date();
     const formattedDate = today.toLocaleDateString('en-US', {
         weekday: 'long',
@@ -48,6 +64,33 @@ export function Sidebar({
                 Post an Event +
             </Button>
 
+            {/* {currentUser ? (
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] flex items-baseline justify-between gap-2">
+                    <span className="truncate">
+                        Signed in as{' '}
+                        <span className="not-italic font-black text-[var(--color-text)]">
+                            {currentUser.business_name || currentUser.email}
+                        </span>
+                    </span>
+                    <button
+                        onClick={onSignOut}
+                        className="underline hover:text-[var(--color-accent)] bg-transparent border-none cursor-pointer p-0 shrink-0"
+                    >
+                        Sign out
+                    </button>
+                </p>
+            ) : (
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                    Posting an event requires an account.{' '}
+                    <button
+                        onClick={onSignIn}
+                        className="underline hover:text-[var(--color-accent)] bg-transparent border-none cursor-pointer p-0"
+                    >
+                        Sign in
+                    </button>
+                </p>
+            )} */}
+
             <hr />
 
             <p className="text-xs italic text-[var(--color-text-muted)] leading-snug">
@@ -61,16 +104,16 @@ export function Sidebar({
                 events={events}
                 selectedDate={selectedDate}
                 onDayClick={onDayClick}
+                displayDate={displayDate}
+                onNavigateMonth={onNavigateMonth}
+                isLoadingMonth={isLoadingMonth}
             />
 
             <hr />
 
-            <button
-                onClick={onToggleView}
-                className="text-xs uppercase tracking-wider cursor-pointer bg-transparent border-none underline hover:text-[var(--color-accent)] block"
-            >
-                {viewMode === 'feed' ? '[ View Full Calendar ]' : '[ View Feed ]'}
-            </button>
+            <Button variant="secondary" onClick={onToggleView} className="w-full">
+                {viewMode === 'feed' ? 'View Full Calendar' : 'View Feed'}
+            </Button>
 
             <hr />
 
@@ -161,6 +204,27 @@ export function Sidebar({
                     </p>
                 </>
             )}
+
+            <hr />
+
+            <div className="border border-[var(--color-border)] px-3 py-5">
+                <p className="text-[9px] uppercase tracking-[0.18em] font-black text-[var(--color-accent)] mb-[0.165rem]">
+                    The Commons Digest
+                </p>
+                <p className="text-sm font-serif font-bold text-[var(--color-text)] leading-snug mb-[0.8rem]">
+                    Every week's events, delivered to your inbox.
+                </p>
+                <p className="text-xs text-[var(--color-text-muted)] leading-snug mb-6">
+                    The weekly digest lands every Sunday — a curated roundup of upcoming happenings in Chapel Hill &amp; Carrboro, no algorithm required.
+                </p>
+                <button
+                    type="button"
+                    onClick={() => router.push(currentUser ? '/profile' : DIGEST_SIGNUP_HREF)}
+                    className="w-full text-xs uppercase tracking-[0.15em] font-black border border-[var(--color-accent)] text-[var(--color-accent)] bg-transparent py-2.5 cursor-pointer hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors"
+                >
+                    {currentUser ? 'Manage digest' : "Subscribe — it's free"}
+                </button>
+            </div>
         </aside>
     );
 }

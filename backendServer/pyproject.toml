@@ -21,4 +21,10 @@ dependencies = [
     "google-genai>=1.66.0",
     "django-unfold>=0.83.1",
     "beautifulsoup4>=4.14.3",
+    "pyjwt[crypto]>=2.10.0",
+    # 1.x exposes the `brevo_python` module (TransactionalEmailsApi/SendSmtpEmail API
+    # used in email_service.py). 4.x is a Fern rewrite that imports as `brevo` with a
+    # different API — do not bump without porting email_service.py.
+    "brevo-python>=1.2.0,<2",
+    "gunicorn>=26.0.0",
 ]

@@ -3,22 +3,13 @@ URL configuration for backend project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
 from django.contrib import admin
 from django.urls import include, path
 
 from ingestion.views import admin_docs, cron_ingest, pipeline_docs, publish_approved_admin, publish_approved_events
+from events.views import subscribe, me, businesses, business_detail, my_business
 
 urlpatterns = [
     path("events/", include("events.urls")),
@@ -28,4 +19,9 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/cron/ingest", cron_ingest, name="cron-ingest"),
     path("api/events/publish-approved", publish_approved_events, name="publish-approved-events"),
+    path("auth/subscribe", subscribe, name="subscribe"),
+    path("auth/me", me, name="auth-me"),
+    path("businesses", businesses, name="businesses"),
+    path("businesses/me", my_business, name="my-business"),
+    path("businesses/<uuid:business_id>", business_detail, name="business-detail"),
 ]

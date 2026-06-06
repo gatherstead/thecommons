@@ -74,6 +74,7 @@ class StagedEvent(models.Model):
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
     tags = models.JSONField(default=list)
+    category = models.CharField(max_length=100, blank=True, default='')
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     link = models.URLField(max_length=500, blank=True)
 
@@ -87,10 +88,23 @@ class StagedEvent(models.Model):
         on_delete=models.SET_NULL, related_name='duplicates',
     )
 
+    # Safety scoring
+    safety_score = models.FloatField(null=True, blank=True)
+    safety_notes = models.TextField(blank=True, default='')
+
     # Link to the real Event once approved
     published_event = models.ForeignKey(
         'events.Event', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='staged_source',
+    )
+
+    # Tracks who submitted this event via the public API; null for pipeline events.
+    submitted_by = models.ForeignKey(
+        'events.BetterAuthUser',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='submitted_staged_events',
+        db_constraint=False,
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

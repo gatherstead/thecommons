@@ -1,11 +1,18 @@
 // src/services/eventService.ts
 
-import type { FrontendEvent, BackendEvent, EventPayload, TownOption } from "../models/eventsModels";
+import type { FrontendEvent, BackendEvent, PaginatedBackendEvents, EventPayload, TownOption, CategoryOption, MyEventSummary } from "../models/eventsModels";
+
+export interface EventsPage {
+    results: FrontendEvent[];
+    next: string | null;
+    previous: string | null;
+    count: number;
+}
 
 
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
-const API_KEY = import.meta.env.VITE_THE_COMMONS_API_KEY || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_KEY = process.env.NEXT_PUBLIC_THE_COMMONS_API_KEY || '';
 
 
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
@@ -30,12 +37,15 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
         venue: backendEvent.venue,
         town: backendEvent.town,
         description: backendEvent.description,
-        tags: backendEvent.tag_names || [], // Map tag_names -> tags
+        tags: backendEvent.tag_names || [],
+        categories: backendEvent.category_slugs || [],
         date: dateObj,
         time: timeString,
         price: priceString,
         link: backendEvent.link || '',
         photo: backendEvent.photo,
+        isVerified: backendEvent.is_verified ?? false,
+        sourceName: backendEvent.source_name ?? '',
     };
 };
 
@@ -51,10 +61,43 @@ export const getTowns = async (): Promise<TownOption[]> => {
     }
 };
 
-// --- GET ALL EVENTS ---
-export const getEvents = async (): Promise<FrontendEvent[]> => {
+// --- GET ALL CATEGORIES ---
+export const getCategories = async (): Promise<CategoryOption[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events/`, {
+        const response = await fetch(`${API_BASE}/events/categories/`);
+        if (!response.ok) throw new Error('Failed to fetch categories');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching categories:', error);
+        return [];
+    }
+};
+
+// --- GET ALL EVENTS ---
+export const getEvents = async (params?: {
+    after?: string;
+    before?: string;
+    include_past?: boolean;
+    window?: 'past';
+    pageUrl?: string;
+    category?: string;
+}): Promise<EventsPage> => {
+    try {
+        let url: string;
+        if (params?.pageUrl) {
+            url = params.pageUrl;
+        } else {
+            const query = new URLSearchParams();
+            if (params?.after) query.set('after', params.after);
+            if (params?.before) query.set('before', params.before);
+            if (params?.include_past) query.set('include_past', 'true');
+            if (params?.window) query.set('window', params.window);
+            if (params?.category) query.set('category', params.category);
+            const qs = query.toString();
+            url = `${API_BASE}/events/${qs ? `?${qs}` : ''}`;
+        }
+
+        const response = await fetch(url, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });
@@ -63,22 +106,100 @@ export const getEvents = async (): Promise<FrontendEvent[]> => {
             throw new Error('Failed to fetch events');
         }
 
-        const data: BackendEvent[] = await response.json();
-
-        return data.map(transformBackendEvent);
+        const data: PaginatedBackendEvents = await response.json();
+        return {
+            results: data.results.map(transformBackendEvent),
+            next: data.next,
+            previous: data.previous,
+            count: data.count,
+        };
     } catch (error) {
         console.error('Error fetching events:', error);
-        return [];
+        return { results: [], next: null, previous: null, count: 0 };
     }
 };
 
+// --- GET ONE EVENT BY UUID ---
+export const getEvent = async (uuid: string): Promise<FrontendEvent | null> => {
+    try {
+        const response = await fetch(`${API_BASE}/events/${uuid}`);
+        if (!response.ok) return null;
+        const data: BackendEvent = await response.json();
+        return transformBackendEvent(data);
+    } catch (error) {
+        console.error('Error fetching event:', error);
+        return null;
+    }
+};
+
+// --- GET MY EVENTS (authenticated business user) ---
+export const getMyEvents = async (token: string): Promise<MyEventSummary[]> => {
+    const res = await fetch(`${API_BASE}/events/me/events`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch your events');
+    return res.json();
+};
+
+// --- STAGED EVENT MANAGEMENT (owner only) ---
+
+export interface StagedEventDetail {
+    id: number;
+    title: string;
+    venue: string;
+    town: string;
+    date: string | null;
+    description: string;
+    price: string;
+    link: string;
+    tags: string[];
+    status: string;
+}
+
+export const getStagedEvent = async (token: string, eventId: string): Promise<StagedEventDetail> => {
+    const res = await fetch(`${API_BASE}/events/staged/${eventId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch event details');
+    return res.json();
+};
+
+export const updateStagedEvent = async (
+    token: string,
+    eventId: string,
+    patch: Partial<{ title: string; venue: string; town: string; date: string; description: string; price: string | null; link: string; tags: string[] }>,
+): Promise<void> => {
+    const res = await fetch(`${API_BASE}/events/staged/${eventId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error('Failed to update event');
+};
+
+export const deleteStagedEvent = async (token: string, eventId: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/events/staged/${eventId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to delete event');
+};
+
+export const deletePublishedEvent = async (token: string, eventId: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/events/${eventId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to delete event');
+};
+
 // --- CREATE EVENT ---
-export const createEvent = async (eventData: EventPayload) => {
+export const createEvent = async (eventData: EventPayload, authToken?: string | null) => {
     const response = await fetch(`${API_BASE}/events/create`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`,
+            'Authorization': `Bearer ${authToken || API_KEY}`,
         },
         body: JSON.stringify(eventData),
     });

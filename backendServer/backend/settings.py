@@ -32,9 +32,11 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles_build', 'static')
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-temp-dev-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.vercel.app']
+ALLOWED_HOSTS = os.getenv(
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.vercel.app"
+).split(",")
 
 
 # Application definition
@@ -69,6 +71,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5174",
     "http://localhost:3000",
     "https://www.thecommons.town",
+] + [o for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o]
+
+# Origins trusted for unsafe (POST/admin) requests over HTTPS.
+CSRF_TRUSTED_ORIGINS = [
+    o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o
 ]
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
@@ -152,12 +159,31 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+
+# Logging — surface INFO from our app code (digest sender, ingestion) on the console.
+# Django hides INFO by default, which would otherwise swallow the digest summary logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "events": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
 
 # Ingestion pipeline
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
+
+# Better Auth bridge (Next.js owns auth; Django validates issued JWTs via JWKS)
+BETTER_AUTH_JWKS_URL = os.environ.get('BETTER_AUTH_JWKS_URL', '')
+BETTER_AUTH_ISSUER = os.environ.get('BETTER_AUTH_ISSUER', '')
+BETTER_AUTH_AUDIENCE = os.environ.get('BETTER_AUTH_AUDIENCE', '')
 
 # Django Unfold Admin Configuration
 # Docs: https://github.com/unfoldadmin/django-unfold

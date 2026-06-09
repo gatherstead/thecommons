@@ -40,6 +40,10 @@ export default function ProfilePage() {
     const [selectedCity, setSelectedCity] = useState('');
     const [towns, setTowns] = useState<TownOption[]>([]);
 
+    const [showTownSave, setShowTownSave] = useState(false);
+    const [showDigestSave, setShowDigestSave] = useState(false);
+    const [showTagsSave, setShowTagsSave] = useState(false);
+
     const digestOn = selectedFreq !== 'NEVER';
 
     function setDigestOn(on: boolean) {
@@ -85,8 +89,12 @@ export default function ProfilePage() {
             selectedCity !== profile.primary_city ||
             !eqSets(selectedTags, new Set(profile.tags)));
 
+    const townDirty = profile !== null && selectedCity !== profile.primary_city;
+    const digestDirty = profile !== null && selectedFreq !== profile.email_preference;
+    const tagsDirty = profile !== null && !eqSets(selectedTags, new Set(profile.tags));
+
     async function save() {
-        if (!token || !isDirty) return;
+        if (!token) return;
         setIsSaving(true);
         setError(null);
         try {
@@ -115,6 +123,26 @@ export default function ProfilePage() {
             next.has(tagId) ? next.delete(tagId) : next.add(tagId);
             return next;
         });
+    }
+
+    function handleTownChange(slug: string) {
+        setSelectedCity(slug);
+        setShowTownSave(true);
+    }
+
+    function handleDigestToggle(on: boolean) {
+        setDigestOn(on);
+        setShowDigestSave(true);
+    }
+
+    function handleDigestFrequency(freq: DigestFrequency) {
+        setFrequency(freq);
+        setShowDigestSave(true);
+    }
+
+    function handleTagToggle(tagId: string) {
+        toggleTag(tagId);
+        setShowTagsSave(true);
     }
 
     if (isInitializing) {
@@ -270,23 +298,6 @@ export default function ProfilePage() {
                 </div>
             ) : profile ? (
                 <>
-                    <DigestSection
-                        digestOn={digestOn}
-                        selectedFreq={selectedFreq}
-                        onToggle={setDigestOn}
-                        onFrequencyChange={setFrequency}
-                        footer={
-                            digestOn ? (
-                                <p className="text-xs text-[var(--color-text-muted)] mt-3 border-l-2 border-[var(--color-border-light)] pl-3">
-                                    Digest emails include events matching your selected interests below.
-                                    If no interests are selected, you&rsquo;ll receive all upcoming events.
-                                </p>
-                            ) : null
-                        }
-                    />
-
-                    <div className="rule-thick mb-8" aria-hidden="true" />
-
                     {/* ── My town ───────────────────────────────────────────── */}
                     <section className="mb-10">
                         <h2 className="text-xs uppercase tracking-[0.2em] font-black text-[var(--color-accent)] border-b border-[var(--color-border-light)] pb-1 mb-4">
@@ -297,7 +308,7 @@ export default function ProfilePage() {
                         </p>
                         <select
                             value={selectedCity}
-                            onChange={e => setSelectedCity(e.target.value)}
+                            onChange={e => handleTownChange(e.target.value)}
                             className="border border-[var(--color-border)] bg-[var(--color-bg)] text-sm px-3 py-2 w-full max-w-xs"
                         >
                             <option value="">Select a town</option>
@@ -305,7 +316,40 @@ export default function ProfilePage() {
                                 <option key={t.slug} value={t.slug}>{t.name}</option>
                             ))}
                         </select>
+                        {showTownSave && (
+                            <div className="mt-4">
+                                <Button variant="primary" size="sm" onClick={save} disabled={!townDirty || isSaving}>
+                                    {isSaving ? 'Saving…' : 'Save Changes'}
+                                </Button>
+                            </div>
+                        )}
                     </section>
+
+                    <div className="rule-thick mb-8" aria-hidden="true" />
+
+                    <DigestSection
+                        digestOn={digestOn}
+                        selectedFreq={selectedFreq}
+                        onToggle={handleDigestToggle}
+                        onFrequencyChange={handleDigestFrequency}
+                        footer={
+                            <>
+                                {digestOn && (
+                                    <p className="text-xs text-[var(--color-text-muted)] mt-3 border-l-2 border-[var(--color-border-light)] pl-3">
+                                        Digest emails include events matching your selected interests below.
+                                        If no interests are selected, you&rsquo;ll receive all upcoming events.
+                                    </p>
+                                )}
+                                {showDigestSave && (
+                                    <div className="mt-4">
+                                        <Button variant="primary" size="sm" onClick={save} disabled={!digestDirty || isSaving}>
+                                            {isSaving ? 'Saving…' : 'Save Changes'}
+                                        </Button>
+                                    </div>
+                                )}
+                            </>
+                        }
+                    />
 
                     <div className="rule-thick mb-8" aria-hidden="true" />
 
@@ -324,7 +368,7 @@ export default function ProfilePage() {
                                     <button
                                         key={tag.id}
                                         type="button"
-                                        onClick={() => toggleTag(tag.id)}
+                                        onClick={() => handleTagToggle(tag.id)}
                                         aria-pressed={active}
                                         className={`text-xs uppercase tracking-wider px-3 py-1.5 border transition-colors cursor-pointer ${
                                             active
@@ -341,6 +385,13 @@ export default function ProfilePage() {
                             <p className="text-xs text-[var(--color-text-muted)] mt-3 italic">
                                 No interests selected — your digest will include all upcoming events.
                             </p>
+                        )}
+                        {showTagsSave && (
+                            <div className="mt-4">
+                                <Button variant="primary" size="sm" onClick={save} disabled={!tagsDirty || isSaving}>
+                                    {isSaving ? 'Saving…' : 'Save Changes'}
+                                </Button>
+                            </div>
                         )}
                     </section>
 
@@ -359,22 +410,6 @@ export default function ProfilePage() {
                         </div>
                     </section>
 
-                    {/* ── Save ──────────────────────────────────────────────── */}
-                    <div className="flex items-center gap-4 mb-10">
-                        <Button
-                            variant="primary"
-                            onClick={save}
-                            disabled={!isDirty || isSaving}
-                        >
-                            {isSaving ? 'Saving…' : 'Save Preferences'}
-                        </Button>
-                        {isDirty && !isSaving && (
-                            <span className="text-xs text-[var(--color-text-muted)] italic">
-                                Unsaved changes
-                            </span>
-                        )}
-                    </div>
-
                     <SecuritySection />
 
                     <div className="rule-thick mb-6" aria-hidden="true" />
@@ -389,6 +424,39 @@ export default function ProfilePage() {
                 </>
             ) : null}
         </main>
+    );
+}
+
+function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+    return (
+        <label className="inline-flex items-center gap-3 cursor-pointer group">
+            <input
+                type="checkbox"
+                role="switch"
+                aria-checked={checked}
+                checked={checked}
+                onChange={e => onChange(e.target.checked)}
+                className="sr-only"
+            />
+            <span
+                className={`relative inline-block w-10 h-5 border-2 transition-colors duration-150 shrink-0 ${
+                    checked
+                        ? 'bg-[var(--color-text)] border-[var(--color-text)]'
+                        : 'bg-transparent border-[var(--color-border)]'
+                }`}
+            >
+                <span
+                    className={`absolute top-0.5 w-3 h-3 transition-all duration-150 ${
+                        checked
+                            ? 'right-0.5 bg-[var(--color-bg)]'
+                            : 'left-0.5 bg-[var(--color-text-muted)]'
+                    }`}
+                />
+            </span>
+            <span className="text-xs uppercase tracking-wider font-bold group-hover:text-[var(--color-accent)] transition-colors">
+                {checked ? 'On' : 'Off'}
+            </span>
+        </label>
     );
 }
 
@@ -411,24 +479,13 @@ function DigestSection({
                 Digest
             </h2>
 
-            <label className="flex items-center justify-between gap-3 cursor-pointer group mb-5">
-                <span>
-                    <span className="block text-sm font-bold group-hover:text-[var(--color-accent)] transition-colors">
-                        Receive Digest
-                    </span>
-                    <span className="block text-xs text-[var(--color-text-muted)] mt-0.5">
-                        Email me a curated list of upcoming local events.
-                    </span>
+            <div className="mb-5">
+                <span className="block text-sm font-bold mb-0.5">Receive Digest</span>
+                <span className="block text-xs text-[var(--color-text-muted)] mb-3">
+                    Email me a curated list of upcoming local events.
                 </span>
-                <input
-                    type="checkbox"
-                    role="switch"
-                    aria-checked={digestOn}
-                    checked={digestOn}
-                    onChange={e => onToggle(e.target.checked)}
-                    className="w-5 h-5 accent-[var(--color-accent)] shrink-0 cursor-pointer"
-                />
-            </label>
+                <ToggleSwitch checked={digestOn} onChange={onToggle} />
+            </div>
 
             <fieldset
                 disabled={!digestOn}

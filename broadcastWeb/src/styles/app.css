@@ -1,0 +1,281 @@
+/* Broadcast form — newspaper aesthetic. No gradients, no shadows, no pills,
+   no web fonts. Hand-written CSS only (no Tailwind in this project). */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-headline);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem 0;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+a:hover {
+  color: var(--color-link-hover);
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+::selection {
+  background-color: var(--color-accent);
+  color: white;
+}
+
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+/* Masthead */
+.masthead {
+  text-align: center;
+  padding: 1rem 0 0.75rem;
+}
+.masthead h1 {
+  font-size: 2.4rem;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.masthead .tagline {
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin: 0.25rem 0 0.75rem;
+}
+
+/* Sections separated by column rules */
+.section {
+  border-top: 1px solid var(--color-border-light);
+  padding: 1.25rem 0;
+}
+.section > h2 {
+  font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.section-note {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  margin: 0 0 0.75rem;
+}
+
+/* Two-column form grid with a rule between columns */
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 2rem;
+  row-gap: 0.75rem;
+}
+@media (min-width: 720px) {
+  .field-grid {
+    column-rule: 1px solid var(--color-border-light);
+  }
+}
+@media (max-width: 719px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.field-grid .span-2 {
+  grid-column: 1 / -1;
+}
+
+.field label {
+  display: block;
+  font-family: var(--font-headline);
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 0.15rem;
+}
+.field .required-mark {
+  color: var(--color-accent);
+}
+.field input[type="text"],
+.field input[type="url"],
+.field input[type="email"],
+.field input[type="tel"],
+.field input[type="datetime-local"],
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  background: white;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+.field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+.field .hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-top: 0.1rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.checkbox-row input {
+  width: auto;
+}
+.checkbox-row label {
+  margin: 0;
+  font-weight: 400;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+fieldset.category-set {
+  border: 1px solid var(--color-border-light);
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+}
+fieldset.category-set legend {
+  font-family: var(--font-headline);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0 0.3rem;
+}
+.category-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.25rem 1rem;
+}
+
+/* Buttons: square, inky; accent only on the primary action */
+button {
+  font-family: var(--font-headline);
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-bg-alt);
+  color: var(--color-text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+}
+button.primary:hover:not(:disabled) {
+  background: #6d0000;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button.linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-body);
+  font-weight: 400;
+  text-decoration: underline;
+  font-size: 0.85rem;
+}
+button.linklike:hover {
+  color: var(--color-link-hover);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.error-text {
+  color: var(--color-accent);
+  font-size: 0.9rem;
+}
+
+/* Site picker */
+.site-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.site-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px dotted var(--color-border-light);
+}
+.site-list .site-name {
+  font-weight: 700;
+  font-family: var(--font-headline);
+  font-size: 0.92rem;
+}
+.site-list .reason {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+.site-list li.excluded {
+  opacity: 0.6;
+}
+
+/* Job progress */
+.target-status {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.target-status.succeeded { background: var(--color-text); color: var(--color-bg); }
+.target-status.failed { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+.target-status.needs_manual { background: var(--color-bg-alt); }
+.target-status.in_progress { background: white; }
+.target-status.pending { background: white; color: var(--color-text-muted); border-color: var(--color-border-light); }
+
+.job-summary {
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin: 0.5rem 0;
+}
+
+.footer-rule {
+  margin-top: 3rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  padding-top: 0.75rem;
+}

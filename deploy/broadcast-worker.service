@@ -1,0 +1,28 @@
+# Broadcast Playwright worker — copy to /etc/systemd/system/broadcast-worker.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now broadcast-worker
+#
+# Mirrors the gunicorn service pattern (runs as ubuntu, restart on failure).
+# The worker claims queued BroadcastSubmissions from Postgres (FOR UPDATE SKIP
+# LOCKED) and drives bundled Chromium — one submission at a time, sequential
+# targets. Chromium lives in /home/ubuntu/.cache/ms-playwright/ (installed via
+# `uv run playwright install chromium` as the ubuntu user — NEVER "chrome").
+
+[Unit]
+Description=The Commons broadcast worker (Playwright form-filler)
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thecommons/backendServer
+ExecStart=/snap/bin/uv run python manage.py run_broadcast_worker
+Restart=on-failure
+RestartSec=5
+# Screenshot/download dirs (BROADCAST_SCREENSHOT_DIR / BROADCAST_DOWNLOAD_DIR
+# in .env) must be writable by ubuntu, e.g. /home/ubuntu/broadcast/.
+# Chromium is memory-heavy on the 6 GB VM — cap the worker so a leak can't
+# take down gunicorn/nextjs.
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

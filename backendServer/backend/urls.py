@@ -13,6 +13,7 @@ from events.views import subscribe, me, businesses, business_detail, my_business
 
 urlpatterns = [
     path("events/", include("events.urls")),
+    path("broadcast/", include("broadcast.urls")),
     path("admin/docs/pipeline-docs/", pipeline_docs, name="pipeline-docs"),
     path("admin/docs/admin-docs/", admin_docs, name="admin-docs"),
     path("admin/docs/publish-approved/", publish_approved_admin, name="publish-approved-admin"),

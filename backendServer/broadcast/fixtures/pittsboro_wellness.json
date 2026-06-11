@@ -1,0 +1,15 @@
+{
+  "title": "Restorative Yoga @ Pittsboro Yoga",
+  "description": "A slow, supported restorative yoga session. Props provided; suitable for beginners and anyone needing a reset.",
+  "start_datetime": "2026-07-15T18:00:00-04:00",
+  "end_datetime": "2026-07-15T19:15:00-04:00",
+  "venue_name": "Pittsboro Yoga",
+  "address_line1": "44 Hillsboro St",
+  "city": "Pittsboro",
+  "state": "NC",
+  "zip": "27312",
+  "locality": "pittsboro",
+  "categories": ["wellness"],
+  "price": "$15",
+  "is_free": false
+}

@@ -1,0 +1,99 @@
+// Mirrors the house service pattern (theCommonsWeb/src/services/eventService.ts):
+// plain fetch per call, response.ok checks, no shared client wrapper.
+// The access code is passed per request and never stored.
+
+import type { EventDraft, JobDetail, PreviewResult } from "../models/broadcastModels";
+
+const API_BASE =
+  import.meta.env.VITE_BROADCAST_API_BASE_URL || "http://127.0.0.1:8000";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const messageFor = (status: number, body: unknown): string => {
+  if (status === 403) return "Access code not recognized (or rate limit reached — wait a minute).";
+  if (status === 400) return `The form has a problem: ${JSON.stringify(body)}`;
+  return `Request failed (${status}).`;
+};
+
+async function post<T>(path: string, payload: object): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error(`POST ${path} failed:`, response.status, body);
+    throw new ApiError(response.status, messageFor(response.status, body));
+  }
+  return body as T;
+}
+
+export const previewBroadcast = (
+  accessCode: string,
+  event: EventDraft,
+): Promise<PreviewResult> =>
+  post<PreviewResult>("/broadcast/preview", { access_code: accessCode, event });
+
+export const submitBroadcast = (
+  accessCode: string,
+  event: EventDraft,
+  siteKeys: string[],
+  dryRun: boolean,
+): Promise<{ job_id: string }> =>
+  post<{ job_id: string }>("/broadcast/submit", {
+    access_code: accessCode,
+    event,
+    site_keys: siteKeys,
+    dry_run: dryRun,
+  });
+
+export const getJob = async (
+  accessCode: string,
+  jobId: string,
+): Promise<JobDetail> => {
+  const response = await fetch(`${API_BASE}/broadcast/jobs/${jobId}`, {
+    headers: { "X-Broadcast-Access-Code": accessCode },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error(`GET job ${jobId} failed:`, response.status);
+    throw new ApiError(response.status, messageFor(response.status, body));
+  }
+  return body as JobDetail;
+};
+
+export const retryJob = (
+  accessCode: string,
+  jobId: string,
+  siteKeys: string[],
+): Promise<{ job_id: string; requeued: number }> =>
+  post(`/broadcast/jobs/${jobId}/retry`, {
+    access_code: accessCode,
+    site_keys: siteKeys,
+  });
+
+// Screenshots are operator-gated behind the access-code header, so a plain
+// <a href> cannot fetch them — pull the bytes and open a blob URL instead.
+export const openScreenshot = async (
+  accessCode: string,
+  screenshotPath: string,
+): Promise<void> => {
+  const response = await fetch(`${API_BASE}${screenshotPath}`, {
+    headers: { "X-Broadcast-Access-Code": accessCode },
+  });
+  if (!response.ok) {
+    console.error("screenshot fetch failed:", response.status);
+    throw new ApiError(response.status, "Could not load the screenshot.");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+};

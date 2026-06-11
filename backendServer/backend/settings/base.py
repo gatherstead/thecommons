@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "events.apps.EventsConfig",
     "ingestion.apps.IngestionConfig",
+    "broadcast.apps.BroadcastConfig",
 ]
 
 MIDDLEWARE = [
@@ -47,6 +48,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "content-type",
     "authorization",
     "x-csrftoken",
+    "x-broadcast-access-code",
 ]
 
 APPEND_SLASH = False
@@ -94,8 +96,19 @@ LOGGING = {
     "loggers": {
         "events": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "broadcast": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
+
+# ── Broadcast (event syndication) ────────────────────────────────────────────
+# BROADCAST_ACCESS_CODES is read from the env at request time (broadcast/access.py),
+# never via settings — it must not leak into settings dumps.
+BROADCAST_HEADLESS = os.getenv("BROADCAST_HEADLESS", "true").lower() != "false"
+BROADCAST_DRY_RUN_DEFAULT = os.getenv("BROADCAST_DRY_RUN_DEFAULT", "false").lower() == "true"
+BROADCAST_MAX_CONCURRENCY = int(os.getenv("BROADCAST_MAX_CONCURRENCY", "1"))
+BROADCAST_SCREENSHOT_DIR = os.getenv("BROADCAST_SCREENSHOT_DIR", str(BASE_DIR / "broadcast_artifacts" / "screenshots"))
+BROADCAST_DOWNLOAD_DIR = os.getenv("BROADCAST_DOWNLOAD_DIR", str(BASE_DIR / "broadcast_artifacts" / "downloads"))
+BROADCAST_TIMEOUT_MS = int(os.getenv("BROADCAST_TIMEOUT_MS", "30000"))
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')

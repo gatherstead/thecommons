@@ -27,4 +27,6 @@ dependencies = [
     # different API — do not bump without porting email_service.py.
     "brevo-python>=1.2.0,<2",
     "gunicorn>=26.0.0",
+    "playwright>=1.60.0",
+    "django-ratelimit>=4.1.0",
 ]

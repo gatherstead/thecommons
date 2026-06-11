@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mock Community Calendar — Submit an Event</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 640px; margin: 2rem auto; }
+    label { display: block; margin-top: 0.75rem; font-weight: bold; }
+    input, textarea, select { width: 100%; padding: 4px; }
+    button { margin-top: 1rem; padding: 8px 16px; }
+    #confirmation { display: none; border: 2px solid green; padding: 1rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Submit an Event</h1>
+  <form id="event-form">
+    <label for="title">Event Title</label>
+    <input id="title" name="title" type="text" required>
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" required></textarea>
+
+    <label for="start-date">Start Date</label>
+    <input id="start-date" name="start_date" type="text" required>
+
+    <label for="start-time">Start Time</label>
+    <input id="start-time" name="start_time" type="text">
+
+    <label for="end-date">End Date</label>
+    <input id="end-date" name="end_date" type="text">
+
+    <label for="end-time">End Time</label>
+    <input id="end-time" name="end_time" type="text">
+
+    <label for="venue">Venue Name</label>
+    <input id="venue" name="venue" type="text" required>
+
+    <label for="address">Address</label>
+    <input id="address" name="address" type="text" required>
+
+    <label for="website">Event Website</label>
+    <input id="website" name="website" type="url">
+
+    <label for="tickets">Ticket URL</label>
+    <input id="tickets" name="tickets" type="url">
+
+    <label for="price">Price</label>
+    <input id="price" name="price" type="text">
+
+    <label for="organizer">Organizer Name</label>
+    <input id="organizer" name="organizer" type="text">
+
+    <label for="email">Contact Email</label>
+    <input id="email" name="email" type="email">
+
+    <label for="phone">Contact Phone</label>
+    <input id="phone" name="phone" type="tel">
+
+    <label for="categories">Categories</label>
+    <select id="categories" name="categories" multiple>
+      <option>Music</option>
+      <option>Arts &amp; Culture</option>
+      <option>Family</option>
+      <option>Food &amp; Drink</option>
+      <option>Festivals</option>
+      <option>Markets</option>
+      <option>Community</option>
+      <option>Nightlife</option>
+      <option>Health &amp; Wellness</option>
+      <option>Classes &amp; Workshops</option>
+    </select>
+
+    <label for="image">Event Image</label>
+    <input id="image" name="image" type="file">
+
+    <button type="submit">Submit Event</button>
+  </form>
+
+  <div id="confirmation" role="status">Thank you! Your event has been submitted.</div>
+
+  <script>
+    document.getElementById("event-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      document.getElementById("event-form").style.display = "none";
+      var c = document.getElementById("confirmation");
+      c.style.display = "block";
+      history.replaceState(null, "", "#submitted");
+    });
+  </script>
+</body>
+</html>

@@ -167,6 +167,65 @@ NEXT_PUBLIC_BETTER_AUTH_URL=https://thecommons.town
 
 ---
 
+## Broadcast (event syndication) — additional setup
+
+The broadcast feature adds a third subdomain, a systemd worker, and Playwright.
+Templates live in `deploy/` in the repo.
+
+### One-time prerequisites (in order)
+
+1. **TLS (prerequisite, not a verify-step):** the existing origin cert covers
+   only `thecommons.town` and `api.thecommons.town`. In the Cloudflare
+   dashboard, reissue an origin cert for `thecommons.town, *.thecommons.town`,
+   replace `/etc/ssl/cloudflare/thecommons.town.{pem,key}`, then
+   `sudo nginx -t && sudo systemctl reload nginx`. Skipping this makes the
+   subdomain fail with a 526 SSL error at Cloudflare.
+2. **Cloudflare DNS:** add an **A record** `broadcast` → `129.80.229.41`,
+   proxied (orange cloud) — A record like the others, not a CNAME.
+3. **Playwright Chromium (bundled only — never "chrome"; arm64 has no branded
+   Chrome):**
+   ```bash
+   cd /home/ubuntu/thecommons/backendServer
+   uv run playwright install chromium          # → /home/ubuntu/.cache/ms-playwright/
+   uv run playwright install-deps chromium     # apt system libs (needs sudo)
+   ```
+4. **Artifact dirs:** `mkdir -p /home/ubuntu/broadcast/{screenshots,downloads}`
+5. **Env:** add the `BROADCAST_*` block (see `backendServer/.env.example`) to
+   `backendServer/.env`; append `https://broadcast.thecommons.town` to
+   `CORS_EXTRA_ORIGINS` and `CSRF_TRUSTED_ORIGINS`.
+6. **Worker service:** copy `deploy/broadcast-worker.service` to
+   `/etc/systemd/system/`, then
+   `sudo systemctl daemon-reload && sudo systemctl enable --now broadcast-worker`.
+7. **nginx:** add the server block from `deploy/nginx-broadcast.conf.snippet`
+   to the existing `/etc/nginx/sites-available/thecommons` (one file, many
+   blocks — do not create a new sites-available file).
+
+### Deploying broadcast updates
+
+```bash
+cd /home/ubuntu/thecommons && git pull
+cd backendServer
+uv sync                                       # if pyproject.toml changed
+uv run python manage.py migrate               # broadcast migrations
+sudo systemctl restart gunicorn
+sudo systemctl restart broadcast-worker
+
+# Broadcast SPA (static — no service to restart; pnpm only, never npm)
+cd ../broadcastWeb
+pnpm install                                  # if pnpm-lock.yaml changed
+pnpm run build                                # → dist/, served directly by nginx
+```
+
+```
+sudo systemctl status broadcast-worker
+sudo journalctl -u broadcast-worker -n 50
+```
+
+If `curl https://broadcast.thecommons.town/` hangs after setup, it's the
+iptables REJECT-before-ACCEPT gotcha below (same 80/443, no new rules needed).
+
+---
+
 ## Firewall
 
 Two layers — both must allow 80/443:

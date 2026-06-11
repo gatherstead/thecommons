@@ -1,3 +1,5 @@
 .env
 media/
 staticfiles_build/
+broadcast_artifacts/
+broadcast/adapters/_scaffold/*/

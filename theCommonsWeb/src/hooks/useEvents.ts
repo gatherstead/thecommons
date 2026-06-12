@@ -1,20 +1,13 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { getEvents, getTowns, getCategories, type EventsPage } from '../services/eventService';
-import { type FrontendEvent, type TownOption, type CategoryOption } from '../models/eventsModels';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { getEvents, type EventsPage } from '../services/eventService';
+import { type FrontendEvent } from '../models/eventsModels';
 import { type TagId } from '../constants/tags';
 import { useToggleSet } from './useToggleSet';
-import {
-    eventCacheKey,
-    getCachedPage,
-    setCachedPage,
-    getCachedTowns,
-    setCachedTowns,
-    getCachedCategories,
-    setCachedCategories,
-    clearEventCache,
-} from '../services/eventCache';
+import { useTowns } from './useTowns';
+import { useCategories } from './useCategories';
 
 export type TownId = string;
 export type ViewMode = 'feed' | 'calendar';
@@ -29,6 +22,10 @@ function mergeEvents(existing: FrontendEvent[], incoming: FrontendEvent[]): Fron
     return [...existing, ...incoming.filter(e => !ids.has(e.id))];
 }
 
+function monthKey(year: number, month: number): string {
+    return `${year}-${String(month).padStart(2, '0')}`;
+}
+
 export type EventWindow = '3months' | '6months' | '12months' | 'past';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -40,78 +37,77 @@ async function fetchForWindow(w: EventWindow, category?: string) {
     return getEvents({ before, category });
 }
 
-export function useEvents(viewMode: ViewMode = 'feed') {
-    // On (re)mount the view always starts at the 3-month window with no category,
-    // so seed initial state from the module cache to skip the loading flash when
-    // returning to a view we already fetched this session.
-    const initialPage = getCachedPage(eventCacheKey('3months', null));
+type ChangeKind = 'initial' | 'window' | 'category' | 'page';
 
-    const [events, setEvents] = useState<FrontendEvent[]>(initialPage?.results ?? []);
-    const [towns, setTowns] = useState<TownOption[]>(() => getCachedTowns() ?? []);
-    const [categories, setCategories] = useState<CategoryOption[]>(() => getCachedCategories() ?? []);
+export function useEvents(viewMode: ViewMode = 'feed') {
+    const queryClient = useQueryClient();
+
     const [selectedCategory, setSelectedCategoryState] = useState<string | null>(null);
-    const selectedCategoryRef = useRef<string | null>(null);
-    const [isLoading, setIsLoading] = useState(!initialPage);
     const [currentWindow, setCurrentWindow] = useState<EventWindow>('3months');
-    const [isLoadingWindow, setIsLoadingWindow] = useState(false);
-    const [isLoadingPage, setIsLoadingPage] = useState(false);
-    const [nextPageUrl, setNextPageUrl] = useState<string | null>(initialPage?.next ?? null);
-    const [prevPageUrl, setPrevPageUrl] = useState<string | null>(initialPage?.previous ?? null);
-    const [totalCount, setTotalCount] = useState(initialPage?.count ?? 0);
+    // null means the first page of the current window; otherwise a next/prev URL.
+    const [currentPageUrl, setCurrentPageUrl] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
+    // Month results fetched for the calendar view, merged client-side into the
+    // rendered list. This is UI accumulation state, not cache state — the cache
+    // lives in TanStack Query under ['events', 'month', key].
+    const [monthEvents, setMonthEvents] = useState<FrontendEvent[]>([]);
     const [isLoadingMonth, setIsLoadingMonth] = useState(false);
+    // Months already merged into monthEvents this mount (request dedup is
+    // handled by TanStack Query; this only prevents redundant re-merges).
     const fetchedMonths = useRef<Set<string>>(new Set());
     // Maps empty month keys to the number of 150 ms revisit flashes already shown (max 3).
     const emptyMonthVisits = useRef<Map<string, number>>(new Map());
+    // Which UI action caused the current query-key change — drives which
+    // loading indicator shows while placeholder data is displayed.
+    const lastChangeRef = useRef<ChangeKind>('initial');
 
-    const applyPage = (page: EventsPage) => {
-        setEvents(page.results);
-        setNextPageUrl(page.next);
-        setPrevPageUrl(page.previous);
-        setTotalCount(page.count);
-    };
+    const townsQuery = useTowns();
+    const categoriesQuery = useCategories();
+
+    const pageQuery = useQuery({
+        queryKey: currentPageUrl
+            ? ['events', 'page', currentPageUrl]
+            : ['events', 'window', currentWindow, selectedCategory],
+        queryFn: () =>
+            currentPageUrl
+                ? getEvents({ pageUrl: currentPageUrl })
+                : fetchForWindow(currentWindow, selectedCategory ?? undefined),
+        placeholderData: keepPreviousData,
+    });
 
     const { selected: selectedTags, toggle: toggleTag, clear: clearTags } = useToggleSet<TagId>([]);
     const { selected: selectedTowns, toggle: toggleTown, clear: clearTowns } = useToggleSet<TownId>([]);
 
-    const fetchEvents = async () => {
-        setIsLoading(true);
+    // Switching between feed and calendar resets to the 3-month window
+    // (category is preserved, matching the previous behavior).
+    useEffect(() => {
+        lastChangeRef.current = 'initial';
         setCurrentWindow('3months');
-        setNextPageUrl(null);
-        setPrevPageUrl(null);
+        setCurrentPageUrl(null);
         setCurrentPage(1);
+        setMonthEvents([]);
         fetchedMonths.current.clear();
         emptyMonthVisits.current.clear();
-        const category = selectedCategoryRef.current ?? undefined;
-        const key = eventCacheKey('3months', selectedCategoryRef.current);
+    }, [viewMode]);
 
-        // Towns and categories are static — fetch them once per session.
-        if (getCachedTowns() === null) getTowns().then(data => { setCachedTowns(data); setTowns(data); });
-        if (getCachedCategories() === null) getCategories().then(data => { setCachedCategories(data); setCategories(data); });
-
-        const cached = getCachedPage(key);
-        if (cached) {
-            applyPage(cached);
-            setIsLoading(false);
-            return;
-        }
-        const page = await getEvents({ category });
-        setCachedPage(key, page);
-        applyPage(page);
-        setIsLoading(false);
-    };
-
-    // Background-fetches a single month and merges into state. No-op if already fetched.
-    // Records months that came back empty so fetchMonth can flash the skeleton on revisits.
+    // Background-fetches a single month and merges into state. No-op if already
+    // merged this mount; TanStack Query dedupes concurrent fetches and serves
+    // warm cache instantly. Records months that came back empty so fetchMonth
+    // can flash the skeleton on revisits.
     const prefetchMonth = async (year: number, month: number) => {
-        const key = `${year}-${String(month).padStart(2, '0')}`;
+        const key = monthKey(year, month);
         if (fetchedMonths.current.has(key)) return;
         fetchedMonths.current.add(key);
         const after = new Date(year, month - 1, 1).toISOString();
         const before = new Date(year, month, 0, 23, 59, 59).toISOString();
-        const { results } = await getEvents({ after, before });
-        if (results.length === 0) emptyMonthVisits.current.set(key, 0);
-        setEvents(prev => mergeEvents(prev, results));
+        const page = await queryClient.fetchQuery({
+            queryKey: ['events', 'month', key],
+            queryFn: () => getEvents({ after, before }),
+        });
+        if (page.results.length === 0 && !emptyMonthVisits.current.has(key)) {
+            emptyMonthVisits.current.set(key, 0);
+        }
+        setMonthEvents(prev => mergeEvents(prev, page.results));
     };
 
     // Foreground-fetches a month then cascade-prefetches adjacent months.
@@ -119,8 +115,10 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     // - Cached but empty month: flash skeleton for 150 ms so users know we tried.
     // - Cached with events: no skeleton, instant.
     const fetchMonth = async (year: number, month: number) => {
-        const key = `${year}-${String(month).padStart(2, '0')}`;
-        const alreadyFetched = fetchedMonths.current.has(key);
+        const key = monthKey(year, month);
+        const alreadyFetched =
+            fetchedMonths.current.has(key) ||
+            queryClient.getQueryData<EventsPage>(['events', 'month', key]) !== undefined;
         const revisits = emptyMonthVisits.current.get(key);
 
         if (!alreadyFetched) {
@@ -130,11 +128,15 @@ export function useEvents(viewMode: ViewMode = 'feed') {
                 new Promise<void>(r => setTimeout(r, 350)),
             ]);
             setIsLoadingMonth(false);
-        } else if (revisits !== undefined && revisits < 3) {
-            emptyMonthVisits.current.set(key, revisits + 1);
-            setIsLoadingMonth(true);
-            await new Promise<void>(r => setTimeout(r, 150));
-            setIsLoadingMonth(false);
+        } else {
+            // Warm cache from a previous mount still needs merging into this mount's state.
+            prefetchMonth(year, month);
+            if (revisits !== undefined && revisits < 3) {
+                emptyMonthVisits.current.set(key, revisits + 1);
+                setIsLoadingMonth(true);
+                await new Promise<void>(r => setTimeout(r, 150));
+                setIsLoadingMonth(false);
+            }
         }
 
         const prev = adjMonth(year, month, -1);
@@ -143,86 +145,48 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         prefetchMonth(next.year, next.month);
     };
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => {
-        fetchEvents();
-    }, [viewMode]);
+    const isPlaceholder = pageQuery.isPlaceholderData;
+    const isLoading = pageQuery.isPending || (isPlaceholder && lastChangeRef.current === 'category');
+    const isLoadingWindow = isPlaceholder && lastChangeRef.current === 'window';
+    const isLoadingPage = isPlaceholder && lastChangeRef.current === 'page';
 
-    const setWindow = async (w: EventWindow) => {
-        setNextPageUrl(null);
-        setPrevPageUrl(null);
+    const setWindow = (w: EventWindow) => {
+        lastChangeRef.current = 'window';
+        setCurrentPageUrl(null);
         setCurrentPage(1);
-        const key = eventCacheKey(w, selectedCategoryRef.current);
-        const cached = getCachedPage(key);
-        if (cached) {
-            applyPage(cached);
-            setCurrentWindow(w);
-            return;
-        }
-        setIsLoadingWindow(true);
-        const page = await fetchForWindow(w, selectedCategoryRef.current ?? undefined);
-        setCachedPage(key, page);
-        applyPage(page);
         setCurrentWindow(w);
-        setIsLoadingWindow(false);
     };
 
     const setCategory = (slug: string | null) => {
-        selectedCategoryRef.current = slug;
+        lastChangeRef.current = 'category';
         setSelectedCategoryState(slug);
         setCurrentWindow('3months');
-        setNextPageUrl(null);
-        setPrevPageUrl(null);
+        setCurrentPageUrl(null);
         setCurrentPage(1);
+        setMonthEvents([]);
         fetchedMonths.current.clear();
         emptyMonthVisits.current.clear();
-        const key = eventCacheKey('3months', slug);
-        const cached = getCachedPage(key);
-        if (cached) {
-            applyPage(cached);
-            return;
-        }
-        setIsLoading(true);
-        getEvents({ category: slug ?? undefined }).then(page => {
-            setCachedPage(key, page);
-            applyPage(page);
-            setIsLoading(false);
-        });
     };
 
-    const nextPage = async () => {
-        if (!nextPageUrl || isLoadingPage) return;
-        const key = eventCacheKey(currentWindow, selectedCategoryRef.current, nextPageUrl);
-        const cached = getCachedPage(key);
-        if (cached) {
-            applyPage(cached);
-            setCurrentPage(p => p + 1);
-            return;
-        }
-        setIsLoadingPage(true);
-        const page = await getEvents({ pageUrl: nextPageUrl });
-        setCachedPage(key, page);
-        applyPage(page);
+    const nextPage = () => {
+        if (!pageQuery.data?.next || isLoadingPage) return;
+        lastChangeRef.current = 'page';
+        setCurrentPageUrl(pageQuery.data.next);
         setCurrentPage(p => p + 1);
-        setIsLoadingPage(false);
     };
 
-    const prevPage = async () => {
-        if (!prevPageUrl || isLoadingPage) return;
-        const key = eventCacheKey(currentWindow, selectedCategoryRef.current, prevPageUrl);
-        const cached = getCachedPage(key);
-        if (cached) {
-            applyPage(cached);
-            setCurrentPage(p => p - 1);
-            return;
-        }
-        setIsLoadingPage(true);
-        const page = await getEvents({ pageUrl: prevPageUrl });
-        setCachedPage(key, page);
-        applyPage(page);
+    const prevPage = () => {
+        if (!pageQuery.data?.previous || isLoadingPage) return;
+        lastChangeRef.current = 'page';
+        // Page 1 is keyed by window+category, so going back to it reuses that cache entry.
+        setCurrentPageUrl(currentPage === 2 ? null : pageQuery.data.previous);
         setCurrentPage(p => p - 1);
-        setIsLoadingPage(false);
     };
+
+    const events = useMemo(
+        () => mergeEvents(pageQuery.data?.results ?? [], monthEvents),
+        [pageQuery.data, monthEvents],
+    );
 
     const filteredEvents = useMemo(() => {
         return events
@@ -241,18 +205,19 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const clearFilters = () => {
         clearTags();
         clearTowns();
-        if (selectedCategoryRef.current !== null) {
+        if (selectedCategory !== null) {
             setCategory(null);
         }
     };
 
+    const totalCount = pageQuery.data?.count ?? 0;
     const PAGE_SIZE = 30;
     const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
 
     return {
         filteredEvents,
-        towns,
-        categories,
+        towns: townsQuery.data ?? [],
+        categories: categoriesQuery.data ?? [],
         isLoading,
         currentWindow,
         isLoadingWindow,
@@ -274,21 +239,13 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         setCategory,
         clearFilters,
         refetch: () => {
-            clearEventCache();
-            if (currentWindow === '3months') {
-                fetchEvents();
-            } else {
-                setIsLoading(true);
-                setNextPageUrl(null);
-                setPrevPageUrl(null);
-                setCurrentPage(1);
-                const key = eventCacheKey(currentWindow, selectedCategoryRef.current);
-                fetchForWindow(currentWindow, selectedCategoryRef.current ?? undefined).then(page => {
-                    setCachedPage(key, page);
-                    applyPage(page);
-                    setIsLoading(false);
-                });
-            }
+            lastChangeRef.current = 'initial';
+            fetchedMonths.current.clear();
+            emptyMonthVisits.current.clear();
+            setMonthEvents([]);
+            setCurrentPageUrl(null);
+            setCurrentPage(1);
+            queryClient.invalidateQueries({ queryKey: ['events'] });
         },
     };
 }

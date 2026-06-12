@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
+import { useTowns } from '../../hooks/useTowns';
 import { getProfile, updateProfile, type UserProfileData, type EmailPreference } from '../../services/profileService';
-import { getTowns } from '../../services/eventService';
 import { Button } from '../../components/ui/Button';
 import { SecuritySection } from '../../components/auth/SecuritySection';
 import { FILTER_TAGS } from '../../constants/tags';
-import type { TownOption } from '../../models/eventsModels';
 
 type DigestFrequency = Exclude<EmailPreference, 'NEVER'>;
 
@@ -27,10 +27,10 @@ function eqSets(a: Set<string>, b: Set<string>): boolean {
 export default function ProfilePage() {
     const { user, token, isAuthenticated, isInitializing, logout } = useAuth();
     const router = useRouter();
+    const queryClient = useQueryClient();
 
     const [profile, setProfile] = useState<UserProfileData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [savedBanner, setSavedBanner] = useState(false);
 
@@ -38,7 +38,7 @@ export default function ProfilePage() {
     const [lastFreq, setLastFreq] = useState<DigestFrequency>('WEEKLY');
     const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
     const [selectedCity, setSelectedCity] = useState('');
-    const [towns, setTowns] = useState<TownOption[]>([]);
+    const towns = useTowns().data ?? [];
 
     const [showTownSave, setShowTownSave] = useState(false);
     const [showDigestSave, setShowDigestSave] = useState(false);
@@ -81,8 +81,6 @@ export default function ProfilePage() {
 
     useEffect(() => { load(); }, [load]);
 
-    useEffect(() => { getTowns().then(setTowns); }, []);
-
     const isDirty =
         profile !== null &&
         (selectedFreq !== profile.email_preference ||
@@ -93,16 +91,9 @@ export default function ProfilePage() {
     const digestDirty = profile !== null && selectedFreq !== profile.email_preference;
     const tagsDirty = profile !== null && !eqSets(selectedTags, new Set(profile.tags));
 
-    async function save() {
-        if (!token) return;
-        setIsSaving(true);
-        setError(null);
-        try {
-            const updated = await updateProfile(token, {
-                email_preference: selectedFreq,
-                tags: [...selectedTags],
-                primary_city: selectedCity,
-            });
+    const saveMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof updateProfile>[1]) => updateProfile(token!, payload),
+        onSuccess: updated => {
             setProfile(updated);
             setSelectedFreq(updated.email_preference);
             if (updated.email_preference !== 'NEVER') setLastFreq(updated.email_preference);
@@ -110,11 +101,21 @@ export default function ProfilePage() {
             setSelectedCity(updated.primary_city);
             setSavedBanner(true);
             setTimeout(() => setSavedBanner(false), 3000);
-        } catch {
-            setError('Failed to save changes. Please try again.');
-        } finally {
-            setIsSaving(false);
-        }
+            // Refreshes useAuth().user so the header reflects profile changes.
+            queryClient.invalidateQueries({ queryKey: ['profile'] });
+        },
+        onError: () => setError('Failed to save changes. Please try again.'),
+    });
+    const isSaving = saveMutation.isPending;
+
+    function save() {
+        if (!token) return;
+        setError(null);
+        saveMutation.mutate({
+            email_preference: selectedFreq,
+            tags: [...selectedTags],
+            primary_city: selectedCity,
+        });
     }
 
     function toggleTag(tagId: string) {

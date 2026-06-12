@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
-import { getMyEvents, deleteStagedEvent, deletePublishedEvent, getTowns } from '../../services/eventService';
+import { useTowns } from '../../hooks/useTowns';
+import { getMyEvents, deleteStagedEvent, deletePublishedEvent } from '../../services/eventService';
 import { getProfile, updateProfile, type UserProfileData } from '../../services/profileService';
 import { getMyBusiness, createBusiness, updateBusiness, deleteBusiness } from '../../services/businessService';
 import { EditEventModal } from '../../components/events/EditEventModal';
 import { Button } from '../../components/ui/Button';
 import { FILTER_TAGS } from '../../constants/tags';
-import type { MyEventSummary, TownOption } from '../../models/eventsModels';
+import type { MyEventSummary } from '../../models/eventsModels';
 import type { BusinessProfile } from '../../models/businessModels';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -47,20 +49,15 @@ function eqSets(a: Set<string>, b: Set<string>): boolean {
 export default function DashboardPage() {
     const { user, token, isAuthenticated, isInitializing, logout } = useAuth();
     const router = useRouter();
+    const queryClient = useQueryClient();
 
     // Events
-    const [myEvents, setMyEvents] = useState<MyEventSummary[]>([]);
-    const [towns, setTowns] = useState<TownOption[]>([]);
-    const [isLoadingEvents, setIsLoadingEvents] = useState(false);
-    const [fetchError, setFetchError] = useState<string | null>(null);
     const [editingEventId, setEditingEventId] = useState<string | null>(null);
-    const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
 
     // Profile settings
     const [profile, setProfile] = useState<UserProfileData | null>(null);
     const [isLoadingProfile, setIsLoadingProfile] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
     const [settingsError, setSettingsError] = useState<string | null>(null);
     const [savedBanner, setSavedBanner] = useState(false);
     const [selectedCity, setSelectedCity] = useState('');
@@ -69,10 +66,6 @@ export default function DashboardPage() {
     const [selectedUserType, setSelectedUserType] = useState<'BUSINESS' | 'VENUE'>('BUSINESS');
 
     // Business listing
-    const [business, setBusiness] = useState<BusinessProfile | null>(null);
-    const [isLoadingBusiness, setIsLoadingBusiness] = useState(false);
-    const [isSavingBusiness, setIsSavingBusiness] = useState(false);
-    const [isDeletingBusiness, setIsDeletingBusiness] = useState(false);
     const [businessError, setBusinessError] = useState<string | null>(null);
     const [businessSaved, setBusinessSaved] = useState(false);
     const [bizName, setBizName] = useState('');
@@ -88,14 +81,17 @@ export default function DashboardPage() {
     // Use selectedUserType (reflects any unsaved change) for venue-specific UI
     const displayIsVenue = selectedUserType === 'VENUE';
 
-    const loadEvents = useCallback(() => {
-        if (!token || !isBusiness) return;
-        setIsLoadingEvents(true);
-        getMyEvents(token)
-            .then(setMyEvents)
-            .catch(() => setFetchError('Could not load your listings.'))
-            .finally(() => setIsLoadingEvents(false));
-    }, [token, isBusiness]);
+    const myEventsQuery = useQuery({
+        queryKey: ['my-events', token],
+        queryFn: () => getMyEvents(token!),
+        enabled: !!token && isBusiness,
+    });
+    const myEvents = myEventsQuery.data ?? [];
+    const isLoadingEvents = myEventsQuery.isLoading;
+    const fetchError = myEventsQuery.isError ? 'Could not load your listings.' : null;
+
+    const townsQuery = useTowns();
+    const towns = townsQuery.data ?? [];
 
     const loadProfile = useCallback(async () => {
         if (!token) return;
@@ -124,23 +120,27 @@ export default function DashboardPage() {
         setBizPublished(data.is_published);
     }, []);
 
-    const loadBusiness = useCallback(() => {
-        if (!token || !isBusinessOnly) return;
-        setIsLoadingBusiness(true);
-        setBusinessError(null);
-        getMyBusiness(token)
-            .then(data => {
-                setBusiness(data);
-                if (data) populateBusinessForm(data);
-            })
-            .catch(() => setBusinessError('Could not load your business listing.'))
-            .finally(() => setIsLoadingBusiness(false));
-    }, [token, isBusinessOnly, populateBusinessForm]);
+    const businessQuery = useQuery({
+        queryKey: ['business', 'me', token],
+        queryFn: () => getMyBusiness(token!),
+        enabled: !!token && isBusinessOnly,
+    });
+    // null is valid data: "no listing yet". undefined means not loaded.
+    const business = businessQuery.data ?? null;
+    const isLoadingBusiness = businessQuery.isLoading;
+    const businessLoadError = businessQuery.isError ? 'Could not load your business listing.' : null;
 
-    useEffect(() => { getTowns().then(setTowns).catch(() => {}); }, []);
-    useEffect(() => { loadEvents(); }, [loadEvents]);
+    // Seed the business form draft once per token, not on every refetch, so a
+    // background refetch can't wipe unsaved edits.
+    const hasSeededBiz = useRef(false);
+    useEffect(() => { hasSeededBiz.current = false; }, [token]);
+    useEffect(() => {
+        if (hasSeededBiz.current || !businessQuery.data) return;
+        hasSeededBiz.current = true;
+        populateBusinessForm(businessQuery.data);
+    }, [businessQuery.data, populateBusinessForm]);
+
     useEffect(() => { if (isBusiness) loadProfile(); }, [loadProfile, isBusiness]);
-    useEffect(() => { loadBusiness(); }, [loadBusiness]);
 
     const isSettingsDirty =
         profile !== null &&
@@ -149,17 +149,9 @@ export default function DashboardPage() {
             !eqSets(selectedTags, new Set(profile.tags)) ||
             selectedUserType !== profile.user_type);
 
-    async function saveSettings() {
-        if (!token || !isSettingsDirty) return;
-        setIsSaving(true);
-        setSettingsError(null);
-        try {
-            const updated = await updateProfile(token, {
-                primary_city: selectedCity,
-                address,
-                tags: [...selectedTags],
-                user_type: selectedUserType,
-            });
+    const settingsMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof updateProfile>[1]) => updateProfile(token!, payload),
+        onSuccess: updated => {
             setProfile(updated);
             setSelectedCity(updated.primary_city || '');
             setAddress(updated.address || '');
@@ -167,11 +159,22 @@ export default function DashboardPage() {
             setSelectedUserType((updated.user_type as 'BUSINESS' | 'VENUE') ?? 'BUSINESS');
             setSavedBanner(true);
             setTimeout(() => setSavedBanner(false), 3000);
-        } catch {
-            setSettingsError('Failed to save settings. Please try again.');
-        } finally {
-            setIsSaving(false);
-        }
+            // Refreshes useAuth().user (header name, user_type gates).
+            queryClient.invalidateQueries({ queryKey: ['profile'] });
+        },
+        onError: () => setSettingsError('Failed to save settings. Please try again.'),
+    });
+    const isSaving = settingsMutation.isPending;
+
+    function saveSettings() {
+        if (!token || !isSettingsDirty) return;
+        setSettingsError(null);
+        settingsMutation.mutate({
+            primary_city: selectedCity,
+            address,
+            tags: [...selectedTags],
+            user_type: selectedUserType,
+        });
     }
 
     function toggleTag(tagId: string) {
@@ -201,11 +204,26 @@ export default function DashboardPage() {
               bizContactPhone !== (business.contact_phone || '') ||
               bizPublished !== business.is_published;
 
-    async function saveBusiness() {
+    const saveBusinessMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof createBusiness>[1]) =>
+            business === null
+                ? createBusiness(token!, payload)
+                : updateBusiness(token!, business.uuid, payload),
+        onSuccess: saved => {
+            // setQueryData instead of invalidate: avoids a refetch racing the form re-seed.
+            queryClient.setQueryData<BusinessProfile | null>(['business', 'me', token], saved);
+            populateBusinessForm(saved);
+            setBusinessSaved(true);
+            setTimeout(() => setBusinessSaved(false), 3000);
+        },
+        onError: () => setBusinessError('Failed to save your listing. Please try again.'),
+    });
+    const isSavingBusiness = saveBusinessMutation.isPending;
+
+    function saveBusiness() {
         if (!token || !isBusinessDirty || !bizName.trim()) return;
-        setIsSavingBusiness(true);
         setBusinessError(null);
-        const payload = {
+        saveBusinessMutation.mutate({
             business_name: bizName.trim(),
             description: bizDescription,
             tags: [...bizTags],
@@ -213,30 +231,13 @@ export default function DashboardPage() {
             contact_email: bizContactEmail,
             contact_phone: bizContactPhone,
             is_published: bizPublished,
-        };
-        try {
-            const saved = business === null
-                ? await createBusiness(token, payload)
-                : await updateBusiness(token, business.uuid, payload);
-            setBusiness(saved);
-            populateBusinessForm(saved);
-            setBusinessSaved(true);
-            setTimeout(() => setBusinessSaved(false), 3000);
-        } catch {
-            setBusinessError('Failed to save your listing. Please try again.');
-        } finally {
-            setIsSavingBusiness(false);
-        }
+        });
     }
 
-    async function handleDeleteBusiness() {
-        if (!token || !business) return;
-        if (!window.confirm('Delete your business listing? This cannot be undone.')) return;
-        setIsDeletingBusiness(true);
-        setBusinessError(null);
-        try {
-            await deleteBusiness(token, business.uuid);
-            setBusiness(null);
+    const deleteBusinessMutation = useMutation({
+        mutationFn: (uuid: string) => deleteBusiness(token!, uuid),
+        onSuccess: () => {
+            queryClient.setQueryData<BusinessProfile | null>(['business', 'me', token], null);
             setBizName('');
             setBizDescription('');
             setBizTags(new Set());
@@ -244,29 +245,42 @@ export default function DashboardPage() {
             setBizContactEmail('');
             setBizContactPhone('');
             setBizPublished(false);
-        } catch {
-            setBusinessError('Could not delete your listing. Please try again.');
-        } finally {
-            setIsDeletingBusiness(false);
-        }
+        },
+        onError: () => setBusinessError('Could not delete your listing. Please try again.'),
+    });
+    const isDeletingBusiness = deleteBusinessMutation.isPending;
+
+    function handleDeleteBusiness() {
+        if (!token || !business) return;
+        if (!window.confirm('Delete your business listing? This cannot be undone.')) return;
+        setBusinessError(null);
+        deleteBusinessMutation.mutate(business.uuid);
     }
 
-    async function handleDelete(event: MyEventSummary) {
+    const deleteEventMutation = useMutation({
+        mutationFn: (event: MyEventSummary) =>
+            event.status === 'published'
+                ? deletePublishedEvent(token!, event.id)
+                : deleteStagedEvent(token!, event.id),
+        onSuccess: (_data, event) => {
+            // Instant removal, then invalidate so the list reconciles with the server.
+            queryClient.setQueryData<MyEventSummary[]>(
+                ['my-events', token],
+                old => old?.filter(e => e.id !== event.id),
+            );
+            queryClient.invalidateQueries({ queryKey: ['my-events'] });
+            queryClient.invalidateQueries({ queryKey: ['events'] });
+        },
+        onError: (_err, event) => setDeleteError(`Could not delete "${event.title}". Please try again.`),
+    });
+    const deletingEventId = deleteEventMutation.isPending
+        ? deleteEventMutation.variables?.id ?? null
+        : null;
+
+    function handleDelete(event: MyEventSummary) {
         if (!token) return;
-        setDeletingEventId(event.id);
         setDeleteError(null);
-        try {
-            if (event.status === 'published') {
-                await deletePublishedEvent(token, event.id);
-            } else {
-                await deleteStagedEvent(token, event.id);
-            }
-            setMyEvents(prev => prev.filter(e => e.id !== event.id));
-        } catch {
-            setDeleteError(`Could not delete "${event.title}". Please try again.`);
-        } finally {
-            setDeletingEventId(null);
-        }
+        deleteEventMutation.mutate(event);
     }
 
     if (isInitializing) {
@@ -582,9 +596,9 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        {businessError && (
+                        {(businessError || businessLoadError) && (
                             <p className="text-sm text-[var(--color-accent)] mb-4 border border-[var(--color-accent)] px-3 py-2">
-                                {businessError}
+                                {businessError ?? businessLoadError}
                             </p>
                         )}
                         {businessSaved && (
@@ -790,7 +804,6 @@ export default function DashboardPage() {
                     eventId={editingEventId}
                     token={token}
                     towns={towns}
-                    onSuccess={loadEvents}
                 />
             )}
         </>

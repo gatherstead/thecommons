@@ -3,10 +3,13 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { TownOption, CategoryOption, EventPayload } from '../../models/eventsModels';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { EventPayload } from '../../models/eventsModels';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
-import { createEvent, getTowns, getCategories } from '../../services/eventService';
+import { createEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/useAuth';
+import { useTowns } from '../../hooks/useTowns';
+import { useCategories } from '../../hooks/useCategories';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Textarea } from '../../components/ui/Textarea';
@@ -22,11 +25,23 @@ export default function PostEventPage() {
     const router = useRouter();
     const { token, isAuthenticated, isInitializing } = useAuth();
 
+    const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>('town');
-    const [towns, setTowns] = useState<TownOption[]>([]);
-    const [categories, setCategories] = useState<CategoryOption[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    const towns = useTowns().data ?? [];
+    const categories = useCategories().data ?? [];
+
+    const createEventMutation = useMutation({
+        mutationFn: (payload: EventPayload) => createEvent(payload, token!),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['events'] });
+            queryClient.invalidateQueries({ queryKey: ['my-events'] });
+            setStep('done');
+        },
+        onError: (err: Error) => setError(err.message || 'Submission failed.'),
+    });
+    const isLoading = createEventMutation.isPending;
 
     const [formData, setFormData] = useState({
         town: '',
@@ -41,10 +56,7 @@ export default function PostEventPage() {
         link: '',
     });
 
-    useEffect(() => {
-        getTowns().then(setTowns);
-        getCategories().then(setCategories);
-    }, []);
+    const { mutate: submitEvent } = createEventMutation;
 
     // Fire any pending submission stashed before the /auth redirect, once the user
     // returns authenticated.
@@ -57,12 +69,8 @@ export default function PostEventPage() {
         let payload: EventPayload;
         try { payload = JSON.parse(raw) as EventPayload; } catch { return; }
 
-        createEvent(payload, token)
-            .then(() => setStep('done'))
-            .catch((err: Error) => setError(err.message));
-    // createEvent is a stable import; no need to list it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isAuthenticated, isInitializing, token]);
+        submitEvent(payload);
+    }, [isAuthenticated, isInitializing, token, submitEvent]);
 
     const buildPayload = (): EventPayload => ({
         title: formData.name,
@@ -85,7 +93,7 @@ export default function PostEventPage() {
         }));
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
 
@@ -103,15 +111,7 @@ export default function PostEventPage() {
             return;
         }
 
-        setIsLoading(true);
-        try {
-            await createEvent(payload, token);
-            setStep('done');
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Submission failed.');
-        } finally {
-            setIsLoading(false);
-        }
+        submitEvent(payload);
     };
 
     const townName = towns.find(t => t.slug === formData.town)?.name ?? formData.town;

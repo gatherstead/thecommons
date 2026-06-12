@@ -9,6 +9,7 @@ import {
     useState,
     type ReactNode,
 } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
     AuthUser,
     EnterPayload,
@@ -94,38 +95,69 @@ function buildAuthUser(
     };
 }
 
-async function resolveSession(): Promise<{ user: AuthUser; token: string } | null> {
+// Resolves the Better Auth session and the Django JWT. The Django profile is
+// NOT fetched here — it lives in the ['profile', token] query below.
+async function resolveSession(): Promise<{ sessionUser: BaSessionUser; token: string } | null> {
     const sessionRes = await authClient.getSession();
     const sessionUser = sessionRes.data?.user as BaSessionUser | undefined;
     if (!sessionUser) return null;
     const jwt = await fetchJwt();
     if (!jwt) return null;
-    const profile = await fetchProfileFromDjango(jwt);
-    return { user: buildAuthUser(sessionUser, profile), token: jwt };
+    return { sessionUser, token: jwt };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    const [user, setUser] = useState<AuthUser | null>(null);
+    const queryClient = useQueryClient();
+    const [sessionUser, setSessionUser] = useState<BaSessionUser | null>(null);
     const [token, setToken] = useState<string | null>(null);
-    const [isInitializing, setIsInitializing] = useState(true);
+    const [isResolvingSession, setIsResolvingSession] = useState(true);
+
+    const profileQuery = useQuery({
+        queryKey: ['profile', token],
+        queryFn: () => fetchProfileFromDjango(token!),
+        enabled: !!token,
+    });
+
+    // Derived, never stored: recombines the imperative session/token state with
+    // the profile query so profile invalidations propagate without effects.
+    const user = useMemo<AuthUser | null>(
+        () =>
+            sessionUser && token
+                ? buildAuthUser(sessionUser, profileQuery.data ?? null)
+                : null,
+        [sessionUser, token, profileQuery.data],
+    );
+
+    // The profile-pending term keeps pages gated on user_type from rendering
+    // with fallback values; the !!token guard matters because a disabled query
+    // stays pending forever.
+    const isInitializing = isResolvingSession || (!!token && profileQuery.isPending);
 
     useEffect(() => {
         let cancelled = false;
         resolveSession()
             .then(result => {
                 if (cancelled) return;
-                if (result) { setUser(result.user); setToken(result.token); }
-                else { setUser(null); setToken(null); }
+                if (result) { setSessionUser(result.sessionUser); setToken(result.token); }
+                else { setSessionUser(null); setToken(null); }
             })
-            .finally(() => { if (!cancelled) setIsInitializing(false); });
+            .finally(() => { if (!cancelled) setIsResolvingSession(false); });
         return () => { cancelled = true; };
     }, []);
 
     const refreshSession = useCallback(async () => {
         const result = await resolveSession();
-        if (result) { setUser(result.user); setToken(result.token); }
-        else { setUser(null); setToken(null); }
-    }, []);
+        if (result) {
+            setSessionUser(result.sessionUser);
+            setToken(result.token);
+            // Prefix match covers token rotation; forces a refetch when the
+            // token is unchanged (e.g. user_type changed server-side).
+            await queryClient.invalidateQueries({ queryKey: ['profile'] });
+        } else {
+            setSessionUser(null);
+            setToken(null);
+        }
+    }, [queryClient]);
 
     const enter = useCallback(async (payload: EnterPayload): Promise<EnterResult> => {
         const res = await fetch('/api/auth/enter', {
@@ -152,15 +184,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             password: payload.password,
         });
         if (error) throw new Error(error.message || 'Sign-in failed');
-        const sessionUser = data?.user as BaSessionUser | undefined;
-        if (!sessionUser) throw new Error('Sign-in returned no user');
+        const nextSessionUser = data?.user as BaSessionUser | undefined;
+        if (!nextSessionUser) throw new Error('Sign-in returned no user');
         const jwt = await fetchJwt();
+        setSessionUser(nextSessionUser);
         setToken(jwt);
-        const profile = jwt ? await fetchProfileFromDjango(jwt) : null;
-        const next = buildAuthUser(sessionUser, profile);
-        setUser(next);
-        return next;
-    }, []);
+        // Seeds the ['profile', jwt] cache and preserves the "login resolves
+        // with the built AuthUser" contract.
+        const profile = jwt
+            ? await queryClient.fetchQuery({
+                  queryKey: ['profile', jwt],
+                  queryFn: () => fetchProfileFromDjango(jwt),
+              })
+            : null;
+        return buildAuthUser(nextSessionUser, profile);
+    }, [queryClient]);
 
     const setPassword = useCallback(async (password: string) => {
         const res = await fetch('/api/auth/set-password', {
@@ -173,14 +211,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const data = await res.json().catch(() => ({}));
             throw new Error(data.error || 'Could not set password.');
         }
-        setUser(prev => (prev ? { ...prev, hasPassword: true } : prev));
-    }, []);
+        queryClient.setQueryData<ProfileResponse | null>(
+            ['profile', token],
+            old => (old ? { ...old, has_password: true } : old),
+        );
+    }, [queryClient, token]);
 
     const logout = useCallback(async () => {
         try { await authClient.signOut(); } catch { /* best-effort */ }
-        setUser(null);
+        setSessionUser(null);
         setToken(null);
-    }, []);
+        queryClient.removeQueries({ queryKey: ['profile'] });
+    }, [queryClient]);
 
     const value = useMemo<AuthContextValue>(
         () => ({

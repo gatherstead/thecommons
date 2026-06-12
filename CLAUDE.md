@@ -17,8 +17,8 @@ For deep-dive guides: [`docs/index.md`](docs/index.md)
 # Backend
 cd backendServer && uv sync && python manage.py migrate && python manage.py runserver
 
-# Frontend
-cd theCommonsWeb && npm install && npm run dev
+# Frontend (pnpm-managed — npm install will fail on the symlinked store)
+cd theCommonsWeb && pnpm install && pnpm dev
 ```
 
 ## Claude-Specific Notes
@@ -27,4 +27,4 @@ cd theCommonsWeb && npm install && npm run dev
 - In task recaps, include the **ticket name** if given (10.2, T12, etc.).
 - `backendServer/vercel.json`, `build.sh`, `main.py` are legacy dead files — ignore them.
 - Run `python manage.py migrate` after model changes — but never for `neon_auth` mirrors (`managed = False`).
-- Frontend type-checks with `npm run build`. Backend tests with `python manage.py test`.
+- Frontend type-checks with `pnpm build`. Backend tests with `python manage.py test`.

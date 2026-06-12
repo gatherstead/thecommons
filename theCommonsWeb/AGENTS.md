@@ -51,12 +51,14 @@ src/
 │       ├── Badge, Banner, Button, Input, Link, Modal, Select, Textarea
 │       └── index.ts                        # Re-exports
 ├── hooks/
-│   ├── useAuth.tsx                         # Auth context: session + profile + JWT; login/signup/logout
-│   ├── useEvents.ts                        # Main data hook: fetch, filter, past-event loading
+│   ├── useAuth.tsx                         # Auth context: session + JWT; profile via ['profile'] query
+│   ├── useEvents.ts                        # Main data hook: TanStack queries, filter state, month prefetch
+│   ├── useTowns.ts / useCategories.ts      # Static lists via useQuery (['towns'] / ['categories'])
 │   ├── useMessageStack.tsx                 # Toast/notification stack
 │   ├── useToggleSet.ts                     # Generic multi-select toggle state
 │   └── useClickOutside.ts                  # Dismiss-on-click-outside
 ├── lib/
+│   ├── queryClient.ts                      # TanStack Query client singleton (session-fresh defaults)
 │   ├── auth.ts                             # betterAuth() server config (Drizzle adapter, plugins)
 │   ├── lazy-auth-plugin.ts                 # Custom plugin: POST /api/auth/enter (passwordless)
 │   ├── auth-client.ts                      # createAuthClient() — browser-side auth
@@ -69,8 +71,7 @@ src/
 ├── services/
 │   ├── eventService.ts                     # Events CRUD API client
 │   ├── profileService.ts                   # Profile read/write via /auth/me
-│   ├── businessService.ts                  # Business profile API client
-│   └── eventCache.ts                       # Client-side event caching
+│   └── businessService.ts                  # Business profile API client
 └── constants/
     └── tags.ts                             # Static tag definitions
 ```

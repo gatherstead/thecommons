@@ -192,11 +192,13 @@ src/
 │   │              # MiniCalendar, PageLayout, TagsBar, SectionSelector, TimeWindowSelector
 │   └── ui/        # Shared primitives (Badge, Button, Input, Modal, Select, Textarea, Link)
 ├── hooks/
-│   ├── useEvents.ts      # Main data hook: fetch events, filter state, past-event loading
-│   ├── useAuth.tsx       # Auth context: Better Auth session + Django profile + JWT; enter/login/setPassword, hasPassword
+│   ├── useEvents.ts      # Main data hook: TanStack queries (windows/pages/months), filter state
+│   ├── useAuth.tsx       # Auth context: Better Auth session + JWT; Django profile via ['profile'] query
+│   ├── useTowns.ts / useCategories.ts  # Static lists via useQuery
 │   ├── useToggleSet.ts   # Generic multi-select toggle state
 │   └── useClickOutside.ts
 ├── lib/
+│   ├── queryClient.ts      # TanStack Query client singleton (staleTime: Infinity — session-fresh caching)
 │   ├── auth.ts             # betterAuth() server config (Drizzle adapter, email+password; Google commented out; jwt + lazyAuth + nextCookies)
 │   ├── lazy-auth-plugin.ts # Custom plugin: POST /api/auth/enter (email-first passwordless login/signup)
 │   ├── auth-client.ts      # createAuthClient() — signIn/signUp/signOut/useSession/getSession
@@ -209,8 +211,7 @@ src/
 ├── services/
 │   ├── eventService.ts   # getEvents, getTowns, getCategories, getMyEvents, create/update/delete event(s)
 │   ├── profileService.ts # getProfile / updateProfile (via /auth/me)
-│   ├── businessService.ts # Business profile API client
-│   └── eventCache.ts     # Client-side event caching
+│   └── businessService.ts # Business profile API client
 ├── constants/tags.ts
 └── data/mockEvents.ts
 ```

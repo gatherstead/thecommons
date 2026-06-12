@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { QueryProvider } from '../components/providers/QueryProvider';
 import { AuthProvider } from '../hooks/useAuth';
 import { MessageStackProvider } from '../hooks/useMessageStack';
 import { Header } from '../components/layout/Header';
@@ -22,8 +23,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AuthProvider>
-          <MessageStackProvider>
+        <QueryProvider>
+          <AuthProvider>
+            <MessageStackProvider>
             <div className="min-h-screen bg-[var(--color-bg)]">
               <a
                 href="#main-content"
@@ -38,8 +40,9 @@ export default function RootLayout({
               {children}
               <Footer />
             </div>
-          </MessageStackProvider>
-        </AuthProvider>
+            </MessageStackProvider>
+          </AuthProvider>
+        </QueryProvider>
       </body>
     </html>
   );

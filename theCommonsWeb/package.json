@@ -12,6 +12,7 @@
   "dependencies": {
     "@better-auth/infra": "^0.2.7",
     "@tailwindcss/postcss": "^4.3.0",
+    "@tanstack/react-query": "^5.101.0",
     "better-auth": "^1.2.0",
     "drizzle-orm": "^0.36.0",
     "next": "^16.2.6",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@better-auth/cli": "^1.2.0",
     "@eslint/js": "^9.39.1",
+    "@tanstack/react-query-devtools": "^5.101.0",
     "@types/node": "^24.12.4",
     "@types/pg": "^8.11.10",
     "@types/react": "^19.2.14",

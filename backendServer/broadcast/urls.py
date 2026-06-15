@@ -10,5 +10,6 @@ urlpatterns = [
     path("jobs/<uuid:job_id>", views.job_detail, name="job-detail"),
     path("jobs/<uuid:job_id>/retry", views.job_retry, name="job-retry"),
     path("jobs/<uuid:job_id>/screenshots/<str:site_key>", views.job_screenshot, name="job-screenshot"),
+    path("jobs/<uuid:job_id>/manual/<str:site_key>", views.job_manual_recipe, name="job-manual-recipe"),
     path("mock-form", views.mock_form, name="mock-form"),
 ]

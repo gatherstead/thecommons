@@ -18,7 +18,7 @@ EVENT = {
     "city": "Pittsboro",
     "state": "NC",
     "zip": "27312",
-    "locality": "pittsboro",
+    "locality": ["pittsboro"],
     "categories": ["music", "community", "nightlife"],
 }
 
@@ -57,7 +57,7 @@ class PreviewTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
     def test_preview_validates_event(self):
-        bad = dict(EVENT, locality="asheville")
+        bad = dict(EVENT, locality=["asheville"])
         with mock.patch.dict(os.environ, CODES):
             resp = self.client.post(
                 "/broadcast/preview",
@@ -145,6 +145,70 @@ class SubmitAndJobTest(TestCase):
         target.refresh_from_db()
         self.assertEqual(target.status, "pending")
         self.assertEqual(target.error, "")
+
+
+@override_settings(RATELIMIT_ENABLE=False)
+class ManualRecipeTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.submission = BroadcastSubmission.objects.create(
+            client_label="makrs",
+            title="Jazz Night",
+            description="An evening of jazz.",
+            start_datetime="2026-07-10T19:00:00-04:00",
+            venue_name="The Plant",
+            address_line1="220 Lorax Ln",
+            state="NC",
+            zip="27312",
+            locality=["pittsboro"],
+            categories=["music"],
+            event_url="https://example.com/jazz",
+            status="running",
+        )
+
+    def _target(self, site_key, status):
+        return self.submission.targets.create(site_key=site_key, status=status, dry_run=False)
+
+    def _get(self, site_key, code="SECRET1"):
+        with mock.patch.dict(os.environ, CODES):
+            headers = {"HTTP_X_BROADCAST_ACCESS_CODE": code} if code else {}
+            return self.client.get(
+                f"/broadcast/jobs/{self.submission.id}/manual/{site_key}", **headers
+            )
+
+    def test_needs_manual_returns_recipe(self):
+        self._target("triangle_on_the_cheap", "needs_manual")
+        resp = self._get("triangle_on_the_cheap")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["site_key"], "triangle_on_the_cheap")
+        self.assertTrue(body["submit_selector"])
+        self.assertTrue(body["fields"])
+
+    def test_non_manual_status_conflicts(self):
+        self._target("triangle_on_the_cheap", "pending")
+        resp = self._get("triangle_on_the_cheap")
+        self.assertEqual(resp.status_code, 409)
+
+    def test_missing_access_code_forbidden(self):
+        self._target("triangle_on_the_cheap", "needs_manual")
+        resp = self._get("triangle_on_the_cheap", code=None)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_unknown_site_not_found(self):
+        resp = self._get("not_a_site")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_adapter_without_recipe_not_found(self):
+        # visit_raleigh has no recipe_fields, so manual review is unavailable
+        # even when the target is awaiting it.
+        self._target("visit_raleigh", "needs_manual")
+        resp = self._get("visit_raleigh")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_no_target_for_site_not_found(self):
+        resp = self._get("triangle_weekender")
+        self.assertEqual(resp.status_code, 404)
 
 
 class RateLimitTest(TestCase):

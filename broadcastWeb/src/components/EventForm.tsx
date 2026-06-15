@@ -7,6 +7,30 @@ interface Props {
   disabled: boolean;
 }
 
+function priceError(price: string | undefined): string {
+  const v = (price ?? "").trim();
+  if (!v) return "";
+  if (v.toLowerCase() === "free")
+    return "This event is free — tick the 'This event is free' checkbox instead.";
+  if (/[a-z]/i.test(v))
+    return "Price must be a number (e.g. 5 or 10.50).";
+  const num = parseFloat(v);
+  if (isNaN(num))
+    return "Price must be a number (e.g. 5 or 10.50).";
+  if (num < 0)
+    return "Price cannot be negative.";
+  if (/\.\d{3,}/.test(v))
+    return "Price can have at most two decimal places.";
+  return "";
+}
+
+function timeError(start: string, end: string | undefined): string {
+  if (!start || !end) return "";
+  if (new Date(end) <= new Date(start))
+    return "End time must be after start time.";
+  return "";
+}
+
 export default function EventForm({ draft, onChange, disabled }: Props) {
   const set = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) =>
     onChange({ ...draft, [key]: value });
@@ -18,6 +42,24 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
       has ? draft.categories.filter((c) => c !== value) : [...draft.categories, value],
     );
   };
+
+  const toggleLocality = (value: string) => {
+    const has = draft.locality.includes(value);
+    set(
+      "locality",
+      has ? draft.locality.filter((l) => l !== value) : [...draft.locality, value],
+    );
+  };
+
+  const handlePriceChange = (value: string) => {
+    const updates: Partial<EventDraft> = { price: value };
+    const num = parseFloat(value.trim());
+    if (!isNaN(num) && num > 0) updates.is_free = false;
+    onChange({ ...draft, ...updates });
+  };
+
+  const priceErr = priceError(draft.price);
+  const timeErr = timeError(draft.start_datetime, draft.end_datetime);
 
   return (
     <div className="field-grid">
@@ -70,6 +112,7 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
           onChange={(e) => set("end_datetime", e.target.value)}
           disabled={disabled}
         />
+        {timeErr && <p className="field-error">{timeErr}</p>}
       </div>
 
       <div className="field checkbox-row">
@@ -112,20 +155,6 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
       </div>
 
       <div className="field">
-        <label htmlFor="city">
-          City <span className="required-mark">*</span>
-        </label>
-        <input
-          id="city"
-          type="text"
-          value={draft.city}
-          onChange={(e) => set("city", e.target.value)}
-          disabled={disabled}
-          maxLength={100}
-        />
-      </div>
-
-      <div className="field">
         <label htmlFor="state">State</label>
         <input
           id="state"
@@ -151,23 +180,27 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
         />
       </div>
 
-      <div className="field">
-        <label htmlFor="locality">
-          Locality (routing) <span className="required-mark">*</span>
-        </label>
-        <select
-          id="locality"
-          value={draft.locality}
-          onChange={(e) => set("locality", e.target.value)}
-          disabled={disabled}
-        >
-          {LOCALITIES.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
-        <p className="hint">Decides which town calendars this event may reach.</p>
+      <div className="field span-2">
+        <fieldset className="category-set">
+          <legend>
+            Locality (routing) <span className="required-mark">*</span>
+          </legend>
+          <div className="category-options">
+            {LOCALITIES.map((l) => (
+              <span key={l.value} className="checkbox-row">
+                <input
+                  id={`loc-${l.value}`}
+                  type="checkbox"
+                  checked={draft.locality.includes(l.value)}
+                  onChange={() => toggleLocality(l.value)}
+                  disabled={disabled}
+                />
+                <label htmlFor={`loc-${l.value}`}>{l.label}</label>
+              </span>
+            ))}
+          </div>
+          <p className="hint">Select all areas this event is relevant to — determines which calendars it reaches.</p>
+        </fieldset>
       </div>
 
       <div className="field span-2">
@@ -220,11 +253,12 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
           id="price"
           type="text"
           value={draft.price ?? ""}
-          onChange={(e) => set("price", e.target.value)}
+          onChange={(e) => handlePriceChange(e.target.value)}
           disabled={disabled}
-          placeholder={'e.g. "Free", "$10", "$10–$20"'}
+          placeholder="e.g. 10 or 10.50"
           maxLength={60}
         />
+        {priceErr && <p className="field-error">{priceErr}</p>}
       </div>
 
       <div className="field checkbox-row">
@@ -232,7 +266,10 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
           id="is-free"
           type="checkbox"
           checked={draft.is_free}
-          onChange={(e) => set("is_free", e.target.checked)}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            onChange({ ...draft, is_free: checked, price: checked ? "0.00" : draft.price });
+          }}
           disabled={disabled}
         />
         <label htmlFor="is-free">This event is free</label>

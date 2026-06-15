@@ -8,8 +8,12 @@
   "city": "Pittsboro",
   "state": "NC",
   "zip": "27312",
-  "locality": "pittsboro",
-  "categories": ["wellness"],
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "wellness"
+  ],
   "price": "$15",
   "is_free": false
 }

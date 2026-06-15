@@ -21,7 +21,7 @@ _FIELDS = {
 class ChathamArtsAdapter(SiteAdapter):
     key = "chatham_arts"
     name = "Chatham Arts Council"
-    submission_url = "https://www.chathamartscouncil.org/calendar/"
+    submission_url = "https://www.chathamartscouncil.org/calendar/community/add/"
     requires_auth = False
     # arts/literary only — "don't submit a non-art event to an arts calendar"
     eligibility = Eligibility(

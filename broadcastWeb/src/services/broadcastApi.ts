@@ -2,7 +2,7 @@
 // plain fetch per call, response.ok checks, no shared client wrapper.
 // The access code is passed per request and never stored.
 
-import type { EventDraft, JobDetail, PreviewResult } from "../models/broadcastModels";
+import type { EventDraft, JobDetail, PreviewResult, Recipe } from "../models/broadcastModels";
 
 const API_BASE =
   import.meta.env.VITE_BROADCAST_API_BASE_URL || "http://127.0.0.1:8000";
@@ -78,6 +78,23 @@ export const retryJob = (
     access_code: accessCode,
     site_keys: siteKeys,
   });
+
+export const getManualRecipe = async (
+  accessCode: string,
+  jobId: string,
+  siteKey: string,
+): Promise<Recipe> => {
+  const response = await fetch(
+    `${API_BASE}/broadcast/jobs/${jobId}/manual/${siteKey}`,
+    { headers: { "X-Broadcast-Access-Code": accessCode } },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error(`GET manual recipe ${siteKey} failed:`, response.status);
+    throw new ApiError(response.status, messageFor(response.status, body));
+  }
+  return body as Recipe;
+};
 
 // Screenshots are operator-gated behind the access-code header, so a plain
 // <a href> cannot fetch them — pull the bytes and open a blob URL instead.

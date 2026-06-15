@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from broadcast.adapters.base import FILLABLE_TYPES
+
 CAPTCHA_MARKERS = [
     "iframe[src*='recaptcha']",
     "iframe[src*='hcaptcha']",
@@ -103,4 +105,31 @@ def format_time(dt) -> str:
 
 
 def full_address(ev) -> str:
-    return f"{ev.address_line1}, {ev.city}, {ev.state} {ev.zip}"
+    mid = f"{ev.city}, " if ev.city else ""
+    return f"{ev.address_line1}, {mid}{ev.state} {ev.zip}"
+
+
+def apply_specs(page, specs, ev, timeout_ms) -> list[str]:
+    """Fill the Playwright-fillable specs; return descriptors of missing required.
+
+    Only `FILLABLE_TYPES` are filled here; `recipe_only` specs and widget types
+    (radio/checkbox/file/select2/terms/…) are skipped — the adapter's imperative
+    code still handles those on the server path. Semantics match the old per-
+    adapter `_apply`: empty value → "no value submitted", fill failure →
+    "control not found", both only reported when the field is required.
+    """
+    missing = []
+    for spec in specs:
+        if spec.recipe_only or spec.type not in FILLABLE_TYPES:
+            continue
+        value = spec.value_for(ev)
+        if not value:
+            if spec.required:
+                missing.append(f"{spec.selector}: no value submitted")
+            continue
+        try:
+            page.locator(spec.selector).first.fill(value, timeout=min(timeout_ms, 5000))
+        except Exception:
+            if spec.required:
+                missing.append(f"{spec.selector}: control not found")
+    return missing

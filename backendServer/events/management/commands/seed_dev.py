@@ -1,6 +1,7 @@
 from datetime import timedelta
 
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from events.models import Category, Event, Tag, Town
@@ -110,7 +111,7 @@ EVENTS = [
     {
         'title': "Triangle Tech Meetup: AI & Local Communities",
         'town_slug': 'chapel-hill',
-        'venue': 'Frankie's Fun Park Conference Room',
+        'venue': "Frankie's Fun Park Conference Room",
         'description': (
             "Monthly Triangle Tech Meetup — this month's topic: applying AI tools to local "
             "civic projects. Lightning talks, networking, free pizza."
@@ -139,7 +140,20 @@ EVENTS = [
 class Command(BaseCommand):
     help = 'Seed dev database with Towns, Tags, Categories, and sample Events'
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Allow seeding even when DEBUG is off (e.g. prod settings)',
+        )
+
     def handle(self, *args, **options):
+        if not settings.DEBUG and not options['force']:
+            raise CommandError(
+                'Refusing to seed: DEBUG is off, so this is likely the prod database. '
+                'Use --force if you really mean it.'
+            )
+
         now = timezone.now()
 
         towns_created = 0

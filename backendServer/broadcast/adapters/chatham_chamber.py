@@ -30,6 +30,7 @@ class ChathamChamberAdapter(SiteAdapter):
     name = "Chatham Chamber Events"
     # ChamberMaster submission page; may be member-gated — a login wall at
     # runtime yields needs_manual, never a bypass.
+    #IDK about this one chief
     submission_url = "https://business.ccucc.net/ap/Event/Submit/yr4lawrl"
     requires_auth = False
     eligibility = Eligibility(

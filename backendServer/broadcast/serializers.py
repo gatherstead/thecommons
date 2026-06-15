@@ -14,10 +14,13 @@ class CanonicalEventSerializer(serializers.Serializer):
     all_day = serializers.BooleanField(required=False, default=False)
     venue_name = serializers.CharField(max_length=200)
     address_line1 = serializers.CharField(max_length=200)
-    city = serializers.CharField(max_length=100)
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     state = serializers.CharField(max_length=2, required=False, default="NC")
     zip = serializers.CharField(max_length=10)
-    locality = serializers.ChoiceField(choices=sorted(LOCALITIES))
+    locality = serializers.ListField(
+        child=serializers.ChoiceField(choices=sorted(LOCALITIES)),
+        allow_empty=False,
+    )
     categories = serializers.ListField(
         child=serializers.ChoiceField(choices=sorted(CATEGORIES)),
         allow_empty=False,

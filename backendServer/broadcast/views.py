@@ -17,7 +17,7 @@ from broadcast.models import BroadcastSubmission
 from broadcast.permissions import HasBroadcastAccessCode
 from broadcast.routing import eligible_targets
 from broadcast.serializers import CanonicalEventSerializer
-from broadcast.services import create_submission, job_payload, retry_targets
+from broadcast.services import create_submission, job_payload, manual_recipe, retry_targets
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
@@ -109,6 +109,31 @@ def job_screenshot(request, job_id, site_key):
     if not path.startswith(base + os.sep) or not os.path.exists(path):
         raise Http404
     return FileResponse(open(path, "rb"), content_type="image/png")
+
+
+@ratelimit(key="ip", rate="30/m", method="GET", block=True)
+@api_view(["GET"])
+@permission_classes([HasBroadcastAccessCode])
+def job_manual_recipe(request, job_id, site_key):
+    """Recipe for a needs_manual target — the manual-review extension fills it.
+
+    Access is gated by the same access-code header the SPA already holds, so the
+    event data is never exposed beyond what the operator could already see.
+    """
+    adapter = get_adapter(site_key)
+    if adapter is None or not adapter.recipe_fields:
+        raise Http404
+    try:
+        submission = BroadcastSubmission.objects.get(id=job_id)
+    except BroadcastSubmission.DoesNotExist:
+        raise Http404
+    target = submission.targets.filter(site_key=site_key).first()
+    if not target:
+        raise Http404
+    if target.status != "needs_manual":
+        return Response({"detail": "target is not awaiting manual review"},
+                        status=status.HTTP_409_CONFLICT)
+    return Response(manual_recipe(submission, site_key))
 
 
 def mock_form(request):

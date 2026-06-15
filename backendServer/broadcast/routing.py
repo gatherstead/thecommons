@@ -27,8 +27,8 @@ class Eligibility:
     categories: frozenset[str]  # event must have ≥1 category in here (empty = accept any)
 
     def matches(self, ev: CanonicalEvent) -> tuple[bool, str]:
-        if self.localities and ev.locality not in self.localities:
-            return False, f"locality '{ev.locality}' not covered"
+        if self.localities and not (set(ev.locality) & self.localities):
+            return False, f"localities {ev.locality} not covered"
         if self.categories and not (set(ev.categories) & self.categories):
             return False, f"none of {ev.categories} in accepted categories"
         return True, ""

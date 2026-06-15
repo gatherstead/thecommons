@@ -13,7 +13,6 @@ from broadcast.adapters.chatham_arts import ChathamArtsAdapter
 from broadcast.adapters.chatham_chamber import ChathamChamberAdapter
 from broadcast.adapters.explore_pittsboro import ExplorePittsboroAdapter
 from broadcast.adapters.fun4raleighkids import Fun4RaleighKidsAdapter
-from broadcast.adapters.indy_week import IndyWeekAdapter
 from broadcast.adapters.shop_pittsboro import ShopPittsboroAdapter
 from broadcast.adapters.triangle_on_the_cheap import TriangleOnTheCheapAdapter
 from broadcast.adapters.triangle_weekender import TriangleWeekenderAdapter
@@ -22,7 +21,6 @@ from broadcast.adapters.visit_raleigh import VisitRaleighAdapter
 _TIER1 = [
     TriangleOnTheCheapAdapter(),
     TriangleWeekenderAdapter(),
-    IndyWeekAdapter(),
     Abc11CommunityAdapter(),
     VisitRaleighAdapter(),
     Fun4RaleighKidsAdapter(),

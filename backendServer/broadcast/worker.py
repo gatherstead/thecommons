@@ -4,8 +4,12 @@ Runs as its own systemd service (broadcast-worker) via the
 run_broadcast_worker management command — never inside gunicorn.
 """
 import logging
+import os
+import subprocess
+import sys
 import time
 
+from django.conf import settings
 from django.db import transaction
 
 from broadcast.models import BroadcastSubmission
@@ -14,6 +18,29 @@ from broadcast.runner import run_submission
 logger = logging.getLogger("broadcast")
 
 POLL_INTERVAL_S = 3
+
+
+def spawn_worker_once() -> None:
+    """Detach a `run_broadcast_worker --once` process to drain the queue.
+
+    For single-box / dev setups with no long-running worker. Safe to call from
+    a gunicorn request handler: it's a *separate* process (Playwright never runs
+    in-process), and claim_next uses SKIP LOCKED so it can't collide with a
+    systemd worker or another spawn. Call via transaction.on_commit so the
+    spawned process sees the committed submission.
+    """
+    manage_py = str(settings.BASE_DIR / "manage.py")
+    try:
+        subprocess.Popen(
+            [sys.executable, manage_py, "run_broadcast_worker", "--once"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(settings.BASE_DIR),
+            env=os.environ.copy(),
+        )
+    except Exception:
+        logger.exception("failed to spawn broadcast worker")
 
 
 def claim_next() -> BroadcastSubmission | None:

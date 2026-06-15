@@ -109,6 +109,9 @@ BROADCAST_MAX_CONCURRENCY = int(os.getenv("BROADCAST_MAX_CONCURRENCY", "1"))
 BROADCAST_SCREENSHOT_DIR = os.getenv("BROADCAST_SCREENSHOT_DIR", str(BASE_DIR / "broadcast_artifacts" / "screenshots"))
 BROADCAST_DOWNLOAD_DIR = os.getenv("BROADCAST_DOWNLOAD_DIR", str(BASE_DIR / "broadcast_artifacts" / "downloads"))
 BROADCAST_TIMEOUT_MS = int(os.getenv("BROADCAST_TIMEOUT_MS", "30000"))
+# When on, submit/retry spawn a one-shot worker process to drain the queue.
+# Off in prod (the systemd broadcast-worker handles it); dev turns it on.
+BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "false").lower() == "true"
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')

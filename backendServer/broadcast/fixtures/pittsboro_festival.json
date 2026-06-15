@@ -8,8 +8,14 @@
   "city": "Pittsboro",
   "state": "NC",
   "zip": "27312",
-  "locality": "pittsboro",
-  "categories": ["festival", "community", "arts"],
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "festival",
+    "community",
+    "arts"
+  ],
   "price": "Free",
   "is_free": true
 }

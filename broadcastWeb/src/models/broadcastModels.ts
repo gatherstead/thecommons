@@ -33,10 +33,9 @@ export interface EventDraft {
   all_day: boolean;
   venue_name: string;
   address_line1: string;
-  city: string;
   state: string;
   zip: string;
-  locality: string;
+  locality: string[];
   categories: string[];
   event_url?: string;
   ticket_url?: string;
@@ -89,4 +88,37 @@ export interface JobDetail {
   started_at: string | null;
   finished_at: string | null;
   targets: JobTarget[];
+}
+
+// Manual-review recipe — mirrors broadcast/adapters/base.py recipe(). The
+// extension fills these; the human solves the captcha and clicks submit.
+export type RecipeFieldType =
+  | "text"
+  | "textarea"
+  | "date"
+  | "time"
+  | "select"
+  | "radio"
+  | "checkbox"
+  | "file"
+  | "select2"
+  | "terms"
+  | "manual_widget";
+
+export interface RecipeField {
+  selector: string;
+  type: RecipeFieldType;
+  value: string;
+  required: boolean;
+  label: string;
+  hint: string | null;
+}
+
+export interface Recipe {
+  site_key: string;
+  name: string;
+  url: string;
+  fields: RecipeField[];
+  captcha_hint: string | null;
+  submit_selector: string;
 }

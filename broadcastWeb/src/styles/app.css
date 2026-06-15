@@ -48,6 +48,27 @@ a:hover {
   padding: 1.5rem 1rem 4rem;
 }
 
+/* Dev-only autofill button */
+.masthead {
+  position: relative;
+}
+.dev-autofill {
+  position: absolute;
+  top: 0.75rem;
+  right: 0;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  background: #fff3cd;
+  border: 1px dashed #b8860b;
+  color: #7a5900;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.dev-autofill:hover {
+  background: #ffe69c;
+}
+
 /* Masthead */
 .masthead {
   text-align: center;
@@ -215,6 +236,12 @@ button.linklike:hover {
   align-items: center;
   gap: 1rem;
   margin-top: 1rem;
+}
+
+.field-error {
+  color: var(--color-error, #c0392b);
+  font-size: 0.82rem;
+  margin: 0.25rem 0 0;
 }
 
 .error-text {

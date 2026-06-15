@@ -1,8 +1,19 @@
 """Persistence for broadcast submissions. Views stay thin; logic lives here."""
+from django.conf import settings
 from django.db import transaction
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
-from broadcast.schema import CanonicalEvent
+from broadcast.schema import CanonicalEvent, event_from_submission
+
+
+def _maybe_autospawn_worker() -> None:
+    """Kick a one-shot worker after commit, if auto-spawn is enabled (dev/single
+    box). Prod leaves this off and relies on the systemd broadcast-worker."""
+    if not getattr(settings, "BROADCAST_AUTOSPAWN_WORKER", False):
+        return
+    from broadcast.worker import spawn_worker_once
+
+    transaction.on_commit(spawn_worker_once)
 
 
 @transaction.atomic
@@ -42,6 +53,7 @@ def create_submission(
         BroadcastTarget.objects.create(
             submission=submission, site_key=site_key, dry_run=dry_run
         )
+    _maybe_autospawn_worker()
     return submission
 
 
@@ -62,7 +74,16 @@ def retry_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
         submission.status = "queued"
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
+        _maybe_autospawn_worker()
     return updated
+
+
+def manual_recipe(submission: BroadcastSubmission, site_key: str) -> dict:
+    """Declarative recipe the manual-review extension fills for one target."""
+    from broadcast.adapters import get_adapter
+
+    adapter = get_adapter(site_key)
+    return adapter.recipe(event_from_submission(submission))
 
 
 def job_payload(submission: BroadcastSubmission) -> dict:

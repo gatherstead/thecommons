@@ -29,3 +29,9 @@ node_modules/
 *.key
 commonsvps.key
 ssh.sh
+
+#dev help
+tmp/*
+
+# broadcast capture scratch artifacts
+backendServer/broadcast/captures/

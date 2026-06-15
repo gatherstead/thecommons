@@ -11,6 +11,29 @@ import {
   submitBroadcast,
 } from "./services/broadcastApi";
 
+const DEV_FIXTURE: EventDraft = {
+  title: "Bull City BOOs Fest",
+  description:
+    "Join The MAKRS Society for our 5th annual Halloween Festival at Durham Central Park!\n\nCostumes Encouraged!!\n\nCool People. Cool Stuff.\n\n🍕 THE FOOD: 10-15 food trucks, breweries, cideries, wine, desserts and more!\n\n🔥 THE PERFORMANCES: Contortionist, magician, aerialist, fire performers and more!\n\n🎧 THE MUSIC: Live DJ keeping the party alive all night!\n\n🔮 THE EXPERIENCE: Lasers, fog, stilt walkers, tarot card readers, costume contests, selfie wall and more!\n\nVendor Applications: https://www.eventeny.com/events/vendor/?id=46443\nFood Truck Applications: https://www.eventeny.com/events/vendor/?id=46444\nEvent Website: https://makrs.com/bull-city-boos-fest",
+  start_datetime: "2026-10-17T16:00",
+  end_datetime: "2026-10-17T23:00",
+  all_day: false,
+  venue_name: "Durham Central Park",
+  address_line1: "501 Foster St",
+  state: "NC",
+  zip: "27701",
+  locality: ["durham"],
+  categories: ["festival", "music", "food-drink", "nightlife", "community"],
+  event_url: "https://makrs.com/bull-city-boos-fest",
+  ticket_url: "",
+  price: "",
+  is_free: true,
+  image_url: "",
+  organizer_name: "The MAKRS Society",
+  contact_email: "info@makrs.com",
+  contact_phone: "",
+};
+
 const EMPTY_DRAFT: EventDraft = {
   title: "",
   description: "",
@@ -19,10 +42,9 @@ const EMPTY_DRAFT: EventDraft = {
   all_day: false,
   venue_name: "",
   address_line1: "",
-  city: "Pittsboro",
   state: "NC",
   zip: "",
-  locality: "pittsboro",
+  locality: [],
   categories: [],
   event_url: "",
   ticket_url: "",
@@ -141,13 +163,23 @@ export default function App() {
     draft.start_datetime !== "" &&
     draft.venue_name.trim() !== "" &&
     draft.address_line1.trim() !== "" &&
-    draft.city.trim() !== "" &&
     draft.zip.trim() !== "" &&
+    draft.locality.length > 0 &&
     draft.categories.length > 0;
 
   return (
     <div className="page">
       <header className="masthead">
+        {import.meta.env.DEV && (
+          <button
+            type="button"
+            className="dev-autofill"
+            onClick={() => { setDraft(DEV_FIXTURE); setPreview(null); setJob(null); setError(""); }}
+            title="Autofill with Bull City BOOs Fest test data"
+          >
+            ⚡ Dev autofill
+          </button>
+        )}
         <h1>THE COMMONS &middot; BROADCAST</h1>
         <p className="tagline">One event in — many local calendars out.</p>
         <div className="rule-double" />

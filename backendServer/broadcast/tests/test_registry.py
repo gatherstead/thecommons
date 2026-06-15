@@ -11,7 +11,7 @@ from broadcast.routing import CATEGORIES, LOCALITIES
 class RegistryTest(SimpleTestCase):
     def test_tier1_adapters_registered(self):
         expected = {
-            "triangle_on_the_cheap", "triangle_weekender", "indy_week",
+            "triangle_on_the_cheap", "triangle_weekender",
             "abc11_community", "visit_raleigh", "fun4raleighkids", "chapelboro",
             "explore_pittsboro", "chatham_chamber", "shop_pittsboro", "chatham_arts",
         }

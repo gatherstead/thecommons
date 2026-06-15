@@ -8,11 +8,13 @@ from broadcast.schema import CanonicalEvent
 
 
 def make_event(locality, categories):
+    # locality is now a list
+    locs = locality if isinstance(locality, list) else [locality]
     return CanonicalEvent(
         title="t", description="d",
         start_datetime=datetime(2026, 7, 1, 19, 0, tzinfo=timezone.utc),
-        venue_name="v", address_line1="1 Main St", city="Pittsboro", zip="27312",
-        locality=locality, categories=categories,
+        venue_name="v", address_line1="1 Main St", zip="27312",
+        locality=locs, categories=categories,
     )
 
 
@@ -31,7 +33,6 @@ class RoutingMatrixTest(SimpleTestCase):
         self.assertIn("shop_pittsboro", ek)
         self.assertIn("triangle_on_the_cheap", ek)
         self.assertIn("triangle_weekender", ek)
-        self.assertIn("indy_week", ek)
         self.assertIn("abc11_community", ek)
         excluded_keys = {k for k, _ in excluded}
         self.assertIn("chatham_arts", excluded_keys)      # not an arts event
@@ -64,7 +65,15 @@ class RoutingMatrixTest(SimpleTestCase):
         self.assertNotIn("explore_pittsboro", ek)
         self.assertNotIn("chapelboro", ek)
 
+    def test_multi_locality_reaches_both(self):
+        eligible, _ = eligible_targets(
+            make_event(["durham", "pittsboro"], ["music"]), _TIER1
+        )
+        ek = keys(eligible)
+        self.assertIn("explore_pittsboro", ek)
+        self.assertIn("triangle_on_the_cheap", ek)
+
     def test_excluded_reasons_are_explanatory(self):
         _, excluded = eligible_targets(make_event("durham", ["music"]), _TIER1)
         reasons = dict(excluded)
-        self.assertIn("locality 'durham' not covered", reasons["explore_pittsboro"])
+        self.assertIn("not covered", reasons["explore_pittsboro"])

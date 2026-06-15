@@ -26,6 +26,7 @@ _FIELDS = {
 class ExplorePittsboroAdapter(SiteAdapter):
     key = "explore_pittsboro"
     name = "Explore Pittsboro"
+    #I dont know aobut this on
     submission_url = "https://www.explorepittsboro.com/events"
     requires_auth = False
     eligibility = Eligibility(

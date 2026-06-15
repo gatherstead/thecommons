@@ -8,8 +8,14 @@
   "city": "Pittsboro",
   "state": "NC",
   "zip": "27312",
-  "locality": "pittsboro",
-  "categories": ["literary", "festival", "market"],
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "literary",
+    "festival",
+    "market"
+  ],
   "event_url": "https://www.theplantnc.com/events/plants-read-too",
   "price": "Free",
   "is_free": true,

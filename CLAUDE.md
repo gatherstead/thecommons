@@ -1,5 +1,7 @@
 # The Commons — Claude Code Context
 
+[![CI](https://github.com/gatherstead/thecommons/actions/workflows/ci.yml/badge.svg)](https://github.com/gatherstead/thecommons/actions/workflows/ci.yml)
+
 Read these files before any task — they are the system of record:
 
 1. [`AGENTS.md`](AGENTS.md) — Repository map, tech stack, cross-cutting concerns, guardrails
@@ -27,4 +29,4 @@ cd theCommonsWeb && pnpm install && pnpm dev
 - In task recaps, include the **ticket name** if given (10.2, T12, etc.).
 - `backendServer/vercel.json`, `build.sh`, `main.py` are legacy dead files — ignore them.
 - Run `python manage.py migrate` after model changes — but never for `neon_auth` mirrors (`managed = False`).
-- Frontend type-checks with `pnpm build`. Backend tests with `python manage.py test`.
+- Frontend type-checks with `pnpm build`. Backend tests run under the test settings: `DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test` (Postgres test DB; `--tag=fast` for the no-DB tier, `--tag=db` for the DB tier). See [`backendServer/AGENTS.md`](backendServer/AGENTS.md#testing).

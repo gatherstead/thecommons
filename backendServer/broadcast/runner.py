@@ -38,6 +38,11 @@ def run_submission(submission: BroadcastSubmission) -> None:
     any_failed = False
 
     for target in targets:
+        # Honor a cancel that arrived mid-run — stop before the next site.
+        submission.refresh_from_db(fields=["status"])
+        if submission.status == "canceled":
+            break
+
         target.status = "in_progress"
         target.attempts += 1
         target.started_at = timezone.now()
@@ -56,6 +61,14 @@ def run_submission(submission: BroadcastSubmission) -> None:
         if result.status == "failed":
             any_failed = True
         logger.info("broadcast %s → %s: %s", submission.id, target.site_key, result.status)
+
+    submission.refresh_from_db(fields=["status"])
+    if submission.status == "canceled":
+        # Cancel won the race — leave it canceled, just tidy leftover targets.
+        submission.targets.filter(status="pending").update(status="skipped")
+        submission.finished_at = timezone.now()
+        submission.save(update_fields=["finished_at"])
+        return
 
     submission.status = "failed" if any_failed else "done"
     submission.finished_at = timezone.now()

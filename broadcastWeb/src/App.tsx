@@ -4,11 +4,14 @@ import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
+import { loadBundle, saveBundle } from "./lib/persist";
 import {
+  cancelJob,
   getJob,
   previewBroadcast,
   retryJob,
   submitBroadcast,
+  submitReal,
 } from "./services/broadcastApi";
 
 const DEV_FIXTURE: EventDraft = {
@@ -58,6 +61,8 @@ const EMPTY_DRAFT: EventDraft = {
 
 const POLL_MS = 3000;
 
+const PERSISTED = loadBundle();
+
 // datetime-local gives a naive local string; send an unambiguous instant.
 const toApiEvent = (draft: EventDraft): EventDraft => ({
   ...draft,
@@ -70,17 +75,31 @@ const toApiEvent = (draft: EventDraft): EventDraft => ({
 });
 
 export default function App() {
-  const [accessCode, setAccessCode] = useState("");
-  const [draft, setDraft] = useState<EventDraft>(EMPTY_DRAFT);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [dryRun, setDryRun] = useState(false);
-  const [job, setJob] = useState<JobDetail | null>(null);
+  const [accessCode, setAccessCode] = useState(PERSISTED.accessCode ?? "");
+  const [verified, setVerified] = useState(PERSISTED.verified ?? false);
+  const [draft, setDraft] = useState<EventDraft>(PERSISTED.draft ?? EMPTY_DRAFT);
+  const [preview, setPreview] = useState<PreviewResult | null>(PERSISTED.preview ?? null);
+  const [selected, setSelected] = useState<Set<string>>(new Set(PERSISTED.selected ?? []));
+  const [job, setJob] = useState<JobDetail | null>(PERSISTED.job ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const jobIdRef = useRef<string | null>(null);
+  const jobIdRef = useRef<string | null>(PERSISTED.jobId ?? null);
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
+
+  // Persist the whole page while there's unfinished work; saveBundle clears the
+  // saved state once a job reaches a terminal status.
+  useEffect(() => {
+    saveBundle({
+      accessCode,
+      verified,
+      draft,
+      preview,
+      selected: [...selected],
+      job,
+      jobId: jobIdRef.current,
+    });
+  }, [accessCode, verified, draft, preview, selected, job]);
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
@@ -120,11 +139,13 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
+      // Fill-first: every broadcast starts as a dry run so the operator can
+      // review, then submits "ready" sites for real from the progress panel.
       const { job_id } = await submitBroadcast(
         accessCode,
         toApiEvent(draft),
         [...selected],
-        dryRun,
+        true,
       );
       jobIdRef.current = job_id;
       setJob(await getJob(accessCode, job_id));
@@ -149,11 +170,38 @@ export default function App() {
     }
   };
 
+  const handleSubmitReal = async (siteKeys: string[]) => {
+    if (!jobIdRef.current) return;
+    setError("");
+    try {
+      await submitReal(accessCode, jobIdRef.current, siteKeys);
+      setJob(await getJob(accessCode, jobIdRef.current));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Submit failed.");
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!jobIdRef.current) return;
+    setBusy(true);
+    setError("");
+    try {
+      await cancelJob(accessCode, jobIdRef.current);
+      setJob(await getJob(accessCode, jobIdRef.current));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Cancel failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Reset everything for a fresh event, but keep the (verified) access code.
   const startOver = () => {
     jobIdRef.current = null;
     setJob(null);
     setPreview(null);
     setSelected(new Set());
+    setDraft(EMPTY_DRAFT);
     setError("");
   };
 
@@ -180,7 +228,7 @@ export default function App() {
             ⚡ Dev autofill
           </button>
         )}
-        <h1>THE COMMONS &middot; BROADCAST</h1>
+        <h1>BROADCAST SYNDICATE</h1>
         <p className="tagline">One event in — many local calendars out.</p>
         <div className="rule-double" />
       </header>
@@ -192,31 +240,54 @@ export default function App() {
             <label htmlFor="access-code">
               Access Code <span className="required-mark">*</span>
             </label>
-            <input
-              id="access-code"
-              type="password"
-              value={accessCode}
-              onChange={(e) => setAccessCode(e.target.value)}
-              autoComplete="off"
-              disabled={busy || job !== null}
-            />
-            <p className="hint">Provided by The Commons. Sent with each request, never stored.</p>
+            <div className="verify-row">
+              <input
+                id="access-code"
+                type="password"
+                value={accessCode}
+                onChange={(e) => { setAccessCode(e.target.value); setVerified(false); }}
+                autoComplete="off"
+                disabled={busy || job !== null}
+              />
+              <button
+                type="button"
+                className={verified ? "verify is-verified" : "verify"}
+                onClick={() => { if (accessCode.trim() !== "") setVerified(true); }}
+                disabled={verified || accessCode.trim() === ""}
+              >
+                {verified ? "✓ Success" : "Verify"}
+              </button>
+            </div>
+            <p className="hint">Provided by The Commons. Saved on this device so a reload keeps your place.</p>
           </div>
         </div>
       </section>
 
       <section className="section">
+        <h2>AI Autofill</h2>
+        <div className="actions">
+          <button type="button" disabled title="Coming soon">
+            ✨ Generate from a link or flyer
+          </button>
+          <span className="section-note">Coming soon — paste an event link and we'll fill the form for you.</span>
+        </div>
+      </section>
+
+      <section className={`section${verified ? "" : " form-dim"}`}>
         <h2>The Event</h2>
         <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null} />
         <div className="actions">
           <button
             type="button"
             onClick={handlePreview}
-            disabled={busy || job !== null || !draftValid || accessCode.trim() === ""}
+            disabled={busy || job !== null || !draftValid || accessCode.trim() === "" || !verified}
           >
             {busy && !preview ? "Checking…" : "Preview Destinations"}
           </button>
-          {!draftValid && (
+          {!verified && (
+            <span className="section-note">Verify your access code to begin.</span>
+          )}
+          {verified && !draftValid && (
             <span className="section-note">Fill the required (*) fields to preview.</span>
           )}
         </div>
@@ -241,21 +312,16 @@ export default function App() {
           <div className="actions">
             <button
               type="button"
-              className="primary"
+              className="dark"
               onClick={handleSubmit}
               disabled={busy || selected.size === 0}
             >
-              {busy ? "Queuing…" : `Broadcast to ${selected.size} calendar${selected.size === 1 ? "" : "s"}`}
+              {busy
+                ? "Filling…"
+                : `Fill & review ${selected.size} calendar${selected.size === 1 ? "" : "s"}`}
             </button>
-            <span className="checkbox-row">
-              <input
-                id="dry-run"
-                type="checkbox"
-                checked={dryRun}
-                onChange={(e) => setDryRun(e.target.checked)}
-                disabled={busy}
-              />
-              <label htmlFor="dry-run">Dry run (fill forms, never submit)</label>
+            <span className="section-note">
+              Forms are filled for your review first — submit the ready ones below.
             </span>
           </div>
         </section>
@@ -268,12 +334,13 @@ export default function App() {
             job={job}
             accessCode={accessCode}
             onRetry={handleRetry}
+            onSubmitReal={handleSubmitReal}
             retrying={busy}
           />
-          {(job.status === "done" || job.status === "failed") && (
+          {jobActive && (
             <div className="actions">
-              <button type="button" onClick={startOver}>
-                Broadcast another event
+              <button type="button" className="danger" onClick={handleCancel} disabled={busy}>
+                {busy ? "Stopping…" : "Stop all jobs"}
               </button>
             </div>
           )}
@@ -283,6 +350,16 @@ export default function App() {
       {error && (
         <section className="section">
           <p className="error-text">{error}</p>
+        </section>
+      )}
+
+      {(job || preview) && (
+        <section className="section">
+          <div className="actions">
+            <button type="button" onClick={startOver}>
+              Submit another event
+            </button>
+          </div>
         </section>
       )}
 

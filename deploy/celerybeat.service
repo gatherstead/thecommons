@@ -1,0 +1,23 @@
+# Celery beat scheduler — copy to /etc/systemd/system/celerybeat.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now celerybeat
+#
+# Exactly one beat process (Celery best practice). Uses django-celery-beat's
+# DatabaseScheduler, so the schedule lives in Postgres (editable in the admin)
+# and beat needs no pidfile or RuntimeDirectory.
+
+[Unit]
+Description=The Commons Celery beat (scheduler)
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thecommons/backendServer
+EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
+ExecStart=/snap/bin/uv run celery -A backend beat -l info
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

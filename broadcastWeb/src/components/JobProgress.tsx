@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { JobDetail, TargetStatus } from "../models/broadcastModels";
+import type { JobDetail, JobTarget } from "../models/broadcastModels";
 import { getManualRecipe, openScreenshot } from "../services/broadcastApi";
 import { sendFill, useExtension, WEB_STORE_URL } from "../hooks/useExtension";
 
@@ -8,33 +8,83 @@ interface Props {
   job: JobDetail;
   accessCode: string;
   onRetry: (siteKeys: string[]) => void;
+  onSubmitReal: (siteKeys: string[]) => void;
   retrying: boolean;
 }
 
-const STATUS_LABELS: Record<TargetStatus, string> = {
+// What the user sees per target — derived from the backend status plus the
+// dry_run flag and any optimistic local state. "ready" = filled in a dry run,
+// awaiting the operator's go-ahead; "submitted" = sent for real.
+type DisplayStatus =
+  | "pending"
+  | "in_progress"
+  | "ready"
+  | "submitted"
+  | "needs_manual"
+  | "error"
+  | "skipped";
+
+const DISPLAY_LABELS: Record<DisplayStatus, string> = {
   pending: "Pending",
   in_progress: "In progress",
-  succeeded: "Submitted",
-  failed: "Failed",
+  ready: "Ready",
+  submitted: "Submitted",
   needs_manual: "Needs manual",
+  error: "Error",
   skipped: "Skipped",
 };
 
-export default function JobProgress({ job, accessCode, onRetry, retrying }: Props) {
-  const { installed, extensionId } = useExtension();
-  // Targets the user has handled via the manual-review extension. Pure client
-  // state — the backend has no success path, so the poller keeps reporting
-  // needs_manual; we optimistically show these as submitted regardless.
-  const [submitted, setSubmitted] = useState<Set<string>>(new Set());
+export default function JobProgress({ job, accessCode, onRetry, onSubmitReal, retrying }: Props) {
+  const { installed, extensionId, recheck } = useExtension();
+  // Targets the user has acted on locally. Pure client state so the badge flips
+  // immediately; the poller confirms (or a real failure overrides to "error").
+  const [manualSubmitted, setManualSubmitted] = useState<Set<string>>(new Set());
+  const [realSubmitted, setRealSubmitted] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState<string | null>(null);
   const [manualError, setManualError] = useState("");
 
+  const displayStatus = (t: JobTarget): DisplayStatus => {
+    if (t.status === "failed") return "error"; // a real failure overrides optimism
+    if (realSubmitted.has(t.site_key) || manualSubmitted.has(t.site_key)) return "submitted";
+    if (t.status === "needs_manual") return "needs_manual";
+    if (t.status === "succeeded") return t.dry_run ? "ready" : "submitted";
+    if (t.status === "in_progress") return "in_progress";
+    if (t.status === "skipped") return "skipped";
+    return "pending";
+  };
+
+  const view = job.targets.map((t) => ({ target: t, status: displayStatus(t) }));
+  const readyKeys = view.filter((v) => v.status === "ready").map((v) => v.target.site_key);
   const retryable = job.targets
     .filter((t) => t.status === "failed" || t.status === "needs_manual")
-    .filter((t) => !submitted.has(t.site_key))
+    .filter((t) => !manualSubmitted.has(t.site_key) && !realSubmitted.has(t.site_key))
     .map((t) => t.site_key);
-  const finished = job.status === "done" || job.status === "failed";
+  const finished =
+    job.status === "done" || job.status === "failed" || job.status === "canceled";
   const dryRun = job.targets.some((t) => t.dry_run);
+
+  // Every calendar that mattered has gone out (skipped sites don't block the
+  // celebration). Drives the warm acknowledgement at the bottom of the list.
+  const submittedCount = view.filter((v) => v.status === "submitted").length;
+  const everythingSubmitted =
+    submittedCount > 0 &&
+    view.every((v) => v.status === "submitted" || v.status === "skipped");
+
+  const openShot = (path: string) => {
+    openScreenshot(accessCode, path).catch(() => {
+      /* surfaced in console by the service */
+    });
+  };
+
+  const handleSubmitReal = (siteKeys: string[]) => {
+    if (siteKeys.length === 0) return;
+    setRealSubmitted((prev) => {
+      const next = new Set(prev);
+      siteKeys.forEach((k) => next.add(k));
+      return next;
+    });
+    onSubmitReal(siteKeys);
+  };
 
   const handleManual = async (siteKey: string) => {
     if (!extensionId) return;
@@ -47,7 +97,7 @@ export default function JobProgress({ job, accessCode, onRetry, retrying }: Prop
         setManualError("Couldn't reach the extension. Is it installed and enabled?");
         return;
       }
-      setSubmitted((prev) => new Set(prev).add(siteKey));
+      setManualSubmitted((prev) => new Set(prev).add(siteKey));
     } catch {
       setManualError("Couldn't load the form recipe — try again.");
     } finally {
@@ -63,56 +113,101 @@ export default function JobProgress({ job, accessCode, onRetry, retrying }: Prop
         {job.status === "running" && "Submitting, one calendar at a time…"}
         {job.status === "done" && "Broadcast complete."}
         {job.status === "failed" && "Broadcast finished with failures — see below."}
+        {job.status === "canceled" && "Broadcast canceled — remaining sites were skipped."}
       </p>
+      {readyKeys.length > 0 && (
+        <div className="actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => handleSubmitReal(readyKeys)}
+          >
+            Submit all ready ({readyKeys.length})
+          </button>
+        </div>
+      )}
       <ul className="site-list">
-        {job.targets.map((t) => {
-          const isSubmitted = submitted.has(t.site_key);
-          return (
-            <li key={t.site_key}>
-              <span className={`target-status ${isSubmitted ? "succeeded" : t.status}`}>
-                {isSubmitted ? "Event submitted" : STATUS_LABELS[t.status]}
-              </span>
-              <span className="site-name">{t.name}</span>
-              {!isSubmitted && t.error && <span className="reason">— {t.error}</span>}
-              {t.status === "needs_manual" && !isSubmitted && (
-                installed ? (
-                  <button
-                    type="button"
-                    className="linklike"
-                    onClick={() => handleManual(t.site_key)}
-                    disabled={working === t.site_key}
-                  >
-                    {working === t.site_key ? "Opening…" : "Manual review"}
-                  </button>
-                ) : (
-                  <a href={WEB_STORE_URL} target="_blank" rel="noreferrer">
-                    Install the helper to finish
-                  </a>
-                )
-              )}
-              {t.external_url && (
-                <a href={t.external_url} target="_blank" rel="noreferrer">
-                  listing
-                </a>
-              )}
-              {t.screenshot_url && (
+        {view.map(({ target: t, status }) => (
+          <li key={t.site_key}>
+            <span className={`target-status ${status}`}>{DISPLAY_LABELS[status]}</span>
+            <span className="site-name">{t.name}</span>
+            {status === "error" && t.error && <span className="reason">— {t.error}</span>}
+            {status === "ready" && (
+              <>
                 <button
                   type="button"
                   className="linklike"
-                  onClick={() => {
-                    openScreenshot(accessCode, t.screenshot_url).catch(() => {
-                      /* surfaced in console by the service */
-                    });
-                  }}
+                  onClick={() => handleSubmitReal([t.site_key])}
                 >
-                  screenshot
+                  Submit
+                </button>
+                {t.screenshot_url && (
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => openShot(t.screenshot_url)}
+                  >
+                    Preview fill
+                  </button>
+                )}
+              </>
+            )}
+            {/* Real submit captures the site's "thank you for submitting" page —
+                show that confirmation in place of the old listing link. */}
+            {status === "submitted" &&
+              t.status === "succeeded" &&
+              !t.dry_run &&
+              t.screenshot_url && (
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => openShot(t.screenshot_url)}
+                >
+                  View confirmation
                 </button>
               )}
-            </li>
-          );
-        })}
+            {status === "needs_manual" && (
+              installed ? (
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => handleManual(t.site_key)}
+                  disabled={working === t.site_key}
+                >
+                  {working === t.site_key ? "Opening…" : "Manual review"}
+                </button>
+              ) : (
+                <a
+                  href={WEB_STORE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={recheck}
+                >
+                  Install the helper to finish
+                </a>
+              )
+            )}
+            {/* Where the run stalled — useful for diagnosing a captcha or error. */}
+            {(status === "needs_manual" || status === "error") && t.screenshot_url && (
+              <button
+                type="button"
+                className="linklike"
+                onClick={() => openShot(t.screenshot_url)}
+              >
+                Screenshot
+              </button>
+            )}
+          </li>
+        ))}
       </ul>
       {manualError && <p className="error-text">{manualError}</p>}
+      {everythingSubmitted && (
+        <p className="job-complete">
+          That’s all {submittedCount}{" "}
+          {submittedCount === 1 ? "calendar" : "calendars"} submitted — thank you
+          for getting the word out. Your event is on its way to the community.
+        </p>
+      )}
       {finished && retryable.length > 0 && (
         <div className="actions">
           <button type="button" onClick={() => onRetry(retryable)} disabled={retrying}>

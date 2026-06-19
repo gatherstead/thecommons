@@ -1,6 +1,7 @@
 """Persistence for broadcast submissions. Views stay thin; logic lives here."""
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from broadcast.schema import CanonicalEvent, event_from_submission
@@ -76,6 +77,45 @@ def retry_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
         submission.save(update_fields=["status", "finished_at"])
         _maybe_autospawn_worker()
     return updated
+
+
+@transaction.atomic
+def submit_real_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
+    """Flip dry-run targets to a real submission and re-queue them.
+
+    Only touches targets that are still dry_run=True (so an already-real target
+    can't be re-sent by accident). Resets status to pending and re-queues the
+    submission so the worker picks them up again.
+    """
+    updated = (
+        submission.targets
+        .filter(site_key__in=site_keys, dry_run=True)
+        .exclude(status__in=["pending", "in_progress"])
+        .update(status="pending", dry_run=False, error="", external_url="", screenshot_path="")
+    )
+    if updated:
+        submission.status = "queued"
+        submission.finished_at = None
+        submission.save(update_fields=["status", "finished_at"])
+        _maybe_autospawn_worker()
+    return updated
+
+
+@transaction.atomic
+def cancel_submission(submission: BroadcastSubmission) -> int:
+    """Stop a job: skip every not-yet-started target and mark it canceled.
+
+    A target already in_progress finishes its current site (the runner checks
+    for cancellation between targets and then stops); pending targets are
+    skipped here so a still-queued job is never claimed by the worker.
+    """
+    if submission.status in ("done", "failed", "canceled"):
+        return 0
+    skipped = submission.targets.filter(status="pending").update(status="skipped")
+    submission.status = "canceled"
+    submission.finished_at = timezone.now()
+    submission.save(update_fields=["status", "finished_at"])
+    return skipped
 
 
 def manual_recipe(submission: BroadcastSubmission, site_key: str) -> dict:

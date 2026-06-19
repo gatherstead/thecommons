@@ -9,6 +9,7 @@ class BroadcastSubmission(models.Model):
         ("running", "Running"),
         ("done", "Done"),
         ("failed", "Failed"),
+        ("canceled", "Canceled"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)

@@ -78,3 +78,59 @@ cd backendServer && uv sync && python manage.py migrate && python manage.py runs
 ```
 
 For end-to-end auth, also run the frontend so the JWKS endpoint resolves.
+
+### Redis + Celery (async tasks)
+
+Background tasks run on Celery, brokered by Redis (`REDIS_URL` in `.env`). Install
+a local Redis once:
+
+- **macOS:** `brew install redis && brew services start redis`
+- **Ubuntu:** `sudo apt install redis-server`
+
+To run async tasks locally, start a worker alongside `runserver`:
+
+```bash
+uv run celery -A backend worker -l info
+```
+
+Scheduled jobs use `django-celery-beat` (DB-backed, editable in the admin) driven
+by a separate `celery -A backend beat` process. See
+[`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) for the full
+setup and prod ops.
+
+## Testing
+
+Always run the suite under the dedicated test settings:
+
+```bash
+DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test
+```
+
+`backend/settings/test.py` inherits `dev.py` (so it parses `DATABASE_URL` and
+uses **Postgres** — a locked decision, not SQLite). Django auto-creates a
+throwaway `test_<dbname>`. It also forces local-memory cache, eager Celery (no
+Redis/worker needed), a fast password hasher, and stubbed external-service keys.
+
+The `neon_auth.*` mirrors are `managed = False`, so the normal test-DB setup
+skips them. `backend/test_runner.py` (`NeonAuthTestRunner`, wired via
+`TEST_RUNNER`) creates the `neon_auth` schema and `user` table once, centrally —
+no test class should re-create it.
+
+Shared helpers live in `events/tests/factories.py` (`make_user`, `make_town`,
+`make_event` — plain functions, no `factory_boy`).
+
+### Tiers
+
+Tests are tagged so you can run a subset:
+
+| Tag | Meaning | Command |
+|-----|---------|---------|
+| `fast` | Pure logic, **no DB** — plain `unittest.TestCase` | `... manage.py test --tag=fast` |
+| `db`   | Needs the Postgres test DB | `... manage.py test --tag=db` |
+
+`--tag=fast` skips DB setup entirely (Django reports "Skipping setup of unused
+database(s)"), so it's the quick inner-loop check.
+
+> Neon note: `settings/test.py` rewrites the DB host to Neon's **direct**
+> endpoint (strips `-pooler`). The pooler (PgBouncer) can't `DROP DATABASE`, so
+> teardown otherwise fails with "database is being accessed by other users".

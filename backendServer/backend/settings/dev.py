@@ -1,8 +1,14 @@
 import os
+import sys
 from urllib.parse import urlparse, parse_qsl
 from .base import *
 
 DEBUG = True
+
+# Tests run under dev settings — use an in-process cache so the suite doesn't
+# need a running Redis (and stays isolated between test methods).
+if "test" in sys.argv:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-dev-key-change-in-prod")
 

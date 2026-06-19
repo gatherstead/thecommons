@@ -3,12 +3,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from datetime import timedelta
 from .models import Event, Town, Category, UserProfile, NewsletterSubscriber, BetterAuthAccount, BusinessProfile
 from .serializers import EventSerializer, BusinessProfileSerializer
+from . import cache as events_cache
 from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUser
 from ingestion.models import StagedEvent
 
@@ -34,14 +36,22 @@ class EventsPagination(PageNumberPagination):
 
 @api_view(['GET'])
 def getTowns(request):
-    towns = Town.objects.all().order_by('name')
-    return Response([{'slug': t.slug, 'name': t.name} for t in towns])
+    data = cache.get(events_cache.TOWNS_CACHE_KEY)
+    if data is None:
+        towns = Town.objects.all().order_by('name')
+        data = [{'slug': t.slug, 'name': t.name} for t in towns]
+        cache.set(events_cache.TOWNS_CACHE_KEY, data, events_cache.STATIC_TTL)
+    return Response(data)
 
 
 @api_view(['GET'])
 def getCategories(request):
-    cats = Category.objects.all().order_by('display_name')
-    return Response([{'slug': c.slug, 'display_name': c.display_name} for c in cats])
+    data = cache.get(events_cache.CATEGORIES_CACHE_KEY)
+    if data is None:
+        cats = Category.objects.all().order_by('display_name')
+        data = [{'slug': c.slug, 'display_name': c.display_name} for c in cats]
+        cache.set(events_cache.CATEGORIES_CACHE_KEY, data, events_cache.STATIC_TTL)
+    return Response(data)
 
 
 @api_view(['GET'])
@@ -59,6 +69,11 @@ def getAll(request):
                    past:    date < now
                    future:  date > now + 90 days
     """
+    cache_key = events_cache.events_list_key(request.query_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
     now = timezone.now()
     ninety_days_out = now + timedelta(days=90)
 
@@ -101,7 +116,9 @@ def getAll(request):
     paginator = EventsPagination()
     page = paginator.paginate_queryset(events, request)
     serializer = EventSerializer(page, many=True)
-    return paginator.get_paginated_response(serializer.data)
+    data = paginator.get_paginated_response(serializer.data).data
+    cache.set(cache_key, data, events_cache.EVENTS_LIST_TTL)
+    return Response(data)
 
 
 @api_view(['GET', 'DELETE'])

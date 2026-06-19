@@ -99,7 +99,35 @@ Newspaper aesthetic — serif fonts, cream/ink palette, column rules. No gradien
 ## Quick Start
 
 ```bash
-cd theCommonsWeb && npm install && npm run dev
+cd theCommonsWeb && pnpm install && pnpm dev
 ```
 
 Env vars: see `.env.example`. Needs `DATABASE_URL` (Neon) and Better Auth vars to run auth.
+
+> pnpm-managed — `npm install` fails on the symlinked store. Use pnpm everywhere.
+
+## Testing
+
+Vitest + React Testing Library, two tiers selected by filename:
+
+| Tier | File suffix | Environment | Use for |
+|------|-------------|-------------|---------|
+| fast | `*.fast.test.ts(x)` | `node` (no jsdom) | pure logic — services, URL builders, mappers |
+| db   | `*.db.test.ts(x)`   | `jsdom`            | hooks/components — anything that renders or uses TanStack Query |
+
+```bash
+pnpm test          # both tiers, single run
+pnpm test:fast     # fast tier only (no jsdom)
+pnpm test:db       # db tier only (jsdom + jest-dom matchers)
+pnpm test:watch    # watch mode
+```
+
+Type-checking is separate and still happens via `pnpm build` — the runner does not replace it.
+
+Conventions:
+- Co-locate tests in a `__tests__/` folder next to the code under test.
+- db-tier hook/component tests wrap in a fresh `QueryClient` via the `renderWithClient` /
+  `renderHookWithClient` helpers in [`vitest.setup.ts`](vitest.setup.ts) (retries off so error
+  paths resolve instead of hanging).
+- Mock the network with `vi.stubGlobal('fetch', …)`; let unmocked URLs throw so a missed mock
+  is loud. No test should hit a real server.

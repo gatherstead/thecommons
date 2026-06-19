@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     "events.apps.EventsConfig",
     "ingestion.apps.IngestionConfig",
     "broadcast.apps.BroadcastConfig",
+    "django_celery_beat",
 ]
 
 MIDDLEWARE = [
@@ -116,6 +117,26 @@ BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "false").lo
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
+
+# ── Redis / Celery ───────────────────────────────────────────────────────────
+# One self-hosted Redis: DB 0 = broker + result backend, DB 1 reserved for a
+# future Django cache (not wired yet). Prod sets a password-protected URL in .env.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_TASK_ALWAYS_EAGER = False  # tests override via @override_settings
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_TIMEZONE = "UTC"
+
+# Read-endpoint cache on Redis DB 1 (broker is DB 0). dev.py swaps this for a
+# local-memory backend during tests so the suite needs no running Redis.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ.get("REDIS_CACHE_URL", "redis://localhost:6379/1"),
+    }
+}
 
 BETTER_AUTH_JWKS_URL = os.environ.get('BETTER_AUTH_JWKS_URL', '')
 BETTER_AUTH_ISSUER = os.environ.get('BETTER_AUTH_ISSUER', '')

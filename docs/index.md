@@ -9,6 +9,7 @@ Guides and references beyond the root-level docs. Each file is a deep dive on a 
 | [safety-scoring.md](safety-scoring.md) | How `safety_scorer.py` works, threshold tuning | Adjusting safety scoring or ingestion quality |
 | [dev-db-isolation.md](dev-db-isolation.md) | Neon dev branch setup — isolating local dev from prod DB | Setting up a dev environment or running migrations |
 | [broadcast-handoff.md](broadcast-handoff.md) | Manual-review path: recipe layer, browser extension, SPA wiring, auto-spawn worker | Working on broadcast captcha sites or the extension |
+| [redis-celery-handoff.md](redis-celery-handoff.md) | Redis + Celery setup: broker/cache, worker + beat services, task conventions | Adding async tasks, scheduled jobs, or touching the worker |
 
 ## Root-level docs
 

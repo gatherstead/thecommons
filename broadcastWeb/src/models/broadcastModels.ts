@@ -83,7 +83,7 @@ export interface JobTarget {
 
 export interface JobDetail {
   job_id: string;
-  status: "queued" | "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed" | "canceled";
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

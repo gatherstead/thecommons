@@ -1,9 +1,21 @@
-# Broadcast — Manual-Review Handoff
+# Broadcast — Review Console & Manual-Review Handoff
 
-Covers the human-in-the-loop submission path added on `arya/broadcast-feature`,
-plus three related fixes (dry-run captcha status, timezone, auto-spawn worker).
-Background on the broadcast feature itself: `DESIGN_BROADCAST.md`,
-`backendServer/broadcast/`.
+Covers the review-first submission console and the human-in-the-loop manual-review
+path added on `arya/broadcast-feature`, plus three related fixes (dry-run captcha
+status, timezone, auto-spawn worker). Background on the broadcast feature itself:
+`DESIGN_BROADCAST.md`, `backendServer/broadcast/`.
+
+## Review-first console (fill → review → submit)
+
+Every broadcast now starts as a **dry-run fill**: the worker fills each target's
+form (and screenshots it) but never submits. In the SPA's Progress panel each
+straight-through site then shows a light-green **Ready** badge with a **Submit**
+(real send) and **Screenshot** (review the fill) action; a **Submit all ready**
+button sits above the list. Captcha sites land **Needs manual** (yellow) and use
+the extension path below. Submitting optimistically flips the badge to dark-green
+**Submitted**; a real failure overrides to red **Error**. A **Stop all jobs**
+button cancels the in-flight job. This replaces the old single auto-submit button
+and the dry-run checkbox — fill-first makes a separate toggle redundant.
 
 ## The problem it solves
 
@@ -92,6 +104,28 @@ SPA already holds. Mirrors `job_screenshot` gating:
 - 409 — target status ≠ `needs_manual`
 - 200 — `adapter.recipe(event_from_submission(submission))`
 
+## Backend: submission control
+
+Two endpoints drive the review console (both POST, gated by the access-code
+header/body, rate-limited 10/m, 404 on unknown job):
+
+- `POST /broadcast/jobs/<job_id>/submit-real` (`views.job_submit_real`,
+  `services.submit_real_targets`) — promotes the given `site_keys` from
+  `dry_run=True` to a real submission: sets them back to `pending`, clears
+  error/url/screenshot, and re-queues the job. Only touches targets still in
+  dry-run, so an already-real target can't be re-sent. Body `{site_keys: [...]}`;
+  returns `{job_id, submitted}`.
+- `POST /broadcast/jobs/<job_id>/cancel` (`views.job_cancel`,
+  `services.cancel_submission`) — skips every still-`pending` target and marks the
+  submission `canceled` (new submission status, migration `0004`). `claim_next`
+  only picks `queued`, so a canceled job is never started. Returns
+  `{job_id, status, skipped}`.
+
+`runner.run_submission` re-fetches `submission.status` between targets and stops
+early when it sees `canceled`; a post-loop guard keeps a mid-run cancel from being
+clobbered by the normal done/failed write. The site already in-flight finishes;
+remaining pending targets are skipped.
+
 ## Browser extension — `broadcastExtension/`
 
 Buildless plain-JS MV3 (no bundler). **Dormant** until the SPA messages it (no
@@ -112,15 +146,43 @@ static content scripts).
 
 ## SPA — `broadcastWeb/`
 
-- `models/broadcastModels.ts` — `Recipe` / `RecipeField` types.
-- `services/broadcastApi.ts` — `getManualRecipe(accessCode, jobId, siteKey)`.
+- `models/broadcastModels.ts` — `Recipe` / `RecipeField` types; `JobDetail.status`
+  now includes `canceled`.
+- `services/broadcastApi.ts` — `getManualRecipe`, plus `submitReal(accessCode,
+  jobId, siteKeys)` and `cancelJob(accessCode, jobId)`.
 - `hooks/useExtension.ts` — pings `VITE_BROADCAST_EXTENSION_ID` on load
-  (`installed`); `sendFill()` relays the recipe. Degrades to "not installed"
+  (`installed`); `sendFill()` relays the recipe; `recheck()` re-pings once/sec for
+  ~60s. The install link calls `recheck()`, so every install link flips to
+  **Manual review** the moment the user finishes installing — no SPA reload (one
+  shared `installed` state backs the whole list). Degrades to "not installed"
   off-Chromium.
-- `components/JobProgress.tsx` — `needs_manual` targets render **Manual review**
-  (fetch recipe → `sendFill`) when installed, else an install link. On click the
-  target is shown **"Event submitted"** optimistically — pure client state, since
-  there's no backend success path (the poller keeps reporting `needs_manual`).
+- `components/JobProgress.tsx` — a `displayStatus(t)` helper maps each target to
+  `ready | submitted | error | needs_manual | pending | in_progress | skipped`
+  from `t.status` + `t.dry_run` + optimistic local sets. Ready rows render
+  **Submit** (→ `onSubmitReal`) and **Preview fill** (the dry-run `before-submit`
+  screenshot); a **Submit all ready** button sits above the list. Real-submitted
+  rows (`succeeded` + `!dry_run`) render **View confirmation** — the adapter's
+  `after-submit` capture of the site's "thank you for submitting" page — which
+  replaced the old `external_url` **listing** link. The two screenshots are
+  deliberately labelled differently (Preview fill vs. View confirmation) so the
+  filled-form review and the post-submit receipt aren't confused. `needs_manual`
+  rows keep the **Manual review** / install path (optimistic "Submitted") and a
+  **Screenshot** of where the run stalled. A real `failed` overrides any optimism
+  to **Error**. When every non-skipped target reaches **Submitted**, a warm
+  `.job-complete` acknowledgement closes out the list.
+- `App.tsx` — owns the console: a stubbed **Verify** button beside the access code
+  (dims the form via `form-dim` and gates Preview until verified — no backend yet);
+  the initial broadcast forced to dry-run ("Fill & review N calendars", black
+  `.dark` button); `handleSubmitReal` / `handleCancel` mirror `handleRetry`; a
+  **Stop all jobs** (`.danger`) button while the job is active; a bottom **Submit
+  another event** that resets every field except the access code; a disabled **AI
+  Autofill** section between Access and The Event; masthead title **BROADCAST
+  SYNDICATE**.
+- **Reload persistence** — the whole page (incl. the access code, by request) is
+  saved to `localStorage` (`broadcast:state:v1`) so a reload restores work and
+  resumes polling an in-flight job. Once the job is terminal
+  (`done`/`failed`/`canceled`) the key is cleared, so reloading a finished
+  broadcast starts from a clean slate.
 
 ## Related fixes
 
@@ -152,7 +214,11 @@ third-party sites — only run it deliberately.** Use it to catch DOM drift.
 
 - `broadcast/tests/test_recipe.py` — recipe shape, honeypot omission, weekender
   conditional times, image-field tracking, timezone (no DB).
-- `broadcast/tests/test_api.py::ManualRecipeTest` — endpoint gating (200/409/403/404).
+- `broadcast/tests/test_api.py::ManualRecipeTest` — recipe endpoint gating (200/409/403/404).
+- `broadcast/tests/test_api.py::SubmitRealTest` — promote dry→real & re-queue,
+  skip already-real targets, 400/403/404.
+- `broadcast/tests/test_api.py::CancelJobTest` — skip pending + mark canceled,
+  leave finished targets alone, no-op on a done job, 403/404.
 - Run: `uv run python manage.py test broadcast`. (Neon test DB: if a prior run
   left a stale session blocking the drop, terminate it via `pg_terminate_backend`
   on `test_neondb`, or use `--keepdb`. See `project_gotchas` memory.)
@@ -165,9 +231,13 @@ third-party sites — only run it deliberately.** Use it to catch DOM drift.
   `hooks/useExtension.ts`; pinned `key` in `manifest.json` (see extension README).
 - Verify `triangle_on_the_cheap` `submit_selector` (`#gform_submit_button_5`)
   against a `capture_broadcast_form` dump.
+- **Access-code Verify** is a client-only stub (marks verified when the field is
+  non-empty); there's no `verify` endpoint yet — wire one if real validation
+  should gate Preview.
 
 ## Out of scope (v1)
 
-Firefox; a backend success-report API / DB status flip; porting the full
-server-side imperative logic into JS beyond the hardcoded select2/terms drivers;
-the other 8 adapters (extend the same `recipe_fields` pattern later).
+Firefox; a backend success-report API / DB status flip for the manual (captcha)
+path — the extension submit stays client-optimistic; porting the full server-side
+imperative logic into JS beyond the hardcoded select2/terms drivers; the other 8
+adapters (extend the same `recipe_fields` pattern later).

@@ -79,6 +79,26 @@ export const retryJob = (
     site_keys: siteKeys,
   });
 
+// Promote dry-run targets to a real submission within an existing job. The
+// backend flips dry_run=false and re-queues only the sites still in dry run.
+export const submitReal = (
+  accessCode: string,
+  jobId: string,
+  siteKeys: string[],
+): Promise<{ job_id: string; submitted: number }> =>
+  post(`/broadcast/jobs/${jobId}/submit-real`, {
+    access_code: accessCode,
+    site_keys: siteKeys,
+  });
+
+// Stop a job: the backend skips pending targets and marks it canceled so the
+// worker won't pick up the remaining sites.
+export const cancelJob = (
+  accessCode: string,
+  jobId: string,
+): Promise<{ job_id: string; status: string; skipped: number }> =>
+  post(`/broadcast/jobs/${jobId}/cancel`, { access_code: accessCode });
+
 export const getManualRecipe = async (
   accessCode: string,
   jobId: string,

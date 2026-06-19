@@ -1,7 +1,7 @@
 // Detects the Commons Broadcast browser extension and relays fill requests to
 // it. The extension is only reachable from Chromium browsers where it's
 // installed; everything degrades gracefully to "not installed" elsewhere.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Recipe } from "../models/broadcastModels";
 
@@ -36,12 +36,20 @@ function getRuntime(): ChromeRuntime | undefined {
 export interface ExtensionState {
   installed: boolean;
   extensionId: string | undefined;
+  // Begin polling for the extension (once/sec for ~60s). Call after sending the
+  // user to install it; resolves the moment a ping succeeds.
+  recheck: () => void;
 }
+
+const POLL_INTERVAL_MS = 1000;
+const POLL_ATTEMPTS = 60;
 
 export function useExtension(): ExtensionState {
   const [installed, setInstalled] = useState(false);
+  const installedRef = useRef(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  const ping = useCallback((): void => {
     const runtime = getRuntime();
     if (!runtime || !EXTENSION_ID) return;
     try {
@@ -49,14 +57,39 @@ export function useExtension(): ExtensionState {
         // Reading lastError suppresses the "no receiving end" console error
         // Chrome logs when the extension isn't installed.
         const err = getRuntime()?.lastError;
-        if (!err && response?.ok) setInstalled(true);
+        if (!err && response?.ok) {
+          installedRef.current = true;
+          setInstalled(true);
+        }
       });
     } catch {
       /* not a Chromium runtime — treat as not installed */
     }
   }, []);
 
-  return { installed, extensionId: EXTENSION_ID };
+  const recheck = useCallback(() => {
+    if (installedRef.current || pollRef.current) return;
+    let attempts = 0;
+    ping();
+    pollRef.current = setInterval(() => {
+      attempts += 1;
+      if (installedRef.current || attempts >= POLL_ATTEMPTS) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        return;
+      }
+      ping();
+    }, POLL_INTERVAL_MS);
+  }, [ping]);
+
+  useEffect(() => {
+    ping();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [ping]);
+
+  return { installed, extensionId: EXTENSION_ID, recheck };
 }
 
 export function sendFill(extensionId: string, recipe: Recipe): Promise<boolean> {

@@ -79,6 +79,67 @@ sudo systemctl restart nextjs
 sudo journalctl -u nextjs -n 50
 ```
 
+### redis (Celery broker + cache)
+
+- **Install:** `sudo apt install redis-server` (systemd service `redis-server`).
+- **Config:** `/etc/redis/redis.conf` — `bind 127.0.0.1 -::1`, `requirepass <pass>`,
+  `maxmemory 512mb`, `maxmemory-policy allkeys-lru`.
+- Bound to localhost and password-protected; the password lives only in
+  `backendServer/.env` (`REDIS_URL` / `REDIS_CACHE_URL`), never in git.
+- One instance, two logical DBs: **DB 0** = Celery broker + results, **DB 1** =
+  read-endpoint cache (`/events/`, towns, categories).
+
+```
+sudo systemctl status redis-server
+redis-cli -a '<password>' PING        # → PONG
+```
+
+### celery / celerybeat (async tasks)
+
+- **Service files:** `/etc/systemd/system/celery.service` (worker) and
+  `/etc/systemd/system/celerybeat.service` (beat). Templates live in `deploy/`.
+- Both run as `ubuntu` from `backendServer/` via `/snap/bin/uv run celery ...`,
+  read `backendServer/.env`, and restart on failure. Worker concurrency = 2 (tune
+  after observing load); beat uses django-celery-beat's DatabaseScheduler. Schedules
+  are seeded by data migrations and then editable live in the admin — see
+  `docs/redis-celery-handoff.md` ("Beat schedules"). Run exactly one beat process.
+
+```
+sudo systemctl status celery celerybeat
+sudo systemctl restart celery celerybeat
+sudo journalctl -u celery -n 50
+sudo journalctl -u celerybeat -n 50
+```
+
+First-time install:
+
+```bash
+cd /home/ubuntu/thecommons
+sudo cp deploy/celery.service deploy/celerybeat.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now celery celerybeat
+```
+
+**Retire the OS-cron entries (one-time, after beat is confirmed firing).** Beat now
+owns the ingestion and weekly-digest schedules (seeded by `ingestion/migrations/
+0007_seed_ingest_beat.py` and `events/migrations/0015_seed_digest_beat.py`). Once you've
+deployed this code, run `migrate`, restarted the services, and confirmed beat fires
+(`sudo journalctl -u celerybeat -f`), remove the now-duplicate `crontab -l` lines so the
+jobs don't run twice:
+
+```cron
+# DELETE these two lines (TZ=America/New_York):
+0 4 * * *  cd /opt/thecommons/backendServer && /usr/bin/uv run python manage.py ingest_events       >> /var/log/thecommons/ingest.log 2>&1
+0 18 * * 0 cd /opt/thecommons/backendServer && /usr/bin/uv run python manage.py send_weekly_digest  >> /var/log/thecommons/digest.log 2>&1
+```
+
+```bash
+crontab -e          # remove the two lines above
+```
+
+The `ingest_events` and `send_weekly_digest` management commands still exist as manual
+triggers (`send_weekly_digest` now enqueues the Celery fan-out).
+
 ### nginx
 
 - **Config:** `/etc/nginx/sites-available/thecommons` (symlinked into `sites-enabled/`)
@@ -98,6 +159,45 @@ sudo tail -20 /var/log/nginx/error.log
 
 ---
 
+## Health check
+
+One command prints a scannable report of the whole box — RAM/disk, every systemd
+unit, Redis, Postgres, the Celery worker, and whether the beat schedule is firing:
+
+```bash
+cd /home/ubuntu/thecommons
+bash deploy/healthcheck.sh
+bash deploy/healthcheck.sh --no-color | tee /tmp/health.log   # clean for piping/logs
+```
+
+It checks, with ✓/!/✗:
+
+- **RAM / disk** — percent used, warn/fail at configurable thresholds.
+- **Services** — `systemctl is-active` for `redis-server`, `celery`, `celerybeat`,
+  `gunicorn`, `nextjs`, `broadcast-worker`.
+- **Cron** — flags leftover OS-cron `ingest_events` / `send_weekly_digest` lines
+  (they would double-run now that beat owns those schedules — see Celery section above).
+- **Application** (via `manage.py healthcheck`) — Postgres `SELECT 1`, Redis broker
+  ping (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and
+  each `PeriodicTask` (enabled + last-run freshness: daily within ~25h, weekly within ~8d).
+
+Exits **non-zero** if any critical check fails (services down, Redis/DB unreachable,
+no worker, a seeded beat task missing/disabled), so it can later feed monitoring.
+Stale last-runs and never-run tasks are warnings, not failures.
+
+Design: a bash orchestrator (`deploy/healthcheck.sh`) does the system-level checks
+and colors; it delegates app-level introspection to the Django command
+(`events/management/commands/healthcheck.py`), running it from `backendServer/` with
+`.env` loaded exactly as the systemd units do.
+
+Tunables (env vars): `RAM_WARN`/`RAM_FAIL` (default 80/95), `DISK_WARN`/`DISK_FAIL`
+(80/95), `CELERY_TIMEOUT` (1.0s), `UV_BIN` (default `uv`; the VM has it at
+`/snap/bin/uv`, so run with `UV_BIN=/snap/bin/uv bash deploy/healthcheck.sh` if `uv`
+isn't on `PATH`). The Django command also runs standalone:
+`uv run python manage.py healthcheck [--json] [--celery-timeout N]`.
+
+---
+
 ## Package Managers
 
 - **Python:** `uv` (installed via `sudo snap install astral-uv --classic`). Never use `pip` directly. Use `uv sync` to install deps and `uv run python manage.py ...` to run management commands.
@@ -106,6 +206,21 @@ sudo tail -20 /var/log/nginx/error.log
 ---
 
 ## Deploying Updates
+
+**Deploys are automated.** On every push to `main`, GitHub Actions runs CI
+(`.github/workflows/ci.yml`) and, once all three test jobs pass, a gated `deploy`
+job SSHes into the VM and runs the full sequence below — `git pull` → `uv sync` →
+`migrate` → `collectstatic` → both frontend `pnpm install`/`build` → restart
+gunicorn, nextjs, celery, celerybeat, broadcast-worker. The job authenticates with
+the `ORACLE_*` repo secrets from 16.13 and pins the host key by fingerprint. A
+failing test on `main` blocks the deploy.
+
+> Migration safety: the workflow runs `migrate` unguarded, so a destructive
+> migration would apply automatically. A "review migrations before deploy" gate is
+> not yet implemented.
+
+The manual steps below remain the source of truth for the sequence and are the
+fallback when deploying by hand (e.g. CI is down, or a one-off hotfix).
 
 ### Backend changes
 
@@ -117,6 +232,7 @@ uv sync                                      # only needed if pyproject.toml cha
 uv run python manage.py migrate              # only needed if models changed
 uv run python manage.py collectstatic --noinput   # only needed if static files changed
 sudo systemctl restart gunicorn
+sudo systemctl restart celery celerybeat     # only if task code or deps changed
 ```
 
 ### Frontend changes
@@ -152,6 +268,8 @@ BETTER_AUTH_AUDIENCE=
 BREVO_API_KEY=
 DIGEST_FROM_EMAIL=digest@thecommons.town
 SITE_URL=https://thecommons.town
+REDIS_URL=redis://:<password>@127.0.0.1:6379/0   # Celery broker + results (DB 0)
+REDIS_CACHE_URL=redis://:<password>@127.0.0.1:6379/1   # read-endpoint cache (DB 1)
 ```
 
 ### `theCommonsWeb/.env.local`
@@ -262,3 +380,4 @@ sudo netfilter-persistent save
 | 400 on `/events/` from browser | `NEXT_PUBLIC_API_BASE_URL` wrong or build stale | Check `.env.local`, rebuild with `pnpm run build` |
 | gunicorn socket permission denied | Socket path outside `RuntimeDirectory` | Verify `ExecStart` uses `unix:/run/gunicorn/gunicorn.sock` |
 | Django admin has no CSS | `collectstatic` not run or nginx `/static/` alias wrong | `uv run python manage.py collectstatic --noinput` |
+| Celery worker won't start / can't reach broker | `REDIS_URL` missing, wrong password, or Redis down | `redis-cli -a '<pass>' PING`; `sudo journalctl -u celery -n 50` |

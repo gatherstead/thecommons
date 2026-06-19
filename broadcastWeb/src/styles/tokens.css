@@ -13,6 +13,15 @@
   --color-border-light: #c8c3b8;
   --color-accent: #8b0000;
 
+  /* Status tints — muted to suit the newsprint palette */
+  --color-ready-bg: #e3eede;
+  --color-ready-fg: #2f5d33;
+  --color-submitted-bg: #1f5c2e;
+  --color-submitted-fg: #f4f1eb;
+  --color-warning-bg: #f6e8c4;
+  --color-warning-fg: #6b5310;
+  --color-warning-border: #b8860b;
+
   /* Readable serif stack -- Georgia is on every system, no network requests */
   --font-headline: Georgia, "Times New Roman", Times, serif;
   --font-body: Georgia, "Times New Roman", Times, serif;

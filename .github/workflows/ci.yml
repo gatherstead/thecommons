@@ -146,12 +146,15 @@ jobs:
           echo "--- live host keys presented by the VM (all types) ---"
           ssh-keyscan -t rsa,ecdsa,ed25519 "$HOST" 2>/dev/null | ssh-keygen -lf - || true
           echo "::endgroup::"
-          # Pick the ED25519 fingerprint specifically. The old `awk '{print $2}'`
-          # concatenated every line's fingerprint when the secret had >1 key/comment
-          # line, producing a multiline value that never matched (host key mismatch).
-          fp="$(printf '%s\n' "$KNOWN_HOSTS" | ssh-keygen -lf - | awk '/ED25519/{print $2; exit}')"
+          # drone-ssh (Go crypto/ssh) negotiates host keys ECDSA > RSA > ED25519, so
+          # pin whichever the VM will actually present in that order. Pinning ED25519
+          # failed because the VM also offers ECDSA, which Go prefers. ORACLE_KNOWN_HOSTS
+          # must therefore contain all key types: ssh-keyscan $HOST (no -t).
+          fp="$(printf '%s\n' "$KNOWN_HOSTS" | ssh-keygen -lf - | awk '
+            /ECDSA/{e=$2} /RSA/{r=$2} /ED25519/{d=$2}
+            END{ if (e) print e; else if (r) print r; else print d }')"
           if [ -z "$fp" ]; then
-            echo "::error::No ED25519 fingerprint found in ORACLE_KNOWN_HOSTS. Set it to the single line from: ssh-keyscan -t ed25519 $HOST"
+            echo "::error::No host fingerprint found in ORACLE_KNOWN_HOSTS. Set it to the full output of: ssh-keyscan $HOST"
             exit 1
           fi
           echo "Using fingerprint: $fp"

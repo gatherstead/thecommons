@@ -1,0 +1,36 @@
+# Broadcast SPA server block — ADD to the existing single config file
+# /etc/nginx/sites-available/thecommons (do NOT create a separate
+# sites-available file; the repo convention is one file, many server blocks).
+#
+# PREREQUISITES (in order):
+#   1. Reissue the Cloudflare origin cert to cover the subdomain — wildcard
+#      `*.thecommons.town` (or `thecommons.town, *.thecommons.town`); replace
+#      /etc/ssl/cloudflare/thecommons.town.{pem,key}. Without this the
+#      subdomain 526s at Cloudflare.
+#   2. Cloudflare DNS: A record `broadcast` → 129.80.229.41, proxied (orange
+#      cloud) — A record like the others, not a CNAME.
+#   3. broadcastWeb built on the VM: cd broadcastWeb && pnpm install && pnpm run build
+# Then: sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 443 ssl;
+    server_name broadcast.thecommons.town;
+
+    ssl_certificate     /etc/ssl/cloudflare/thecommons.town.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/thecommons.town.key;
+
+    # Static SPA — no Node process behind this.
+    root /home/ubuntu/thecommons/broadcastWeb/dist;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+}
+
+# The HTTP→HTTPS redirect block already catches port 80 for *.thecommons.town
+# if it uses a wildcard server_name; if it lists hostnames explicitly, add
+# broadcast.thecommons.town there too.
+#
+# The API needs no new server block — the form POSTs to api.thecommons.town,
+# which already proxies to gunicorn; the broadcast routes are plain Django URLs.

@@ -51,19 +51,12 @@
     This permanently removes approved events from the Staged Events table. Make sure you have reviewed them first.
   </div>
 
-  {% if result %}
-    {% if result.removed == 0 %}
-      <div class="result empty">No approved staged events found — nothing to publish.</div>
-    {% else %}
-      <div class="result success">
-        <strong>Done.</strong>
-        Published <strong>{{ result.published }}</strong> event{{ result.published|pluralize }} to the live table.
-        {% if result.already_published %}
-          {{ result.already_published }} were already published.
-        {% endif %}
-        Removed <strong>{{ result.removed }}</strong> staged event{{ result.removed|pluralize }}.
-      </div>
-    {% endif %}
+  {% if queued %}
+    <div class="result success">
+      <strong>Publishing in the background.</strong>
+      The job has been queued — refresh this page in a moment, then check the Events list
+      to confirm the approved events landed.
+    </div>
   {% endif %}
 
   <form method="post">

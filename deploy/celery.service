@@ -1,0 +1,26 @@
+# Celery worker — copy to /etc/systemd/system/celery.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now celery
+#
+# Mirrors the gunicorn/broadcast-worker pattern (runs as ubuntu, restart on
+# failure). Drains the Redis broker (DB 0, REDIS_URL in .env) and runs tasks
+# autodiscovered from each app's tasks.py. Concurrency=2 is a guess for the
+# 1 OCPU / 6 GB VM and a network-bound task mix (LLM + email) — tune after
+# observing prod load.
+
+[Unit]
+Description=The Commons Celery worker
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thecommons/backendServer
+EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
+ExecStart=/snap/bin/uv run celery -A backend worker -l info --concurrency=2
+Restart=on-failure
+RestartSec=5
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

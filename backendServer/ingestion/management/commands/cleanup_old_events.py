@@ -29,5 +29,3 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"Cleanup: removed {staged_deleted} staged events and {raw_deleted} raw events.\n"
         ))
-
-        return staged_deleted, raw_deleted

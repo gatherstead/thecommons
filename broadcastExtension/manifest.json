@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "The Commons — Broadcast",
+  "version": "0.1.0",
+  "description": "Autofills community event calendars for manual review. You solve the captcha and click submit.",
+  "permissions": ["scripting", "tabs", "storage"],
+  "host_permissions": [
+    "https://www.trumba.com/*",
+    "https://triangleonthecheap.com/*",
+    "https://thetriangleweekender.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:5173/*",
+      "http://127.0.0.1:5173/*",
+      "https://broadcast.thecommons.example/*"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "The Commons — Broadcast"
+  }
+}

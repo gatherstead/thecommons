@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch cancels in-flight runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (django)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backendServer
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SETTINGS_MODULE: backend.settings.test
+      # dev.py hardcodes PORT 5432; test.py strips "-pooler" (no-op for localhost)
+      # and stubs every other external credential, so DATABASE_URL is all CI needs.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Tests (fast tier, no DB)
+        run: uv run python manage.py test --tag=fast
+      - name: Tests (db tier, postgres)
+        run: uv run python manage.py test --tag=db
+
+  frontend-commons:
+    name: frontend (theCommonsWeb)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: theCommonsWeb
+    # `next build` loads the Better Auth route + client at build time: src/lib/db.ts
+    # throws if DATABASE_URL is unset, and Better Auth parses the *_BETTER_AUTH_URL
+    # values as URLs during prerender. pg.Pool connects lazily and NEXT_PUBLIC_* in
+    # CI are discarded (the real build runs on the VM from .env.local), so these are
+    # build-only placeholders — never real creds, nothing secret.
+    env:
+      DATABASE_URL: postgres://build:build@localhost:5432/build
+      BETTER_AUTH_SECRET: build-only-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_THE_COMMONS_API_KEY: build-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1   # pinned for reproducibility; pnpm 11 requires Node >=22.13
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: theCommonsWeb/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check (build)
+        run: pnpm build
+      - name: Tests (fast tier)
+        run: pnpm test:fast
+      - name: Tests (db tier)
+        run: pnpm test:db
+
+  frontend-broadcast:
+    name: frontend (broadcastWeb)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: broadcastWeb
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1   # pinned for reproducibility; pnpm 11 requires Node >=22.13
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: broadcastWeb/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check (build)
+        run: pnpm build
+      - name: Tests (fast tier)
+        run: pnpm test:fast
+      - name: Tests (db tier)
+        run: pnpm test:db
+
+  # Gated deploy: runs only on push to main, only after all three test jobs pass.
+  # A failing test on main blocks deploy via `needs:`. Secrets are wired in 16.13
+  # (docs/16-12-vm-prep.md). Never trigger on pull_request — repo secrets must not
+  # reach fork PRs.
+  deploy:
+    name: deploy (oracle vm)
+    needs: [backend, frontend-commons, frontend-broadcast]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      # appleboy/ssh-action pins the host via a SHA256 `fingerprint`, not a
+      # known_hosts file. ORACLE_KNOWN_HOSTS is ssh-keyscan output, so derive the
+      # fingerprint from it here — this keeps real host-key verification instead of
+      # disabling StrictHostKeyChecking.
+      - name: Derive host fingerprint
+        id: fp
+        run: |
+          set -euo pipefail
+          fp="$(printf '%s\n' "${{ secrets.ORACLE_KNOWN_HOSTS }}" | ssh-keygen -lf - | awk '{print $2}')"
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          fingerprint: ${{ steps.fp.outputs.fingerprint }}
+          # Mirrors DEPLOY.md §Deploying Updates (validated dry-run in 16-12-vm-prep).
+          # uv is at /snap/bin (not on the non-interactive PATH); pnpm is a global
+          # npm bin already on PATH. set -e aborts on the first failure.
+          script: |
+            set -e
+            cd /home/ubuntu/thecommons
+            git pull origin main
+
+            cd backendServer
+            /snap/bin/uv sync
+            /snap/bin/uv run python manage.py migrate --noinput
+            /snap/bin/uv run python manage.py collectstatic --noinput
+
+            cd ../theCommonsWeb
+            pnpm install --frozen-lockfile
+            pnpm run build
+
+            cd ../broadcastWeb
+            pnpm install --frozen-lockfile
+            pnpm run build
+
+            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker
+            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker

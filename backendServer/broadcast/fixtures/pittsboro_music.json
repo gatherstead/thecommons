@@ -1,0 +1,24 @@
+{
+  "title": "International Dance Night @ The Plant",
+  "description": "An evening of live international music and social dancing at The Plant in Pittsboro. All skill levels welcome \u2014 instructors lead a beginner lesson at the top of the hour.",
+  "start_datetime": "2026-07-10T19:00:00-04:00",
+  "end_datetime": "2026-07-10T22:00:00-04:00",
+  "venue_name": "The Plant",
+  "address_line1": "220 Lorax Ln",
+  "city": "Pittsboro",
+  "state": "NC",
+  "zip": "27312",
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "music",
+    "community",
+    "nightlife"
+  ],
+  "event_url": "https://www.theplantnc.com/events/international-dance-night",
+  "price": "Free",
+  "is_free": true,
+  "organizer_name": "The Plant",
+  "contact_email": "events@theplantnc.com"
+}

@@ -1,0 +1,23 @@
+{
+  "title": "Plants Read Too Outdoor Book Festival",
+  "description": "A day-long outdoor book festival with local authors, readings, a used-book market, and kids' story hours under the trees.",
+  "start_datetime": "2026-09-12T10:00:00-04:00",
+  "end_datetime": "2026-09-12T17:00:00-04:00",
+  "venue_name": "The Plant",
+  "address_line1": "220 Lorax Ln",
+  "city": "Pittsboro",
+  "state": "NC",
+  "zip": "27312",
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "literary",
+    "festival",
+    "market"
+  ],
+  "event_url": "https://www.theplantnc.com/events/plants-read-too",
+  "price": "Free",
+  "is_free": true,
+  "organizer_name": "The Plant"
+}

@@ -1,45 +1,17 @@
-import uuid
-
-from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, tag
 from django.urls import reverse
-from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import BetterAuthUser, BusinessProfile, Tag, Town, UserProfile
+from events.models import BusinessProfile, Tag
+
+from .factories import make_town, make_user
 
 
+@tag('db')
 class BusinessAPITestCase(TestCase):
-    """The neon_auth `user` table is managed=False, so it is not created by the
-    normal test-DB setup. Build it here so BetterAuthUser rows can be inserted.
+    """neon_auth `user` is built once by NeonAuthTestRunner (backend/test_runner.py),
+    so no per-class schema setup is needed here.
     """
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        with connection.cursor() as cursor:
-            cursor.execute('CREATE SCHEMA IF NOT EXISTS neon_auth')
-        with connection.schema_editor() as editor:
-            editor.create_model(BetterAuthUser)
-
-    @classmethod
-    def tearDownClass(cls):
-        with connection.schema_editor() as editor:
-            editor.delete_model(BetterAuthUser)
-        super().tearDownClass()
-
-    def _make_user(self, user_type, email=None):
-        now = timezone.now()
-        user = BetterAuthUser.objects.create(
-            id=uuid.uuid4(),
-            name='Test',
-            email=email or f'{uuid.uuid4().hex}@example.com',
-            created_at=now,
-            updated_at=now,
-            user_type=user_type,
-        )
-        UserProfile.objects.create(user=user, user_type=user_type)
-        return user
 
     def _client_for(self, user):
         client = APIClient()
@@ -47,12 +19,12 @@ class BusinessAPITestCase(TestCase):
         return client
 
     def setUp(self):
-        self.carrboro = Town.objects.create(slug='carrboro', name='Carrboro')
-        self.chapelhill = Town.objects.create(slug='chapel-hill', name='Chapel Hill')
+        self.carrboro = make_town('carrboro', 'Carrboro')
+        self.chapelhill = make_town('chapel-hill', 'Chapel Hill')
 
-        self.business_user = self._make_user('BUSINESS')
-        self.venue_user = self._make_user('VENUE')
-        self.local_user = self._make_user('LOCAL')
+        self.business_user = make_user('BUSINESS')
+        self.venue_user = make_user('VENUE')
+        self.local_user = make_user('LOCAL')
 
     # ── listing ────────────────────────────────────────────────────────────
 
@@ -61,7 +33,7 @@ class BusinessAPITestCase(TestCase):
             user=self.business_user, business_name='Open Cafe', is_published=True
         )
         BusinessProfile.objects.create(
-            user=self._make_user('BUSINESS'), business_name='Hidden Co', is_published=False
+            user=make_user('BUSINESS'), business_name='Hidden Co', is_published=False
         )
 
         resp = self._client_for(self.venue_user).get(reverse('businesses'))
@@ -135,7 +107,7 @@ class BusinessAPITestCase(TestCase):
         url = reverse('business-detail', args=[business.uuid])
 
         # Another business user, and a venue, are both non-owners for writes.
-        other = self._client_for(self._make_user('BUSINESS'))
+        other = self._client_for(make_user('BUSINESS'))
         self.assertEqual(other.patch(url, {'business_name': 'x'}, format='json').status_code, 403)
         venue = self._client_for(self.venue_user)
         self.assertEqual(venue.delete(url).status_code, 403)
@@ -163,7 +135,7 @@ class BusinessAPITestCase(TestCase):
         a.service_area.add(self.carrboro)
 
         b = BusinessProfile.objects.create(
-            user=self._make_user('BUSINESS'), business_name='Chapel Eats', is_published=True
+            user=make_user('BUSINESS'), business_name='Chapel Eats', is_published=True
         )
         b.tags.add(food)
         b.service_area.add(self.chapelhill)

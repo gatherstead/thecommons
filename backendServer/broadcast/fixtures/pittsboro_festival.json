@@ -1,0 +1,21 @@
+{
+  "title": "Eyes Wide Open Juneteenth Festival",
+  "description": "A community Juneteenth celebration with live performances, art, food vendors, and family activities in downtown Pittsboro.",
+  "start_datetime": "2026-06-19T12:00:00-04:00",
+  "end_datetime": "2026-06-19T20:00:00-04:00",
+  "venue_name": "Downtown Pittsboro",
+  "address_line1": "1 Courthouse Cir",
+  "city": "Pittsboro",
+  "state": "NC",
+  "zip": "27312",
+  "locality": [
+    "pittsboro"
+  ],
+  "categories": [
+    "festival",
+    "community",
+    "arts"
+  ],
+  "price": "Free",
+  "is_free": true
+}

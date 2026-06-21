@@ -1,12 +1,11 @@
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
-from django.core.management import call_command
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from ingestion.services import publish_all_approved
+from ingestion.tasks import publish_all_approved_task, run_ingestion_pipeline
 
 
 @staff_member_required
@@ -23,23 +22,24 @@ def admin_docs(request):
 
 @staff_member_required
 def publish_approved_admin(request):
-    """Admin page: manually publish all approved staged events."""
-    result = None
+    """Admin page: manually publish all approved staged events (runs in the background)."""
+    queued = False
     if request.method == 'POST':
-        result = publish_all_approved()
-    return render(request, 'docs/publish_approved.html', {'result': result})
+        publish_all_approved_task.delay()
+        queued = True
+    return render(request, 'docs/publish_approved.html', {'queued': queued})
 
 
 @csrf_exempt
 @require_GET
 def cron_ingest(request):
-    """Endpoint for Vercel cron to trigger the ingestion pipeline."""
+    """Endpoint for cron to trigger the ingestion pipeline (runs async on a worker)."""
     auth = request.headers.get('Authorization', '')
     if auth != f"Bearer {settings.CRON_SECRET}":
         return JsonResponse({'error': 'unauthorized'}, status=401)
 
-    call_command('ingest_events')
-    return JsonResponse({'status': 'ok'})
+    result = run_ingestion_pipeline.delay()
+    return JsonResponse({'status': 'queued', 'task_id': result.id}, status=202)
 
 
 @csrf_exempt
@@ -55,5 +55,5 @@ def publish_approved_events(request):
     if auth != f"Bearer {settings.THE_COMMONS_API_KEY}":
         return JsonResponse({'error': 'unauthorized'}, status=401)
 
-    result = publish_all_approved()
-    return JsonResponse({'status': 'ok', **result})
+    result = publish_all_approved_task.delay()
+    return JsonResponse({'status': 'queued', 'task_id': result.id}, status=202)

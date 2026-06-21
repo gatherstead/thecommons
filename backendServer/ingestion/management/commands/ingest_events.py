@@ -1,6 +1,8 @@
 import logging
+import os
+from datetime import date
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.standardizer import standardize_all_unprocessed
@@ -39,6 +41,39 @@ class Command(BaseCommand):
             '--skip-autopublish', action='store_true',
             help='Skip auto-publishing safe events'
         )
+        parser.add_argument(
+            '--shard', type=str, default=None,
+            help=(
+                'Shard the source poll as N/M (e.g. 0/3). Only sources where '
+                'id %% M == N are polled. If omitted and INGEST_SHARD_COUNT is set '
+                'in the env, N is auto-computed as (day_of_year %% M).'
+            ),
+        )
+
+    def _resolve_shard(self, shard_arg):
+        """Parse --shard or fall back to INGEST_SHARD_COUNT env var. Returns (n, m) or None."""
+        if shard_arg:
+            try:
+                n_str, m_str = shard_arg.split('/')
+                n, m = int(n_str), int(m_str)
+            except ValueError:
+                raise CommandError(f"--shard must look like N/M (got {shard_arg!r})")
+            if m <= 0 or n < 0 or n >= m:
+                raise CommandError(f"--shard N/M requires 0 <= N < M and M > 0 (got {n}/{m})")
+            return (n, m)
+
+        m_env = os.environ.get('INGEST_SHARD_COUNT')
+        if m_env:
+            try:
+                m = int(m_env)
+            except ValueError:
+                raise CommandError(f"INGEST_SHARD_COUNT must be an integer (got {m_env!r})")
+            if m <= 1:
+                return None  # 1 (or less) disables sharding — poll everything.
+            n = date.today().timetuple().tm_yday % m
+            return (n, m)
+
+        return None
 
     def handle(self, *args, **options):
         self.stdout.write("Starting event ingestion pipeline...\n")
@@ -56,9 +91,11 @@ class Command(BaseCommand):
 
         # Step 1: Poll ICS feeds
         if not options['skip_poll']:
-            self.stdout.write("Step 1: Polling ICS sources...")
+            shard = self._resolve_shard(options.get('shard'))
+            shard_msg = f" (shard {shard[0]}/{shard[1]})" if shard else ""
+            self.stdout.write(f"Step 1: Polling ICS sources{shard_msg}...")
             try:
-                new_count = poll_all_ics_sources()
+                new_count = poll_all_ics_sources(shard=shard)
                 self.stdout.write(self.style.SUCCESS(f"  → {new_count} new raw events\n"))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))

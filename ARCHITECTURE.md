@@ -33,6 +33,7 @@ Both run on a single Oracle Cloud VM behind nginx; see [Deployment](#deployment)
 - **`Category`** — `slug` + `display_name`; distinct from `Tag`.
 - **`Event`** — UUID PK · title · town (FK, nullable) · date (indexed) · venue · description · price · photo · `tags` (M2M) · `categories` (M2M) · link · `is_verified` · `source_name` · `created_by` (FK → `BetterAuthUser`, null for pipeline-ingested events).
 - **`UserProfile`** — OneToOne with **`BetterAuthUser`** (not Django's `auth.User`) · `user_type` (LOCAL/BUSINESS/VENUE) · `primary_city` · `address` · `email_preference` (WEEKLY/MONTHLY/NEVER) · `tags` (M2M). Created automatically when Better Auth creates a user (see [Authentication](#authentication)).
+- **`BusinessProfile`** — OneToOne with **`BetterAuthUser`** · UUID · `business_name` · `description` · `tags` (M2M Tag) · `service_area` (M2M Town) · `contact_email` · `contact_phone` · `is_published` · timestamps.
 - **`NewsletterSubscriber`** — `email` · `frequency` (WEEKLY/MONTHLY) · `is_active` · `subscribed_at`. For non-account digest subscribers.
 
 #### Better Auth mirror models — `neon_auth` schema, **`managed = False`**
@@ -48,6 +49,8 @@ Better Auth (Next.js) owns these tables; Django maps them read-only for joins an
 - **`StagedEvent`** — LLM-standardized version awaiting admin review; status ∈ {pending, approved, rejected, duplicate}.
 
 ### Authentication
+
+**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts`, `src/hooks/useAuth.tsx`, `src/app/api/auth/set-password/route.ts`
 
 Auth is owned by **Better Auth running inside Next.js** — there are no Django login/signup endpoints. Django only *verifies* tokens Better Auth issues.
 
@@ -72,6 +75,8 @@ A user can secure their account later via `POST /api/auth/set-password` (`src/ap
 **`has_password` is derived, not stored.** Django computes it from the `BetterAuthAccount` mirror (`provider_id='credential'` with a non-null password) and returns it on `/auth/me` and `/events/me/profile`. The frontend uses it to drive security nudges (a banner when an account has no password; a red dot for incomplete business/venue profiles). No new column or migration.
 
 ### Ingestion Pipeline
+
+**Key files:** `ingestion/services.py`, `ingestion/standardizer.py`, `ingestion/safety_scorer.py`, `ingestion/deduplicator.py`, `ingestion/importers/ics_importer.py`
 
 ```
 EventSource (URL/feed)
@@ -100,8 +105,11 @@ Triggered via `POST /api/cron/ingest` (requires `CRON_SECRET` header) or the `py
 | GET/PATCH/DELETE | `/events/staged/{id}` | user | Manage one of your staged submissions |
 | GET/PATCH | `/auth/me` | user | Read / update the current user's profile (response includes derived `has_password`) |
 | POST | `/auth/subscribe` | — | Subscribe an email to the newsletter |
+| GET/POST | `/businesses` | user | List all published businesses / create a business profile |
+| GET | `/businesses/me` | user | Current user's business profile |
+| GET/PATCH/DELETE | `/businesses/{uuid}` | user | Read / update / delete a business profile |
 | POST | `/api/cron/ingest` | `CRON_SECRET` | Trigger ingestion pipeline (scheduled) |
-| POST | `/api/events/publish-approved` | — | Publish all approved staged events |
+| POST | `/api/events/publish-approved` | API key | Publish all approved staged events |
 
 > Login/signup/logout are handled by Better Auth in Next.js at `/api/auth/*` — including the lazy `POST /api/auth/enter` and `POST /api/auth/set-password` (see [Authentication](#authentication)).
 
@@ -115,6 +123,12 @@ Admin lives at `/admin/` (django-unfold). Pipeline and admin docs render as Djan
 - `send_test_digest --email <addr>` — render + send one test digest.
 
 These are scheduled via cron on the VM (see [Deployment](#deployment)).
+
+### Other Management Commands
+
+- `delete_user` — delete a user and cascade associated data.
+- `ingest_events` — run the full ingestion pipeline (also triggered via cron endpoint).
+- `cleanup_old_events` — remove expired events.
 
 ### Environment Variables (`backendServer/.env`)
 
@@ -136,7 +150,7 @@ BETTER_AUTH_AUDIENCE=
 # Brevo (email digests)
 BREVO_API_KEY=
 DIGEST_FROM_EMAIL=digest@thecommons.town
-SITE_URL=https://www.thecommons.town
+SITE_URL=https://thecommons.town
 ```
 
 ### Running Locally
@@ -178,11 +192,13 @@ src/
 │   │              # MiniCalendar, PageLayout, TagsBar, SectionSelector, TimeWindowSelector
 │   └── ui/        # Shared primitives (Badge, Button, Input, Modal, Select, Textarea, Link)
 ├── hooks/
-│   ├── useEvents.ts      # Main data hook: fetch events, filter state, past-event loading
-│   ├── useAuth.tsx       # Auth context: Better Auth session + Django profile + JWT; enter/login/setPassword, hasPassword
+│   ├── useEvents.ts      # Main data hook: TanStack queries (windows/pages/months), filter state
+│   ├── useAuth.tsx       # Auth context: Better Auth session + JWT; Django profile via ['profile'] query
+│   ├── useTowns.ts / useCategories.ts  # Static lists via useQuery
 │   ├── useToggleSet.ts   # Generic multi-select toggle state
 │   └── useClickOutside.ts
 ├── lib/
+│   ├── queryClient.ts      # TanStack Query client singleton (staleTime: Infinity — session-fresh caching)
 │   ├── auth.ts             # betterAuth() server config (Drizzle adapter, email+password; Google commented out; jwt + lazyAuth + nextCookies)
 │   ├── lazy-auth-plugin.ts # Custom plugin: POST /api/auth/enter (email-first passwordless login/signup)
 │   ├── auth-client.ts      # createAuthClient() — signIn/signUp/signOut/useSession/getSession
@@ -190,10 +206,12 @@ src/
 │   └── db.ts               # Drizzle + pg Pool (DATABASE_URL)
 ├── models/
 │   ├── eventsModels.ts   # FrontendEvent, BackendEvent, EventPayload, TownOption, CategoryOption, …
-│   └── authModels.ts     # AuthUser (with hasPassword), UserType, LoginPayload, EnterPayload, EnterResult
+│   ├── authModels.ts     # AuthUser (with hasPassword), UserType, LoginPayload, EnterPayload, EnterResult
+│   └── businessModels.ts # Business-related types
 ├── services/
 │   ├── eventService.ts   # getEvents, getTowns, getCategories, getMyEvents, create/update/delete event(s)
-│   └── profileService.ts # getProfile / updateProfile (via /auth/me)
+│   ├── profileService.ts # getProfile / updateProfile (via /auth/me)
+│   └── businessService.ts # Business profile API client
 ├── constants/tags.ts
 └── data/mockEvents.ts
 ```
@@ -205,9 +223,15 @@ Two view modes — **feed** (chronological list) and **calendar** — switchable
 **Routing** (App Router):
 - `/` — feed/calendar view (client)
 - `/about` — about page (server component, SEO metadata)
+- `/auth` — lazy signup/login flow (client)
+- `/auth/login` — direct login (client)
+- `/auth/signup` — direct signup (client)
 - `/dashboard` — your submitted events (client)
+- `/post` — submit new event, auth-gated (client)
 - `/profile` — view/edit profile (client)
+- `/events/[uuid]` — single event detail (client)
 - `/api/auth/[...all]` — Better Auth handler
+- `/api/auth/set-password` — secure a passwordless account
 
 **Event loading:** the feed requests future events by default; calendar requests all including past. A "See Past Events" control triggers a secondary fetch with `?include_past=true`.
 
@@ -249,12 +273,12 @@ npm run dev      # http://localhost:3000 (Turbopack)
 Both sub-projects run on a **single Oracle Cloud VM**:
 
 - **Host:** Ubuntu 24.04 · 1 OCPU ARM64 (aarch64) · 6 GB RAM
-- **nginx** — reverse proxy and TLS termination, routing by host/path to the two upstreams. TLS certificates via **Certbot** (Let's Encrypt).
-- **Django** — served by **gunicorn** on `127.0.0.1:8000`.
+- **nginx** — reverse proxy and TLS termination. TLS via **Cloudflare** origin certs (Full strict mode). Routes `thecommons.town` → Next.js, `api.thecommons.town` → Django, `www.thecommons.town` → 301 redirect to bare domain.
+- **Django** — served by **gunicorn** via unix socket (`unix:/run/gunicorn/gunicorn.sock`).
 - **Next.js** — `next start` on `127.0.0.1:3000`.
 - **Database** — managed Postgres on **Neon** (external; unchanged from before). Both apps connect over the network.
 - **Scheduled jobs** — cron on the VM: daily ingestion (`POST /api/cron/ingest` with `CRON_SECRET`, or `manage.py ingest_events`) and the email digests (`manage.py send_weekly_digest`).
 
-Production frontend domain: `https://www.thecommons.town`. Django is served on its own origin behind the same nginx; the backend's `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` and `BETTER_AUTH_JWKS_URL` are set to the production hostnames via env on the box (not committed).
+Production frontend domain: `https://thecommons.town`. Django API: `https://api.thecommons.town`. The backend's `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` and `BETTER_AUTH_JWKS_URL` are set to the production hostnames via env on the box (not committed). For full deployment details, see [`DEPLOY.md`](DEPLOY.md).
 
-> Legacy: `backendServer/vercel.json` and `build.sh` remain from the previous Vercel deployment and are no longer the source of truth for how the app runs.
+> Legacy: `backendServer/vercel.json`, `build.sh`, and `main.py` are dead artifacts from the previous Vercel deployment — ignore them.

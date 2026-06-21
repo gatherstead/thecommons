@@ -1,0 +1,21 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//The Commons Test//Fixtures//EN
+BEGIN:VEVENT
+UID:evt-001@test
+SUMMARY:Test Concert
+DESCRIPTION:A great show https://example.com/concert
+LOCATION:Cat's Cradle, Carrboro
+DTSTART:20990601T180000Z
+DTEND:20990601T200000Z
+URL:https://example.com/concert
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-002@test
+SUMMARY:Farmers Market
+DESCRIPTION:Fresh produce and crafts
+LOCATION:Town Commons
+DTSTART:20990602T090000Z
+DTEND:20990602T120000Z
+END:VEVENT
+END:VCALENDAR

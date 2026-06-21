@@ -1,0 +1,18 @@
+{
+  "folders": [
+    { "name": "backendServer", "path": "backendServer" },
+    { "name": "theCommonsWeb", "path": "theCommonsWeb" }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:backendServer}/.venv/bin/python",
+    "typescript.tsdk": "theCommonsWeb/node_modules/typescript/lib"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "dbaeumer.vscode-eslint",
+      "bradlc.vscode-tailwindcss",
+      "esbenp.prettier-vscode"
+    ]
+  }}

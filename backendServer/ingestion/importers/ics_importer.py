@@ -105,9 +105,19 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
     return new_events
 
 
-def poll_all_ics_sources():
-    """Poll all active ICS sources that are due for a refresh."""
+def poll_all_ics_sources(shard: tuple[int, int] | None = None):
+    """Poll all active ICS sources that are due for a refresh.
+
+    If `shard=(n, m)` is supplied, only sources where `id % m == n` are considered.
+    This lets cron spread polling across `m` days so each run only touches ~1/m of
+    the sources — load is even across the week and the per-source `poll_interval_hours`
+    throttle still guards against accidental double-polls.
+    """
     sources = EventSource.objects.filter(source_type='ics', active=True)
+    if shard is not None:
+        n, m = shard
+        sources = sources.extra(where=['id %% %s = %s'], params=[m, n])
+        logger.info(f"Sharded poll: only sources with id %% {m} == {n}")
 
     total_new = 0
     for source in sources:

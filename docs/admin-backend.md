@@ -205,7 +205,7 @@ Extended profile data attached to each Django user.
 Two backend endpoints exist outside the admin but are relevant to admin operations:
 
 ### `GET /api/cron/ingest`
-Triggers the full ingestion pipeline. Called automatically by Vercel's cron at 8 AM UTC daily.
+Queues the full ingestion pipeline. Runs automatically via Celery beat daily at 04:00 America/New_York; this endpoint queues it on demand.
 - **Auth:** `Authorization: Bearer <CRON_SECRET>`
 
 ### `POST /api/events/publish-approved`

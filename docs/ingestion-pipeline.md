@@ -24,7 +24,7 @@ ICS Source URL
   REST API  →  Frontend
 ```
 
-**Trigger:** Vercel cron job hits `GET /api/cron/ingest` every day at 8 AM UTC.
+**Trigger:** Celery beat runs the pipeline daily at 04:00 America/New_York (schedule `ingest-events-daily`, seeded by migration `ingestion/migrations/0007_seed_ingest_beat.py`). `GET /api/cron/ingest` (Bearer `CRON_SECRET`) queues it on demand.
 **Manual trigger:** Django admin → EventSources → select source → "Run ingestion pipeline" action.
 **CLI trigger:** `python manage.py ingest_events`
 
@@ -185,7 +185,7 @@ Approving a staged event immediately creates the corresponding `Event` in the da
 | `GEMINI_API_KEY` | `.env` | Google Gemini API access |
 | `CRON_SECRET` | `.env` | Bearer token to authenticate cron endpoint |
 | `DATABASE_URL` | `.env` | Neon PostgreSQL connection string |
-| Cron schedule | `vercel.json` | `0 8 * * *` — runs at 8 AM UTC daily |
+| Schedule | `django_celery_beat` (DB) | `ingest-events-daily` — 04:00 America/New_York, seeded by `ingestion/migrations/0007` |
 
 ---
 

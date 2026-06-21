@@ -1,75 +1,103 @@
 # backendServer — Agent Map
 
-Django 6 + DRF backend. Python 3.13, managed by `uv`.
+Django 6 + DRF backend. Python 3.13, managed by `uv`. Four apps: `events` (public API + digests), `ingestion` (LLM pipeline), `broadcast` (event syndication), `backend` (config + auth bridge + Celery). Database is Postgres on Neon. Async on Redis + Celery; broadcast runs its own DB-queue worker. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for cross-cutting detail.
 
 ## Directory Map
 
 ```
 backendServer/
-├── backend/                          # Django project config
-│   ├── settings.py                   # DB, CORS, CSRF, installed apps, pagination, logging
-│   ├── urls.py                       # Root URL conf — mounts events/, auth/, businesses, cron, admin
-│   ├── jwt_auth.py                   # BearerTokenAuthentication — verifies Better Auth JWTs via JWKS
-│   ├── permissions.py                # HasCommonsAPIKey, HasCommonsAPIKeyOrUser
-│   └── wsgi.py
-├── events/                           # Public data app
-│   ├── models.py                     # Event, Town, Tag, Category, UserProfile, BusinessProfile,
-│   │                                 #   NewsletterSubscriber + BetterAuth mirrors (managed=False)
-│   ├── views.py                      # DRF views: events CRUD, profile, businesses, subscribe
-│   ├── serializers.py                # DRF serializers
-│   ├── urls.py                       # /events/* routes
-│   ├── admin.py                      # django-unfold admin registration
-│   ├── email_service.py              # Brevo transactional email wrapper
-│   ├── tests.py
-│   └── management/commands/
-│       ├── send_weekly_digest.py     # Personalized weekly digest (per subscriber town + tags)
-│       ├── send_digest.py            # Batch digest (--frequency WEEKLY|MONTHLY)
-│       ├── send_test_digest.py       # Render + send one test digest (--email)
-│       └── delete_user.py            # Delete a user and cascade
-├── ingestion/                        # Pipeline app
-│   ├── models.py                     # EventSource, RawEvent, StagedEvent
-│   ├── views.py                      # cron_ingest, publish_approved_events, admin doc pages
-│   ├── services.py                   # publish_all_approved(), pipeline orchestration
-│   ├── importers/
-│   │   └── ics_importer.py           # ICS feed importer
-│   ├── deduplicator.py               # Dedup raw events by (source, source_uid)
-│   ├── standardizer.py               # Gemini LLM standardization
-│   ├── safety_scorer.py              # Flag unsafe/low-quality events
-│   ├── admin.py                      # Staged event review workflow in admin
-│   └── management/commands/
-│       ├── ingest_events.py          # Run full ingestion pipeline
-│       └── cleanup_old_events.py     # Remove expired events
-├── templates/email/                  # HTML email templates (weekly_digest.html, digest.html)
-├── .env.example                      # Required env vars — see this file for the full list
-├── pyproject.toml                    # uv project config + dependencies
 ├── manage.py
-├── vercel.json                       # LEGACY — dead file from previous Vercel deployment
-├── build.sh                          # LEGACY — dead file from previous Vercel deployment
-└── main.py                           # LEGACY — dead file from previous Vercel deployment
+├── backend/                       # Project config
+│   ├── settings/                  #   base / dev / prod / test
+│   ├── urls.py                    #   Root URLconf (cron, publish, auth/me, businesses, admin)
+│   ├── celery.py                  #   Celery app factory + autodiscover
+│   ├── jwt_auth.py                #   BearerTokenAuthentication — Better Auth JWKS (TTL + stale-grace)
+│   ├── permissions.py             #   DRF auth/permission classes (JWT, API key)
+│   └── test_runner.py             #   NeonAuthTestRunner — builds neon_auth schema for tests
+├── events/                        # Public app
+│   ├── models.py                  #   Event/Town/Tag/Category/UserProfile/BusinessProfile/Newsletter
+│   │                              #     + 5 BetterAuth* mirrors (managed=False)
+│   ├── views.py / serializers.py / urls.py
+│   ├── cache.py                   #   Version-keyed Redis cache for hot read endpoints
+│   ├── signals.py                 #   Cache invalidation on Event/Town/Category writes
+│   ├── tasks.py                   #   Celery: ping, send_one_digest, fan_out_weekly_digest
+│   ├── email_service.py           #   Brevo transactional email + digest builder
+│   └── management/commands/       #   devserver, seed_dev, healthcheck, delete_user, send_*digest
+├── ingestion/                     # Pipeline app
+│   ├── models.py                  #   EventSource, RawEvent, StagedEvent
+│   ├── importers/ics_importer.py  #   ICS feed → RawEvent (shardable)
+│   ├── standardizer.py            #   Gemini: RawEvent → StagedEvent
+│   ├── deduplicator.py            #   Fuzzy dedup (thefuzz)
+│   ├── safety_scorer.py           #   Gemini content-safety scoring
+│   ├── services.py                #   publish_all_approved, auto_publish_safe_events
+│   ├── tasks.py                   #   Celery: run_ingestion_pipeline, publish_all_approved_task
+│   ├── views.py                   #   cron_ingest, publish, admin doc pages
+│   └── management/commands/       #   ingest_events, cleanup_old_events
+├── broadcast/                     # Event syndication (see ../docs/broadcast.md)
+│   ├── models.py                  #   BroadcastSubmission, BroadcastTarget
+│   ├── schema.py / routing.py     #   CanonicalEvent (ORM-decoupled); tag-based eligibility
+│   ├── services.py / worker.py    #   Submission persistence; DB-queue worker (SKIP LOCKED)
+│   ├── runner.py                  #   sync_playwright runner (no ORM inside)
+│   ├── views.py / serializers.py / permissions.py / access.py
+│   ├── adapters/                  #   One module per target site (10 Tier-1 + mock) + registry
+│   └── management/commands/       #   run_broadcast_worker, broadcast_dry_run, capture_broadcast_form,
+│                                  #     check_recipes, scaffold_adapter
+├── templates/                     # admin docs pages (docs/) + email digests (email/)
+├── vercel.json, build.sh, main.py # LEGACY dead files — ignore
+└── pyproject.toml / uv.lock
 ```
 
 ## API Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/events/` | — | List published events (excludes past by default; `?after=`, `?before=`, `?include_past=true`, `?category=`) |
-| GET | `/events/towns/` | — | List all towns |
-| GET | `/events/categories/` | — | List all categories |
-| GET | `/events/{uuid}` | — | Single event detail |
-| DELETE | `/events/{uuid}` | user | Delete an event you own |
-| POST | `/events/create` | user or API key | Submit a new event |
-| GET | `/events/me/profile` | user | Current user's profile (includes derived `has_password`) |
-| GET | `/events/me/events` | user | Events submitted by the current user |
-| GET/PATCH/DELETE | `/events/staged/{id}` | user | Manage one of your staged submissions |
-| GET/PATCH | `/auth/me` | user | Read / update the current user's profile |
-| POST | `/auth/subscribe` | — | Subscribe an email to the newsletter |
-| GET/POST | `/businesses` | user | List all published businesses / create a business profile |
-| GET | `/businesses/me` | user | Current user's business profile |
-| GET/PATCH/DELETE | `/businesses/{uuid}` | user | Read / update / delete a business profile |
-| POST | `/api/cron/ingest` | CRON_SECRET | Trigger ingestion pipeline |
-| POST | `/api/events/publish-approved` | API key | Publish all approved staged events |
+Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `code` `X-Broadcast-Access-Code`. `APPEND_SLASH=False` — slashes are exact. No global DRF config; auth/permissions are per-view.
 
-Auth signup/login/logout are handled by Better Auth in Next.js at `/api/auth/*`, not Django.
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/events/` | — | Published events (window/category filters, cached) |
+| GET | `/events/towns/` · `/events/categories/` | — | Town / category lists (cached) |
+| GET | `/events/me/profile` · `/events/me/events` | user | Own profile / own events |
+| GET/PATCH/DELETE | `/events/staged/<int>` | user | Manage own staged submission |
+| GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
+| POST | `/events/create` | user or key | Submit event → StagedEvent |
+| GET/PATCH | `/auth/me` | user | Read / update profile |
+| POST | `/auth/subscribe` | — | Newsletter signup |
+| GET/POST | `/businesses` · `/businesses/me` · `/businesses/<uuid>` | user | Business listing CRUD |
+| GET | `/api/cron/ingest` | CRON_SECRET | Queue ingestion pipeline |
+| POST | `/api/events/publish-approved` | key | Queue bulk publish |
+| POST | `/broadcast/preview` · `/submit` | code | Preview eligible sites / enqueue submission |
+| GET/POST | `/broadcast/jobs/<uuid>[/retry\|/submit-real\|/cancel]` | code | Job status + lifecycle ops |
+| GET | `/broadcast/jobs/<uuid>/screenshots/<key>` · `/manual/<key>` | code | Screenshot / manual-review recipe |
+| GET/POST | `/admin/docs/...` · `/admin/` | staff | Docs pages + django-unfold admin |
+
+## Management Commands
+
+- **events:** `devserver` (auto-port runserver), `seed_dev`, `healthcheck [--json]`, `delete_user --email`, `send_digest`, `send_test_digest --email`, `send_weekly_digest`.
+- **ingestion:** `ingest_events` (full pipeline; `--skip-*`, `--shard N/M`), `cleanup_old_events`.
+- **broadcast:** `run_broadcast_worker [--once]`, `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`.
+
+## Redis + Celery (local)
+
+One Redis instance: **DB 0** = Celery broker + results (`REDIS_URL`), **DB 1** = Django cache (`REDIS_CACHE_URL`). Beat schedules live in Postgres (`django_celery_beat`, seeded by migrations). Run alongside `runserver`:
+
+```bash
+uv run celery -A backend worker -l info        # async tasks (digests, ingestion)
+uv run celery -A backend beat -l info          # scheduler
+uv run python manage.py run_broadcast_worker   # broadcast queue (separate from Celery)
+```
+
+See [`../docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) and [`../docs/broadcast.md`](../docs/broadcast.md).
+
+## Testing
+
+Always under the test settings (Postgres, never SQLite). `NeonAuthTestRunner` creates the `neon_auth` schema + mirror tables; fast-only runs skip DB setup. Two tiers via `@tag`: `fast` (no-DB, `*_fast.py`) and `db` (`*_db.py`). Helpers in `events/tests/factories.py`. `settings/test.py` strips `-pooler` from the DB host so the throwaway test DB hits Neon's direct endpoint.
+
+```bash
+DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test            # full
+DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=fast # no-DB
+DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=db   # DB
+```
+
+> Note: many `broadcast/tests/` files and `ingestion/tests/test_pipeline.py` carry no `@tag`, so they run only under a bare `manage.py test` — **not** in CI (which runs only `--tag=fast` / `--tag=db`).
 
 ## Quick Start
 
@@ -77,60 +105,4 @@ Auth signup/login/logout are handled by Better Auth in Next.js at `/api/auth/*`,
 cd backendServer && uv sync && python manage.py migrate && python manage.py runserver
 ```
 
-For end-to-end auth, also run the frontend so the JWKS endpoint resolves.
-
-### Redis + Celery (async tasks)
-
-Background tasks run on Celery, brokered by Redis (`REDIS_URL` in `.env`). Install
-a local Redis once:
-
-- **macOS:** `brew install redis && brew services start redis`
-- **Ubuntu:** `sudo apt install redis-server`
-
-To run async tasks locally, start a worker alongside `runserver`:
-
-```bash
-uv run celery -A backend worker -l info
-```
-
-Scheduled jobs use `django-celery-beat` (DB-backed, editable in the admin) driven
-by a separate `celery -A backend beat` process. See
-[`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) for the full
-setup and prod ops.
-
-## Testing
-
-Always run the suite under the dedicated test settings:
-
-```bash
-DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test
-```
-
-`backend/settings/test.py` inherits `dev.py` (so it parses `DATABASE_URL` and
-uses **Postgres** — a locked decision, not SQLite). Django auto-creates a
-throwaway `test_<dbname>`. It also forces local-memory cache, eager Celery (no
-Redis/worker needed), a fast password hasher, and stubbed external-service keys.
-
-The `neon_auth.*` mirrors are `managed = False`, so the normal test-DB setup
-skips them. `backend/test_runner.py` (`NeonAuthTestRunner`, wired via
-`TEST_RUNNER`) creates the `neon_auth` schema and `user` table once, centrally —
-no test class should re-create it.
-
-Shared helpers live in `events/tests/factories.py` (`make_user`, `make_town`,
-`make_event` — plain functions, no `factory_boy`).
-
-### Tiers
-
-Tests are tagged so you can run a subset:
-
-| Tag | Meaning | Command |
-|-----|---------|---------|
-| `fast` | Pure logic, **no DB** — plain `unittest.TestCase` | `... manage.py test --tag=fast` |
-| `db`   | Needs the Postgres test DB | `... manage.py test --tag=db` |
-
-`--tag=fast` skips DB setup entirely (Django reports "Skipping setup of unused
-database(s)"), so it's the quick inner-loop check.
-
-> Neon note: `settings/test.py` rewrites the DB host to Neon's **direct**
-> endpoint (strips `-pooler`). The pooler (PgBouncer) can't `DROP DATABASE`, so
-> teardown otherwise fails with "database is being accessed by other users".
+`migrate` after model changes — **never** for `neon_auth` mirrors (`managed = False`). Conventions: [`../CODING_STYLE.md`](../CODING_STYLE.md).

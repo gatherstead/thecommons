@@ -11,6 +11,7 @@ Read these files before any task — they are the system of record:
 For deployment: [`DEPLOY.md`](DEPLOY.md)
 For backend orientation: [`backendServer/AGENTS.md`](backendServer/AGENTS.md)
 For frontend orientation: [`theCommonsWeb/AGENTS.md`](theCommonsWeb/AGENTS.md)
+For the broadcast subsystem: [`docs/broadcast.md`](docs/broadcast.md) (source of truth) + [`broadcastWeb/AGENTS.md`](broadcastWeb/AGENTS.md)
 For deep-dive guides: [`docs/index.md`](docs/index.md)
 
 ## Quick Start
@@ -29,4 +30,5 @@ cd theCommonsWeb && pnpm install && pnpm dev
 - In task recaps, include the **ticket name** if given (10.2, T12, etc.).
 - `backendServer/vercel.json`, `build.sh`, `main.py` are legacy dead files — ignore them.
 - Run `python manage.py migrate` after model changes — but never for `neon_auth` mirrors (`managed = False`).
+- Async work runs on Redis + Celery (DB 0 = broker/results, DB 1 = cache); the `broadcast` worker is separate (its own DB queue, not Celery). Keep `broadcast/` isolated — `routing.py` must not import from `events`, and never use the ORM inside `sync_playwright`.
 - Frontend type-checks with `pnpm build`. Backend tests run under the test settings: `DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test` (Postgres test DB; `--tag=fast` for the no-DB tier, `--tag=db` for the DB tier). See [`backendServer/AGENTS.md`](backendServer/AGENTS.md#testing).

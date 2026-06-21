@@ -433,6 +433,6 @@ Two layers must allow 80/443:
 ## Deep-dive references
 
 - `docs/redis-celery-handoff.md` — Redis/Celery internals, task conventions, beat schedules
-- `docs/broadcast-handoff.md` — broadcast recipe layer, extension, SPA wiring
+- `docs/broadcast.md` — broadcast subsystem: routing, adapters, worker, recipe layer, extension, SPA wiring
 - `docs/dev-db-isolation.md` — Neon dev branch setup for local development
 - `docs/ingestion-pipeline.md` — scrape → stage → publish flow

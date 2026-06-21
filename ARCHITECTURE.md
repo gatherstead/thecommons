@@ -1,284 +1,302 @@
 # Architecture
 
+Deep-dive reference for The Commons. For the repo map start at [AGENTS.md](AGENTS.md); for deployment, [DEPLOY.md](DEPLOY.md) is the source of truth. If anything here contradicts the code, **trust the code** and flag the drift.
+
 ## Overview
 
-The Commons is a local community events aggregator for small towns in North Carolina (initially Chapel Hill / Carrboro area). It is a monorepo with two sub-projects:
+The Commons is a monorepo with four deployable pieces:
 
-```
-thecommons/
-├── backendServer/   # Django 6 REST API + admin + ingestion pipeline
-└── theCommonsWeb/   # Next.js 16 (App Router) + React 19 — public site + Better Auth
-```
+| Piece | Path | What it is |
+|-------|------|------------|
+| Backend | `backendServer/` | Django 6 + DRF — public API, LLM ingestion pipeline, broadcast subsystem, Celery async |
+| Main frontend | `theCommonsWeb/` | Next.js 16 (App Router) + Better Auth — public site + auth provider |
+| Broadcast SPA | `broadcastWeb/` | Vite + React operator console for the broadcast feature |
+| Extension | `broadcastExtension/` | Chrome MV3 extension for manual-review broadcast handoff (dormant) |
 
-Both run on a single Oracle Cloud VM behind nginx; see [Deployment](#deployment). The database is managed Postgres on **Neon**, shared by both sub-projects: Django reads/writes the application tables, and Better Auth (in Next.js) owns the auth tables in a separate `neon_auth` schema.
+Data lives in Postgres on Neon (`public` schema owned by Django, `neon_auth` schema owned by Better Auth). Async work runs on self-hosted Redis + Celery. Everything is served from one Oracle Cloud VM behind nginx.
 
 ---
 
-## Backend (`backendServer/`)
+## Data Models
 
-**Stack:** Python 3.13 · Django 6 · Django REST Framework · PostgreSQL on Neon (psycopg3) · Google Gemini (LLM) · django-unfold (admin UI) · Brevo (email)
+**Key files:** `events/models.py`, `ingestion/models.py`, `broadcast/models.py`
 
-### Django Apps
+### `events` app — `public` schema (managed)
 
-| App | Responsibility |
-|-----|---------------|
-| `events` | Published events, tags, towns, categories, user profiles, newsletter, profile/me endpoints, email digests |
-| `ingestion` | Ingestion pipeline: event sources, raw events, staged events, LLM standardization, safety scoring, admin review workflow |
+| Model | Key fields | Relationships |
+|-------|-----------|---------------|
+| `Tag` | `name` (unique) | M2M from users/businesses/events |
+| `Town` | `slug` (unique), `name` | FK target of `Event.town` |
+| `Category` | `slug` (unique), `display_name` | M2M with `Event` |
+| `UserProfile` | `uuid`, `user_type` (LOCAL/BUSINESS/VENUE), `primary_city`, `address`, `email_preference` (WEEKLY/MONTHLY/NEVER) | OneToOne→`BetterAuthUser` (`db_constraint=False`); M2M→`Tag` |
+| `BusinessProfile` | `uuid`, `business_name`, `description`, `contact_email/phone`, `is_published`, timestamps | OneToOne→`BetterAuthUser`; M2M→`Tag`; M2M→`Town` (`service_area`) |
+| `NewsletterSubscriber` | `email` (unique), `frequency`, `is_active`, `subscribed_at` | — |
+| `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`, `Category`; FK→`BetterAuthUser` (`created_by`) |
 
-### Data Models
+### Better Auth mirrors — `neon_auth` schema (`managed = False`)
 
-#### `events` app — application data
-- **`Town`** — `slug` + `name` (e.g. `carrboro` / `Carrboro`).
-- **`Tag`** — unique string labels.
-- **`Category`** — `slug` + `display_name`; distinct from `Tag`.
-- **`Event`** — UUID PK · title · town (FK, nullable) · date (indexed) · venue · description · price · photo · `tags` (M2M) · `categories` (M2M) · link · `is_verified` · `source_name` · `created_by` (FK → `BetterAuthUser`, null for pipeline-ingested events).
-- **`UserProfile`** — OneToOne with **`BetterAuthUser`** (not Django's `auth.User`) · `user_type` (LOCAL/BUSINESS/VENUE) · `primary_city` · `address` · `email_preference` (WEEKLY/MONTHLY/NEVER) · `tags` (M2M). Created automatically when Better Auth creates a user (see [Authentication](#authentication)).
-- **`BusinessProfile`** — OneToOne with **`BetterAuthUser`** · UUID · `business_name` · `description` · `tags` (M2M Tag) · `service_area` (M2M Town) · `contact_email` · `contact_phone` · `is_published` · timestamps.
-- **`NewsletterSubscriber`** — `email` · `frequency` (WEEKLY/MONTHLY) · `is_active` · `subscribed_at`. For non-account digest subscribers.
+Better Auth (Next.js) owns these tables; Django maps them **read-only** for joins. **Never create migrations for them.** Models: `BetterAuthUser`, `BetterAuthSession`, `BetterAuthAccount`, `BetterAuthVerification`, `BetterAuthJwks`.
 
-#### Better Auth mirror models — `neon_auth` schema, **`managed = False`**
-Better Auth (Next.js) owns these tables; Django maps them read-only for joins and lookups. **Never create migrations for them.**
-- **`BetterAuthUser`** (`neon_auth.user`) — UUID id · name · email · `user_type` · timestamps. Sets `is_authenticated = True` so DRF permission classes accept it as the request user.
-- **`BetterAuthSession`**, **`BetterAuthAccount`**, **`BetterAuthVerification`**, **`BetterAuthJwks`** — the rest of the Better Auth table set.
+- The `db_table` values use a double-quote trick (e.g. `'neon_auth"."user'`) so Django emits a valid cross-schema reference `FROM "neon_auth"."user"`.
+- `BetterAuthUser` hardcodes `is_authenticated=True` / `is_anonymous=False` so DRF permission classes treat it as a real user.
+- FKs into these mirrors use `db_constraint=False` (no DB-level FK against unmanaged tables).
 
-> The `db_table` values use a deliberate double-quote trick (e.g. `'neon_auth"."user'`) so Django emits a valid cross-schema reference `FROM "neon_auth"."user"`.
+### `ingestion` app — `public` schema (managed)
 
-#### `ingestion` app
-- **`EventSource`** — URL we poll on a schedule; source_type ∈ {ics, scraper, email}.
-- **`RawEvent`** — event as scraped, before LLM processing; unique on (source, source_uid).
-- **`StagedEvent`** — LLM-standardized version awaiting admin review; status ∈ {pending, approved, rejected, duplicate}.
+| Model | Key fields | Relationships |
+|-------|-----------|---------------|
+| `EventSource` | `name`, `source_type` (ics/scraper/email), `url`, `active`, `last_polled`, `poll_interval_hours` | reverse `raw_events` |
+| `RawEvent` | raw title/description/location, raw start/end, `source_url`, `source_uid`, `processed` | FK→`EventSource`; `unique_together=(source, source_uid)` |
+| `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, category, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`BetterAuthUser` (`submitted_by`) |
 
-### Authentication
+### `broadcast` app — `public` schema (managed)
+
+| Model | Key fields | Relationships |
+|-------|-----------|---------------|
+| `BroadcastSubmission` | `uuid` (PK), `client_label`, denormalized event fields (title, datetimes, venue/address, locality JSON, categories JSON, urls, price, organizer, contacts), `status` (queued/running/done/failed/canceled), timestamps | reverse `targets` |
+| `BroadcastTarget` | `uuid` (PK), `site_key`, `status` (pending/in_progress/succeeded/failed/needs_manual/skipped), `attempts`, `external_url`, `error`, `screenshot_path`, `dry_run`, timestamps | FK→`BroadcastSubmission`; `UniqueConstraint(submission, site_key)` |
+
+### Database ownership
+
+| Schema | Owner | Django access |
+|--------|-------|---------------|
+| `public` | Django migrations | Full read/write |
+| `neon_auth` | Better Auth (Next.js) | Read-only mirrors (`managed = False`) — never migrate |
+
+---
+
+## API Endpoints
+
+**Key files:** `backend/urls.py`, `events/urls.py`, `broadcast/urls.py`
+
+Notes that apply throughout:
+- **`APPEND_SLASH=False`** — trailing slashes are matched exactly as written below.
+- **No global DRF config.** Each view sets its own `@authentication_classes` / `@permission_classes` (house pattern).
+- Auth column: `—` = public, `user` = Better Auth JWT, `API key` = `THE_COMMONS_API_KEY`, `code` = `X-Broadcast-Access-Code`.
+
+### Root (`backend/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/cron/ingest` | `CRON_SECRET` | Queue the ingestion pipeline (Celery) |
+| POST | `/api/events/publish-approved` | API key | Queue bulk publish of approved staged events |
+| GET/PATCH | `/auth/me` | user | Read / update own profile |
+| POST | `/auth/subscribe` | — | Newsletter signup |
+| GET/POST | `/businesses` | user | Browse published businesses / create a listing |
+| GET | `/businesses/me` | user | Own business listing |
+| GET/PATCH/DELETE | `/businesses/<uuid>` | user | Business listing CRUD |
+| GET/POST | `/admin/docs/...` | staff | Pipeline/admin docs pages + publish-approved button |
+| — | `/admin/` | staff | Django admin (django-unfold) |
+
+### Events (`/events/`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/events/` | — | Paginated published events (window/after/before/category filters, Redis-cached) |
+| GET | `/events/towns/` | — | Town list (cached) |
+| GET | `/events/categories/` | — | Category list (cached) |
+| GET | `/events/me/profile` | user | Own profile summary (includes derived `has_password`) |
+| GET | `/events/me/events` | user | Own staged + published events |
+| GET/PATCH/DELETE | `/events/staged/<int>` | user | Manage own staged submission |
+| GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
+| POST | `/events/create` | user or API key | Submit an event → `StagedEvent` |
+
+### Broadcast (`/broadcast/`, all gated by `X-Broadcast-Access-Code`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/broadcast/preview` | Compute eligible/excluded target sites for an event |
+| POST | `/broadcast/submit` | Create submission + targets, enqueue |
+| GET | `/broadcast/jobs/<uuid>` | Job status + per-target detail |
+| POST | `/broadcast/jobs/<uuid>/retry` | Re-queue selected targets |
+| POST | `/broadcast/jobs/<uuid>/submit-real` | Promote dry-run targets to real |
+| POST | `/broadcast/jobs/<uuid>/cancel` | Cancel job, skip pending |
+| GET | `/broadcast/jobs/<uuid>/screenshots/<site_key>` | Serve gated screenshot PNG |
+| GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | Recipe JSON for a `needs_manual` target |
+| GET | `/broadcast/mock-form` | Dev-only (`DEBUG`) mock submission form |
+
+> Login/signup/logout are handled by Better Auth in **Next.js** at `/api/auth/*` (including lazy `POST /api/auth/enter` and `POST /api/auth/set-password`).
+
+---
+
+## Authentication
 
 **Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts`, `src/hooks/useAuth.tsx`, `src/app/api/auth/set-password/route.ts`
 
-Auth is owned by **Better Auth running inside Next.js** — there are no Django login/signup endpoints. Django only *verifies* tokens Better Auth issues.
+Auth is owned by **Better Auth running inside Next.js** — there are no Django login/signup endpoints. Django only *verifies* tokens.
 
-**The bridge (`backend/jwt_auth.py` + `backend/permissions.py`):**
-
-- The browser authenticates with Better Auth and holds a session cookie. To call Django, the frontend fetches a short-lived **JWT** from `/api/auth/token` (Better Auth `jwt()` plugin) and sends it as `Authorization: Bearer <jwt>`.
+### The bridge
+- Browser authenticates with Better Auth and holds a session cookie.
+- To call Django, the frontend fetches a short-lived **JWT** from `/api/auth/token` (Better Auth `jwt()` plugin) and sends it as `Authorization: Bearer <jwt>`.
 - `BearerTokenAuthentication` accepts either:
-  1. a **Better Auth JWT**, verified statelessly against the frontend's JWKS endpoint (`BETTER_AUTH_JWKS_URL`). The `sub` claim is resolved to a `BetterAuthUser`. The JWKS client is cached in-process (10-min TTL) with a stale-grace window so a brief Next.js outage doesn't cascade into Django auth.
+  1. a **Better Auth JWT** verified statelessly against the frontend's JWKS endpoint (`BETTER_AUTH_JWKS_URL`); `sub` resolves to a `BetterAuthUser`. The JWKS client is cached in-process with a TTL and **stale-grace** fallback so brief Next.js outages don't cascade.
   2. the shared **`THE_COMMONS_API_KEY`** (no user attached) — for app-level calls like event creation.
-- Permissions: `HasCommonsAPIKey` (key only), `HasCommonsAPIKeyOrUser` (authenticated user *or* shared key), plus DRF's `IsAuthenticated` for user-only endpoints.
+- Permission classes live in `backend/permissions.py` and are applied per-view alongside DRF's `IsAuthenticated`.
 
-**User creation side effect:** `src/lib/auth.ts` defines a `databaseHooks.user.create.after` that inserts a matching `events_userprofile` row when Better Auth creates a user, so every account has a Django profile.
+### User-creation side effect
+`src/lib/auth.ts` defines `databaseHooks.user.create.after`, which inserts a matching `public.events_userprofile` row whenever Better Auth creates a user — so every account has a Django profile.
 
-**Lazy (passwordless) accounts.** Signup is email-first and password-optional. A custom Better Auth plugin (`src/lib/lazy-auth-plugin.ts`, registered in `auth.ts`) exposes `POST /api/auth/enter`:
+### Lazy (passwordless) accounts
+Signup is email-first, password-optional. The custom plugin `src/lib/lazy-auth-plugin.ts` exposes `POST /api/auth/enter`:
+- New email → creates a Better Auth user (no credential) + session; the `databaseHook` fires.
+- Existing passwordless email → fresh session.
+- Existing email with a password → returns `requiresPassword: true` (no session); frontend collects the password and uses normal `signIn.email`.
 
-- New email → creates a Better Auth user (no credential account) and a session via the internal adapter, returns `{ isNew: true }`. The `databaseHook` still fires, so the Django profile is created.
-- Existing passwordless email → issues a fresh session, returns `{ isNew: false, requiresPassword: false }`.
-- Existing email that *has set a password* → returns `{ requiresPassword: true }` (no session); the frontend then collects the password and uses the normal `signIn.email` flow.
+Users secure the account later via `POST /api/auth/set-password` (links a `credential` account). **No email verification for MVP.**
 
-A user can secure their account later via `POST /api/auth/set-password` (`src/app/api/auth/set-password/route.ts`), which calls Better Auth's `auth.api.setPassword` to link a `credential` account. There's no email verification for MVP — anyone can claim any unclaimed email (see the ticket's risk notes).
+### `has_password` is derived
+Django computes it from the `BetterAuthAccount` mirror (`provider_id='credential'` with a non-null password) and returns it on `/auth/me` and `/events/me/profile`. No column, no migration.
 
-**`has_password` is derived, not stored.** Django computes it from the `BetterAuthAccount` mirror (`provider_id='credential'` with a non-null password) and returns it on `/auth/me` and `/events/me/profile`. The frontend uses it to drive security nudges (a banner when an account has no password; a red dot for incomplete business/venue profiles). No new column or migration.
-
-### Ingestion Pipeline
-
-**Key files:** `ingestion/services.py`, `ingestion/standardizer.py`, `ingestion/safety_scorer.py`, `ingestion/deduplicator.py`, `ingestion/importers/ics_importer.py`
-
-```
-EventSource (URL/feed)
-    ↓  importers (ICS, scraper)
-RawEvent  ←  deduplicator.py
-    ↓  standardizer.py (Gemini LLM)  +  safety_scorer.py
-StagedEvent  ←  admin reviews in django-unfold
-    ↓  services.publish_all_approved()
-Event (canonical, public)
-```
-
-Triggered via `POST /api/cron/ingest` (requires `CRON_SECRET` header) or the `python manage.py ingest_events` command. Publishing approved events is done from the admin UI or via `POST /api/events/publish-approved`. `safety_scorer.py` flags low-quality/unsafe events against `SAFETY_SCORE_THRESHOLD`.
-
-### API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/events/` | — | List published events (excludes past by default; `?after=`, `?before=`, `?include_past=true`) |
-| GET | `/events/towns/` | — | List all towns |
-| GET | `/events/categories/` | — | List all categories |
-| GET | `/events/{uuid}` | — | Single event detail |
-| DELETE | `/events/{uuid}` | user | Delete a published event you own |
-| POST | `/events/create` | user **or** API key | Submit a new event |
-| GET | `/events/me/profile` | user | Current user's profile (auth bootstrap); includes derived `has_password` |
-| GET | `/events/me/events` | user | Events submitted by the current user |
-| GET/PATCH/DELETE | `/events/staged/{id}` | user | Manage one of your staged submissions |
-| GET/PATCH | `/auth/me` | user | Read / update the current user's profile (response includes derived `has_password`) |
-| POST | `/auth/subscribe` | — | Subscribe an email to the newsletter |
-| GET/POST | `/businesses` | user | List all published businesses / create a business profile |
-| GET | `/businesses/me` | user | Current user's business profile |
-| GET/PATCH/DELETE | `/businesses/{uuid}` | user | Read / update / delete a business profile |
-| POST | `/api/cron/ingest` | `CRON_SECRET` | Trigger ingestion pipeline (scheduled) |
-| POST | `/api/events/publish-approved` | API key | Publish all approved staged events |
-
-> Login/signup/logout are handled by Better Auth in Next.js at `/api/auth/*` — including the lazy `POST /api/auth/enter` and `POST /api/auth/set-password` (see [Authentication](#authentication)).
-
-Admin lives at `/admin/` (django-unfold). Pipeline and admin docs render as Django template pages under `/admin/docs/`. (Login/signup/logout are handled by Better Auth in Next.js at `/api/auth/*`, not here.)
-
-### Email Digests
-
-`events/email_service.py` wraps **Brevo** transactional email. Management commands:
-- `send_weekly_digest` — personalized per WEEKLY subscriber (their town + tag interests). HTML from `templates/email/weekly_digest.html`.
-- `send_digest --frequency WEEKLY|MONTHLY` — batch digest.
-- `send_test_digest --email <addr>` — render + send one test digest.
-
-These are scheduled via cron on the VM (see [Deployment](#deployment)).
-
-### Other Management Commands
-
-- `delete_user` — delete a user and cascade associated data.
-- `ingest_events` — run the full ingestion pipeline (also triggered via cron endpoint).
-- `cleanup_old_events` — remove expired events.
-
-### Environment Variables (`backendServer/.env`)
-
-```
-DATABASE_URL=                # Neon Postgres connection string
-DJANGO_SECRET_KEY=
-DJANGO_DEBUG=False
-DJANGO_ALLOWED_HOSTS=        # comma-separated
-CORS_EXTRA_ORIGINS=          # comma-separated, appended to defaults
-CSRF_TRUSTED_ORIGINS=        # comma-separated, HTTPS origins for admin/POST
-GEMINI_API_KEY=
-CRON_SECRET=
-THE_COMMONS_API_KEY=
-SAFETY_SCORE_THRESHOLD=0.3
-# Better Auth bridge — Django verifies JWTs issued by Next.js
-BETTER_AUTH_JWKS_URL=        # e.g. http://localhost:3000/api/auth/jwks (prod: the frontend origin)
-BETTER_AUTH_ISSUER=
-BETTER_AUTH_AUDIENCE=
-# Brevo (email digests)
-BREVO_API_KEY=
-DIGEST_FROM_EMAIL=digest@thecommons.town
-SITE_URL=https://thecommons.town
-```
-
-### Running Locally
-
-```bash
-cd backendServer
-uv sync
-python manage.py migrate
-python manage.py runserver       # http://localhost:8000
-```
-
-For end-to-end auth, also run the frontend so `BETTER_AUTH_JWKS_URL` resolves.
+### Google sign-in — DISABLED
+Commented out in `src/lib/auth.ts`, `src/app/auth/AuthFlow.tsx`, and `src/app/auth/google-popup/`. Revisit later (needs a post-OAuth account-type step).
 
 ---
 
-## Frontend (`theCommonsWeb/`)
+## Ingestion Pipeline
 
-**Stack:** Next.js 16 (App Router + Turbopack) · React 19 · TypeScript · Tailwind CSS v4 · Better Auth (`better-auth` + Drizzle + `pg`)
+**Key files:** `ingestion/tasks.py`, `ingestion/importers/ics_importer.py`, `ingestion/standardizer.py`, `ingestion/deduplicator.py`, `ingestion/safety_scorer.py`, `ingestion/services.py`
 
-### Key Source Directories
-
-```
-src/
-├── app/
-│   ├── layout.tsx            # Root layout (server component): AuthProvider, Header, Footer
-│   ├── page.tsx              # Home (client): feed/calendar views, modals
-│   ├── about/page.tsx        # About (server component, SEO metadata)
-│   ├── dashboard/page.tsx    # Manage your submitted events (client)
-│   ├── profile/page.tsx      # View/edit your profile + Security (set-password) section (client)
-│   ├── auth/page.tsx         # Lazy signup/login flow: user type → preferences → email (client)
-│   ├── auth/google-popup/    # Google OAuth popup flow (page + complete page) — DISABLED, revisit later
-│   ├── api/auth/[...all]/route.ts      # Better Auth request handler — also serves /api/auth/enter (nodejs)
-│   ├── api/auth/set-password/route.ts  # Secure a passwordless account (auth.api.setPassword)
-│   └── globals.css           # Design tokens, utility classes, skeleton animation
-├── components/
-│   ├── auth/      # SecuritySection (set-password form on the profile page)
-│   ├── events/    # EventFeed, CalendarView, EventRow, AddEventModal, EditEventModal, EventDetailModal
-│   ├── layout/    # Header, HeaderAuthNav, AccountBanner (no-password nudge), Footer, Sidebar, TopBar,
-│   │              # MiniCalendar, PageLayout, TagsBar, SectionSelector, TimeWindowSelector
-│   └── ui/        # Shared primitives (Badge, Button, Input, Modal, Select, Textarea, Link)
-├── hooks/
-│   ├── useEvents.ts      # Main data hook: TanStack queries (windows/pages/months), filter state
-│   ├── useAuth.tsx       # Auth context: Better Auth session + JWT; Django profile via ['profile'] query
-│   ├── useTowns.ts / useCategories.ts  # Static lists via useQuery
-│   ├── useToggleSet.ts   # Generic multi-select toggle state
-│   └── useClickOutside.ts
-├── lib/
-│   ├── queryClient.ts      # TanStack Query client singleton (staleTime: Infinity — session-fresh caching)
-│   ├── auth.ts             # betterAuth() server config (Drizzle adapter, email+password; Google commented out; jwt + lazyAuth + nextCookies)
-│   ├── lazy-auth-plugin.ts # Custom plugin: POST /api/auth/enter (email-first passwordless login/signup)
-│   ├── auth-client.ts      # createAuthClient() — signIn/signUp/signOut/useSession/getSession
-│   ├── auth-schema.ts      # Drizzle schema for the neon_auth tables
-│   └── db.ts               # Drizzle + pg Pool (DATABASE_URL)
-├── models/
-│   ├── eventsModels.ts   # FrontendEvent, BackendEvent, EventPayload, TownOption, CategoryOption, …
-│   ├── authModels.ts     # AuthUser (with hasPassword), UserType, LoginPayload, EnterPayload, EnterResult
-│   └── businessModels.ts # Business-related types
-├── services/
-│   ├── eventService.ts   # getEvents, getTowns, getCategories, getMyEvents, create/update/delete event(s)
-│   ├── profileService.ts # getProfile / updateProfile (via /auth/me)
-│   └── businessService.ts # Business profile API client
-├── constants/tags.ts
-└── data/mockEvents.ts
-```
-
-### App Layout
-
-Two view modes — **feed** (chronological list) and **calendar** — switchable in the sidebar. Filter state (tags, towns, selected date, time window) is owned by the `useEvents` hook on the home page. Auth state is provided by `AuthProvider` in the root layout.
-
-**Routing** (App Router):
-- `/` — feed/calendar view (client)
-- `/about` — about page (server component, SEO metadata)
-- `/auth` — lazy signup/login flow (client)
-- `/auth/login` — direct login (client)
-- `/auth/signup` — direct signup (client)
-- `/dashboard` — your submitted events (client)
-- `/post` — submit new event, auth-gated (client)
-- `/profile` — view/edit profile (client)
-- `/events/[uuid]` — single event detail (client)
-- `/api/auth/[...all]` — Better Auth handler
-- `/api/auth/set-password` — secure a passwordless account
-
-**Event loading:** the feed requests future events by default; calendar requests all including past. A "See Past Events" control triggers a secondary fetch with `?include_past=true`.
-
-### Authentication (frontend)
-
-Better Auth is configured in `src/lib/auth.ts` (server) and consumed via `src/lib/auth-client.ts` (React). The `AuthProvider` (`useAuth.tsx`):
-1. reads the Better Auth session (`getSession`),
-2. fetches a JWT from `/api/auth/token`,
-3. calls Django `/events/me/profile` with that JWT to hydrate the profile,
-4. exposes `login`, `signup`, `logout`, and `refreshSession`.
-
-Email+password is enabled. **Google sign-in is temporarily disabled** — commented out in `src/lib/auth.ts` (provider config), `src/app/auth/AuthFlow.tsx` (button + popup handler), and `src/app/auth/google-popup/` (the popup invokes nothing now). It returned `invalid_code` and bypassed user-type selection during signup; revisit later (likely needs a post-OAuth "choose account type" step). The session lives in a Better Auth cookie — **tokens are fetched on demand, not persisted in `localStorage`.**
-
-### Environment Variables (`theCommonsWeb/.env.local`)
+Orchestrated by `ingestion.tasks.run_ingestion_pipeline` (Celery, daily 04:00 ET) and mirrored by the `ingest_events` command. Each step is error-isolated; the task retries the whole pipeline (up to 3×) if any step raises, since steps are idempotent.
 
 ```
-NEXT_PUBLIC_API_BASE_URL=          # Django base URL, e.g. http://127.0.0.1:8000
-NEXT_PUBLIC_THE_COMMONS_API_KEY=   # shared API key (fallback for event creation)
-DATABASE_URL=                      # Neon Postgres (Better Auth owns neon_auth schema)
-BETTER_AUTH_SECRET=
-BETTER_AUTH_URL=http://localhost:3000
-NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
+1. cleanup_old_events          delete past Raw/Staged (keep approved-unpublished)
+2. poll_all_ics_sources        fetch ICS feeds → RawEvent (shardable)
+3. standardize_all_unprocessed Gemini → StagedEvent (pending); marks Raw processed
+4. dedup_all_pending           thefuzz title/location/time match → mark duplicate
+5. score_all_unscored          Gemini content-safety score 0.0–1.0
+6. auto_publish_safe_events    score ≤ threshold → approved; rest held for manual review
+   publish_all_approved()      atomically create Event rows, link, delete StagedEvents
 ```
 
-### Running Locally
+Manual entrypoints: `POST /api/cron/ingest` (`CRON_SECRET`) queues the pipeline; `POST /api/events/publish-approved` (API key) and the admin docs page queue `publish_all_approved_task`. Public/auth users submit via `POST /events/create`, which creates a pending `StagedEvent` directly (skipping poll/standardize). Unknown `Town` slugs cause an event to be skipped at publish time. Threshold is `SAFETY_SCORE_THRESHOLD` (default 0.3). See [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) and [docs/safety-scoring.md](docs/safety-scoring.md).
 
-```bash
-cd theCommonsWeb
-npm install
-npm run dev      # http://localhost:3000 (Turbopack)
-```
+---
+
+## Broadcast
+
+**Key files:** `broadcast/services.py`, `broadcast/worker.py`, `broadcast/runner.py`, `broadcast/routing.py`, `broadcast/adapters/`
+
+The broadcast subsystem pushes a single event out to multiple third-party community calendars via headless Playwright form-filling. It is deliberately **isolated** from `events/` (its `routing.py` must not import from `events`) and does **not** use Celery — it runs its own DB-backed queue worker.
+
+Flow: access code → `preview` (build a `CanonicalEvent`, match adapters via `routing.eligible_targets`) → `submit` (create `BroadcastSubmission` + `BroadcastTarget`s) → `run_broadcast_worker` claims the job (`SELECT FOR UPDATE SKIP LOCKED`) → `runner.py` drives one Chromium session per target (no ORM inside `sync_playwright`) → per-site adapters fill and submit.
+
+**[docs/broadcast.md](docs/broadcast.md) is the single source of truth** for models, adapters, access codes, env vars, commands, and the manual-review handoff.
+
+---
+
+## Async: Redis + Celery
+
+**Key files:** `backend/celery.py`, `backend/__init__.py`, `events/tasks.py`, `ingestion/tasks.py`, `events/cache.py`, `events/signals.py`
+
+- **One Redis instance, two logical DBs:** DB 0 = Celery broker **and** result backend (`REDIS_URL`); DB 1 = Django cache (`RedisCache`, `REDIS_CACHE_URL`).
+- **Celery** app is built in `backend/celery.py`, loaded eagerly via `backend/__init__.py`, and autodiscovers tasks. `CELERY_TIMEZONE = UTC` (beat entries carry their own tz).
+- **Beat** uses `django_celery_beat`'s `DatabaseScheduler` — schedules live in Postgres and are editable in admin. Seeded by migrations:
+  - `weekly-digest-sunday` → `events.tasks.fan_out_weekly_digest`, Sun 18:00 America/New_York (`events/migrations/0015_seed_digest_beat.py`).
+  - `ingest-events-daily` → `ingestion.tasks.run_ingestion_pipeline`, 04:00 America/New_York (`ingestion/migrations/0007_seed_ingest_beat.py`).
+- **Tasks:** `events.tasks` (`ping`, `send_one_digest`, `fan_out_weekly_digest`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
+- **Read-endpoint cache:** `events/cache.py` is a version-keyed Redis cache for the hot list endpoints; `events/signals.py` bumps the version on `Event`/`Town`/`Category` writes to invalidate.
+
+See [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md).
+
+### Email digests
+`events/email_service.py` wraps **Brevo** transactional email and builds digest HTML from `templates/email/`. `fan_out_weekly_digest` queues one `send_one_digest` per WEEKLY `UserProfile`. Management commands (`send_digest`, `send_test_digest`, `send_weekly_digest`) cover synchronous/test sends.
+
+---
+
+## Frontend Architecture
+
+**Key files:** `src/app/layout.tsx`, `src/lib/queryClient.ts`, `src/components/providers/QueryProvider.tsx`, `src/hooks/useEvents.ts`, `src/services/`
+
+The main site is **Next.js 16 App Router**. Root layout (`src/app/layout.tsx`) wraps `QueryProvider → AuthProvider → MessageStackProvider`.
+
+### Routes
+
+| Path | File | Type | Purpose |
+|------|------|------|---------|
+| `/` | `app/page.tsx` | client | Home: event feed + calendar, filters, detail modal |
+| `/about` | `app/about/page.tsx` | server | Static about page (SEO metadata) |
+| `/post` | `app/post/page.tsx` | client | Submit an event (auth-gated) |
+| `/profile` | `app/profile/page.tsx` | client | Edit profile, digest prefs, security section |
+| `/dashboard` | `app/dashboard/page.tsx` | client | Manage submitted events + business listing |
+| `/auth` | `app/auth/page.tsx` | server | Redirects to `/auth/signup` |
+| `/auth/login` | `app/auth/login/page.tsx` | server shell → client `AuthFlow` | Login |
+| `/auth/signup` | `app/auth/signup/page.tsx` | server shell → client `AuthFlow` | Signup |
+| `/auth/google-popup[/complete]` | `app/auth/google-popup/` | client | DISABLED Google OAuth popup |
+| `/events/[uuid]` | `app/events/[uuid]/page.tsx` | server (async) | Event detail (`generateMetadata` + OpenGraph) |
+| `/api/auth/[...all]` | `app/api/auth/[...all]/route.ts` | route | Better Auth handler |
+| `/api/auth/set-password` | `app/api/auth/set-password/route.ts` | route | Set password on a passwordless account |
+
+### Data layer (TanStack Query)
+- `src/lib/queryClient.ts` — `getQueryClient()` returns a per-request client on the server and a browser singleton on the client. Defaults: `staleTime/gcTime: Infinity`, no refetch on focus/reconnect, `retry: 1`.
+- `src/components/providers/QueryProvider.tsx` mounts the provider (devtools lazily loaded in development only).
+- Query keys: `['towns']`, `['categories']`, `['profile', token]`, `['events','window'|'page'|'month', …]`, `['myEvents', token]`, `['myBusiness', token]`. Mutations + `invalidateQueries` live in `post`/`profile`/`dashboard` pages.
+- **Services** (`src/services/`) talk to Django over `fetch` at `NEXT_PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`): `eventService` (events CRUD, `BackendEvent`→`FrontendEvent` mapping), `profileService`, `businessService`. `profileService`/`businessService` use `fetchWithRetry` for Neon cold-starts.
+
+### Auth on the frontend
+Better Auth (`src/lib/auth.ts`) backed by Drizzle over the `neon_auth` schema (`src/lib/auth-schema.ts`, `src/lib/db.ts`). `useAuth.tsx` combines the Better Auth session, the Django JWT (`/api/auth/token`), and the Django profile. There is **no `middleware.ts`** — route protection is client-side in the pages.
+
+### Design system
+Tailwind CSS v4 (zero-config) with design tokens as CSS custom properties in `src/app/globals.css` (newsprint palette, Georgia serif, rule/drop-cap utilities). UI primitives in `src/components/ui/`. Full conventions in [CODING_STYLE.md](CODING_STYLE.md).
+
+### broadcastWeb
+A separate Vite + React 19 SPA (`broadcastWeb/`) for the broadcast operator console — plain `fetch` + React state (no TanStack Query), gated by the broadcast access code. See [broadcastWeb/AGENTS.md](broadcastWeb/AGENTS.md) and [docs/broadcast.md](docs/broadcast.md).
+
+---
+
+## Settings & Environment
+
+**Key files:** `backend/settings/{base,dev,prod,test}.py`
+
+Settings are split by `DJANGO_SETTINGS_MODULE`:
+- `base.py` — shared: installed apps (unfold, corsheaders, DRF, the 3 local apps, `django_celery_beat`), CORS allowlist (+ custom `x-broadcast-access-code` header), `APPEND_SLASH=False`, Celery/Redis config, unfold admin.
+- `dev.py` — `DEBUG=True`, parses `DATABASE_URL` (Neon dev branch), console email, `BROADCAST_AUTOSPAWN_WORKER=true` by default.
+- `prod.py` — `DEBUG=False`; requires `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DATABASE_URL`.
+- `test.py` — inherits dev; strips `-pooler` from the DB host (Neon direct endpoint so the test DB can be created/dropped), eager Celery, locmem cache, stubbed external creds. See [§Testing](#testing--ci).
+
+### Backend env vars (`backendServer/.env`)
+`DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `CORS_EXTRA_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `REDIS_URL` (DB 0), `REDIS_CACHE_URL` (DB 1), `GEMINI_API_KEY`, `CRON_SECRET`, `THE_COMMONS_API_KEY`, `SAFETY_SCORE_THRESHOLD` (opt), `INGEST_SHARD_COUNT` (opt), `BETTER_AUTH_JWKS_URL` / `_ISSUER` / `_AUDIENCE`, `BREVO_API_KEY`, `DIGEST_FROM_EMAIL`, `SITE_URL`, and the `BROADCAST_*` family (see [docs/broadcast.md](docs/broadcast.md)). DEPLOY.md is authoritative for production values.
+
+### Frontend env vars (`theCommonsWeb/.env.local`)
+`NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_THE_COMMONS_API_KEY`, `NEXT_PUBLIC_BETTER_AUTH_URL` (public); `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (server-only).
+
+### Dev mode
+There is **no single "dev mode" flag or auth bypass.** Auth is never bypassed. Dev-vs-prod behavior is spread across:
+- `settings/dev.py` vs `prod.py` (`DJANGO_SETTINGS_MODULE`) — `DEBUG`, console vs Brevo email, required-vs-optional env.
+- `BROADCAST_AUTOSPAWN_WORKER` (default true in dev) — `submit`/`retry`/`submit-real` spawn a one-shot worker so forms process without a long-running service; prod uses the systemd worker instead.
+- `settings.DEBUG` gates `broadcast.views.mock_form`; `BROADCAST_ENABLE_MOCK` adds the mock adapter to the registry.
+- Frontend: only React Query Devtools (dev) and `pg` Pool HMR caching depend on `NODE_ENV`. `src/data/mockEvents.ts` exists but is unused — no mock-data toggle.
+
+---
+
+## Testing & CI
+
+**Key files:** `backend/settings/test.py`, `backend/test_runner.py`, `.github/workflows/ci.yml`, `theCommonsWeb/vitest.config.ts`
+
+### Backend
+- Always run under `DJANGO_SETTINGS_MODULE=backend.settings.test` (Postgres, never SQLite). `backend.test_runner.NeonAuthTestRunner` builds the `neon_auth` schema + `user`/`account` mirror tables once (they're `managed=False`); it skips DB setup entirely on fast-only runs.
+- **Two tiers** via Django `@tag`: `fast` (no-DB `SimpleTestCase`/unittest, `*_fast.py`) and `db` (Postgres `TestCase`, `*_db.py`). Helpers: `events/tests/factories.py`.
+- Commands:
+  ```bash
+  DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test            # full
+  DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=fast # no-DB tier
+  DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=db   # DB tier
+  ```
+
+### Frontend
+Both `theCommonsWeb/` and `broadcastWeb/` use **Vitest** with two projects: `fast` (node env, `*.fast.test.*`) and `db` (jsdom, `*.db.test.*`). Run `pnpm test`, `pnpm test:fast`, `pnpm test:db`. `pnpm build` is the type-check gate (`next build` for theCommonsWeb, `tsc -b && vite build` for broadcastWeb).
+
+### CI (`.github/workflows/ci.yml`)
+Single `CI` workflow on push/PR to `main`. Four jobs: `backend` (Postgres 16 service, uv/Python 3.13, runs `--tag=fast` then `--tag=db`), `frontend-commons` and `frontend-broadcast` (pnpm 11.1.1, Node 22, `pnpm build` + `test:fast` + `test:db`), and a gated `deploy` job (push-to-`main` only) that SSHes into the Oracle VM and restarts services. See [DEPLOY.md](DEPLOY.md) for the deploy half.
+
+**Known gaps (as of this writing):**
+- ~11 backend test files carry no `@tag` (most of `broadcast/tests/`, plus `ingestion/tests/test_pipeline.py`), so neither `--tag=fast` nor `--tag=db` runs them — they **never execute in CI** (only a bare local `manage.py test` runs them).
+- No lint step in CI; `theCommonsWeb/eslint.config.js` is fully commented out; there's no ruff/mypy/prettier.
+- pnpm (11.1.1) and Node (22) are pinned **only in CI**, not via `packageManager`/`.nvmrc`/`engines`.
 
 ---
 
 ## Deployment
 
-Both sub-projects run on a **single Oracle Cloud VM**:
+DEPLOY.md is the source of truth — this is a summary. Production is a **single Oracle Cloud VM** (Ubuntu 24.04, ARM64, 6 GB) behind **nginx** with **Cloudflare** DNS/TLS (Full strict). Postgres is managed on **Neon** (external). systemd services: `gunicorn` (Django via unix socket), `nextjs` (Next.js :3000), `redis-server`, `celery` (worker), `celerybeat` (scheduler), `broadcast-worker` (Playwright). nginx maps `thecommons.town`→Next.js, `api.thecommons.town`→gunicorn, `broadcast.thecommons.town`→the static broadcast SPA.
 
-- **Host:** Ubuntu 24.04 · 1 OCPU ARM64 (aarch64) · 6 GB RAM
-- **nginx** — reverse proxy and TLS termination. TLS via **Cloudflare** origin certs (Full strict mode). Routes `thecommons.town` → Next.js, `api.thecommons.town` → Django, `www.thecommons.town` → 301 redirect to bare domain.
-- **Django** — served by **gunicorn** via unix socket (`unix:/run/gunicorn/gunicorn.sock`).
-- **Next.js** — `next start` on `127.0.0.1:3000`.
-- **Database** — managed Postgres on **Neon** (external; unchanged from before). Both apps connect over the network.
-- **Scheduled jobs** — cron on the VM: daily ingestion (`POST /api/cron/ingest` with `CRON_SECRET`, or `manage.py ingest_events`) and the email digests (`manage.py send_weekly_digest`).
-
-Production frontend domain: `https://thecommons.town`. Django API: `https://api.thecommons.town`. The backend's `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` and `BETTER_AUTH_JWKS_URL` are set to the production hostnames via env on the box (not committed). For full deployment details, see [`DEPLOY.md`](DEPLOY.md).
-
-> Legacy: `backendServer/vercel.json`, `build.sh`, and `main.py` are dead artifacts from the previous Vercel deployment — ignore them.
+Deploys are automatic: every push to `main` runs CI, and on success the gated `deploy` job SSHes in to `git pull` → `uv sync` → `migrate` (unguarded) → `collectstatic` → build both frontends → restart the five services. Python uses `uv` (never pip); frontends use `pnpm` (never npm). Full one-time setup, env vars, nginx/systemd files, firewall gotchas, and troubleshooting are in [DEPLOY.md](DEPLOY.md).

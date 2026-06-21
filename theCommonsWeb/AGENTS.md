@@ -1,100 +1,87 @@
 # theCommonsWeb — Agent Map
 
-Next.js 16 (App Router) + React 19 + TypeScript + Tailwind v4 + Better Auth.
+Next.js 16 (App Router + Turbopack) + React 19 + TypeScript + Tailwind v4 + TanStack Query v5 + Better Auth. **pnpm-managed** (npm install breaks the symlinked store). This app is also the auth provider: Better Auth runs here and Django verifies its JWTs. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the auth bridge and data layer.
 
 ## Directory Map
 
 ```
 src/
-├── app/                                    # Next.js App Router
-│   ├── layout.tsx                          # Root layout (server): AuthProvider, Header, Footer
-│   ├── page.tsx                            # Home: feed + calendar views (client)
-│   ├── about/page.tsx                      # About page (server component, SEO metadata)
-│   ├── auth/
-│   │   ├── page.tsx                        # Lazy signup/login flow: type → preferences → email (client)
-│   │   ├── AuthFlow.tsx                    # Auth flow UI component
-│   │   ├── login/page.tsx                  # Direct login page (client)
-│   │   ├── signup/page.tsx                 # Direct signup page (client)
-│   │   └── google-popup/                   # DISABLED — Google OAuth popup (revisit later)
-│   ├── dashboard/page.tsx                  # Manage submitted events (client)
-│   ├── post/page.tsx                       # Post new event, auth-gated (client)
-│   ├── profile/page.tsx                    # View/edit profile + security section (client)
-│   ├── events/[uuid]/page.tsx              # Single event detail page (client)
-│   ├── api/auth/[...all]/route.ts          # Better Auth catch-all handler (also serves /api/auth/enter)
-│   ├── api/auth/set-password/route.ts      # Secure a passwordless account
-│   └── globals.css                         # Design tokens, utility classes, skeleton animation
+├── app/                           # App Router
+│   ├── layout.tsx                 #   Root: QueryProvider → AuthProvider → MessageStackProvider + chrome
+│   ├── page.tsx                   #   Home feed/calendar (client)
+│   ├── globals.css                #   Design tokens (CSS vars) + newspaper utilities
+│   ├── about/ post/ profile/ dashboard/   # Pages (see Routes)
+│   ├── auth/                      #   AuthFlow + login/signup/google-popup (Google disabled)
+│   ├── events/[uuid]/             #   Event detail (server, generateMetadata) + not-found
+│   └── api/auth/                  #   [...all]/route.ts (Better Auth), set-password/route.ts
 ├── components/
-│   ├── auth/
-│   │   └── SecuritySection.tsx             # Set-password form (profile page)
-│   ├── events/
-│   │   ├── EventFeed.tsx                   # Chronological event list
-│   │   ├── CalendarView.tsx                # Calendar grid view
-│   │   ├── EventRow.tsx                    # Single event row in feed
-│   │   ├── EventDetailModal.tsx            # Event detail popup
-│   │   ├── EventDetailContent.tsx          # Event detail body content
-│   │   ├── EditEventModal.tsx              # Edit event form modal
-│   │   └── FeedStatusBar.tsx               # Loading/empty state bar
-│   ├── layout/
-│   │   ├── Header.tsx, HeaderAuthNav.tsx   # Top navigation + auth state
-│   │   ├── Footer.tsx                      # Page footer
-│   │   ├── Sidebar.tsx, TopBar.tsx         # Side/top navigation chrome
-│   │   ├── PageLayout.tsx                  # Shared page wrapper
-│   │   ├── MiniCalendar.tsx                # Small calendar widget (sidebar)
-│   │   ├── TagsBar.tsx                     # Tag filter bar
-│   │   ├── SectionSelector.tsx             # Feed/calendar view switcher
-│   │   ├── TimeWindowSelector.tsx          # Date range filter
-│   │   ├── AccountBannerPusher.tsx         # No-password nudge banner
-│   │   ├── DigestCTAPusher.tsx             # Newsletter signup prompt
-│   │   └── MessageStackBanner.tsx          # Notification banner
-│   ├── filters/                            # (empty — reserved)
-│   └── ui/                                 # Shared primitives
-│       ├── Badge, Banner, Button, Input, Link, Modal, Select, Textarea
-│       └── index.ts                        # Re-exports
-├── hooks/
-│   ├── useAuth.tsx                         # Auth context: session + JWT; profile via ['profile'] query
-│   ├── useEvents.ts                        # Main data hook: TanStack queries, filter state, month prefetch
-│   ├── useTowns.ts / useCategories.ts      # Static lists via useQuery (['towns'] / ['categories'])
-│   ├── useMessageStack.tsx                 # Toast/notification stack
-│   ├── useToggleSet.ts                     # Generic multi-select toggle state
-│   └── useClickOutside.ts                  # Dismiss-on-click-outside
-├── lib/
-│   ├── queryClient.ts                      # TanStack Query client singleton (session-fresh defaults)
-│   ├── auth.ts                             # betterAuth() server config (Drizzle adapter, plugins)
-│   ├── lazy-auth-plugin.ts                 # Custom plugin: POST /api/auth/enter (passwordless)
-│   ├── auth-client.ts                      # createAuthClient() — browser-side auth
-│   ├── auth-schema.ts                      # Drizzle schema for neon_auth tables
-│   └── db.ts                               # Drizzle + pg Pool (DATABASE_URL)
-├── models/
-│   ├── eventsModels.ts                     # FrontendEvent, BackendEvent, EventPayload, TownOption, etc.
-│   ├── authModels.ts                       # AuthUser, UserType, LoginPayload, EnterPayload, EnterResult
-│   └── businessModels.ts                   # Business-related types
-├── services/
-│   ├── eventService.ts                     # Events CRUD API client
-│   ├── profileService.ts                   # Profile read/write via /auth/me
-│   └── businessService.ts                  # Business profile API client
-└── constants/
-    └── tags.ts                             # Static tag definitions
+│   ├── auth/                      #   SecuritySection (set-password)
+│   ├── events/                    #   Feed/calendar/detail/edit components
+│   ├── layout/                    #   Header, Footer, Sidebar, banners, selectors, calendar
+│   ├── providers/QueryProvider.tsx#   TanStack QueryClientProvider (+ lazy devtools in dev)
+│   └── ui/                        #   Primitives: Badge, Banner, Button, Input, Modal, Select, …
+├── hooks/                         # See Hooks (+ __tests__/)
+├── lib/                           # auth.ts, lazy-auth-plugin.ts, auth-client.ts, auth-schema.ts,
+│                                  #   db.ts (Drizzle/pg), queryClient.ts (+ __tests__/)
+├── models/                        # TS types: eventsModels, authModels, businessModels
+├── services/                      # Django API clients (+ __tests__/)
+├── constants/tags.ts              # FILTER_TAGS
+└── data/mockEvents.ts             # UNUSED dead fixtures
 ```
+
+> Dead/stale (ignore): `dist/` (old Vite output), `src/data/mockEvents.ts`, `src/assets/react.svg`, `eslint.config.js` (fully commented), and `tsconfig.json` references to nonexistent `tsconfig.app.json`/`tsconfig.node.json` (type-check runs via `next build`).
 
 ## Routes
 
 | Path | File | Type | Purpose |
 |------|------|------|---------|
-| `/` | `app/page.tsx` | client | Feed + calendar views |
-| `/about` | `app/about/page.tsx` | server | About page (SEO) |
-| `/auth` | `app/auth/page.tsx` | client | Lazy signup/login flow |
-| `/auth/login` | `app/auth/login/page.tsx` | client | Direct login |
-| `/auth/signup` | `app/auth/signup/page.tsx` | client | Direct signup |
-| `/dashboard` | `app/dashboard/page.tsx` | client | Manage submitted events |
-| `/post` | `app/post/page.tsx` | client | Submit new event |
-| `/profile` | `app/profile/page.tsx` | client | View/edit profile |
-| `/events/[uuid]` | `app/events/[uuid]/page.tsx` | client | Event detail |
-| `/api/auth/[...all]` | `app/api/auth/[...all]/route.ts` | API | Better Auth handler |
-| `/api/auth/set-password` | `app/api/auth/set-password/route.ts` | API | Secure passwordless account |
+| `/` | `app/page.tsx` | client | Feed + calendar, filters, detail modal |
+| `/about` | `app/about/page.tsx` | server | About page (SEO metadata) |
+| `/post` | `app/post/page.tsx` | client | Submit an event (auth-gated) |
+| `/profile` | `app/profile/page.tsx` | client | Edit profile, digest prefs, security |
+| `/dashboard` | `app/dashboard/page.tsx` | client | Manage submitted events + business listing |
+| `/auth` | `app/auth/page.tsx` | server | Redirect → `/auth/signup` |
+| `/auth/login` · `/auth/signup` | `app/auth/{login,signup}/page.tsx` | server → client `AuthFlow` | Login / signup |
+| `/auth/google-popup[/complete]` | `app/auth/google-popup/` | client | DISABLED Google OAuth |
+| `/events/[uuid]` | `app/events/[uuid]/page.tsx` | server (async) | Event detail (OpenGraph) |
+| `/api/auth/[...all]` | `app/api/auth/[...all]/route.ts` | route | Better Auth handler |
+| `/api/auth/set-password` | `app/api/auth/set-password/route.ts` | route | Set password on passwordless account |
 
-## Design System
+## Hooks (`src/hooks/`)
 
-Newspaper aesthetic — serif fonts, cream/ink palette, column rules. No gradients, shadows, or pill buttons. Tokens defined in `globals.css`. See [`/CODING_STYLE.md`](../CODING_STYLE.md) for full reference.
+| Hook | Purpose |
+|------|---------|
+| `useAuth` / `AuthProvider` | Better Auth session + Django JWT + profile; `enter/login/setPassword/logout/refreshSession` |
+| `useEvents` | Core data hook: paged events + per-month calendar prefetch, window/category/town/tag state |
+| `useTowns` / `useCategories` | `useQuery(['towns'])` / `(['categories'])` |
+| `useMessageStack` / `MessageStackProvider` | One-at-a-time banner queue |
+| `useToggleSet<T>` | Generic multi-select toggle (tags/towns) |
+| `useClickOutside` | Outside-click handler |
+
+## Services & data layer
+
+`src/services/` talk to Django over `fetch` at `NEXT_PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`):
+- `eventService` — events list/detail/create/staged CRUD; maps `BackendEvent → FrontendEvent`. Create falls back to `NEXT_PUBLIC_THE_COMMONS_API_KEY`.
+- `profileService` (`/auth/me`) and `businessService` (`/businesses…`) — Bearer JWT; `fetchWithRetry` for Neon cold-starts.
+
+TanStack Query is configured in `src/lib/queryClient.ts` (`staleTime/gcTime: Infinity`, `retry: 1`) and provided by `components/providers/QueryProvider.tsx`. Query keys: `['towns']`, `['categories']`, `['profile', token]`, `['events', …]`, `['myEvents', token]`, `['myBusiness', token]`.
+
+## Auth
+
+Better Auth (`lib/auth.ts`) over Drizzle/`neon_auth` (`lib/auth-schema.ts`, `lib/db.ts`); custom passwordless `POST /enter` (`lib/lazy-auth-plugin.ts`); `databaseHooks.user.create.after` creates the Django `UserProfile`. No `middleware.ts` — route protection is client-side via `useAuth`. **Don't call `authClient` or manage JWTs in components** — go through `useAuth`. Details: [`../ARCHITECTURE.md#authentication`](../ARCHITECTURE.md#authentication).
+
+## Design system
+
+Tailwind v4 (zero-config) + CSS custom properties in `src/app/globals.css` (newsprint cream/ink, Georgia serif, `.rule-thick`/`.drop-cap` utilities). Never hardcode hex — use `var(--color-*)`. Full conventions: [`../CODING_STYLE.md`](../CODING_STYLE.md).
+
+## Testing & build
+
+Vitest with two projects — `fast` (node, `*.fast.test.*`) and `db` (jsdom, `*.db.test.*`, uses `vitest.setup.ts`). `pnpm build` (`next build`) is the type-check gate.
+
+```bash
+pnpm test        # all          pnpm test:fast   # no-DOM tier
+pnpm test:db     # jsdom tier   pnpm build       # type-check
+```
 
 ## Quick Start
 
@@ -102,32 +89,4 @@ Newspaper aesthetic — serif fonts, cream/ink palette, column rules. No gradien
 cd theCommonsWeb && pnpm install && pnpm dev
 ```
 
-Env vars: see `.env.example`. Needs `DATABASE_URL` (Neon) and Better Auth vars to run auth.
-
-> pnpm-managed — `npm install` fails on the symlinked store. Use pnpm everywhere.
-
-## Testing
-
-Vitest + React Testing Library, two tiers selected by filename:
-
-| Tier | File suffix | Environment | Use for |
-|------|-------------|-------------|---------|
-| fast | `*.fast.test.ts(x)` | `node` (no jsdom) | pure logic — services, URL builders, mappers |
-| db   | `*.db.test.ts(x)`   | `jsdom`            | hooks/components — anything that renders or uses TanStack Query |
-
-```bash
-pnpm test          # both tiers, single run
-pnpm test:fast     # fast tier only (no jsdom)
-pnpm test:db       # db tier only (jsdom + jest-dom matchers)
-pnpm test:watch    # watch mode
-```
-
-Type-checking is separate and still happens via `pnpm build` — the runner does not replace it.
-
-Conventions:
-- Co-locate tests in a `__tests__/` folder next to the code under test.
-- db-tier hook/component tests wrap in a fresh `QueryClient` via the `renderWithClient` /
-  `renderHookWithClient` helpers in [`vitest.setup.ts`](vitest.setup.ts) (retries off so error
-  paths resolve instead of hanging).
-- Mock the network with `vi.stubGlobal('fetch', …)`; let unmocked URLs throw so a missed mock
-  is loud. No test should hit a real server.
+Run the backend too for end-to-end auth (Django validates JWTs against this app's JWKS endpoint).

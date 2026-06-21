@@ -171,6 +171,9 @@ jobs:
           # npm bin already on PATH. set -e aborts on the first failure.
           script: |
             set -e
+            # CI=true lets pnpm purge/rebuild node_modules non-interactively (no TTY
+            # over SSH); without it pnpm aborts with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY.
+            export CI=true
             cd /home/ubuntu/thecommons
             git pull origin main
 

@@ -62,11 +62,11 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.1.1   # pin: pnpm 11.8+ requires Node >=22.13; CI + VM run Node 20
-      - name: Set up Node 20
+          version: 11.1.1   # pinned for reproducibility; pnpm 11 requires Node >=22.13
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: theCommonsWeb/pnpm-lock.yaml
       - name: Install dependencies
@@ -89,11 +89,11 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.1.1   # pin: pnpm 11.8+ requires Node >=22.13; CI + VM run Node 20
-      - name: Set up Node 20
+          version: 11.1.1   # pinned for reproducibility; pnpm 11 requires Node >=22.13
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: broadcastWeb/pnpm-lock.yaml
       - name: Install dependencies

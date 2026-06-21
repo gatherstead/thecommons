@@ -57,6 +57,18 @@ jobs:
     defaults:
       run:
         working-directory: theCommonsWeb
+    # `next build` loads the Better Auth route + client at build time: src/lib/db.ts
+    # throws if DATABASE_URL is unset, and Better Auth parses the *_BETTER_AUTH_URL
+    # values as URLs during prerender. pg.Pool connects lazily and NEXT_PUBLIC_* in
+    # CI are discarded (the real build runs on the VM from .env.local), so these are
+    # build-only placeholders — never real creds, nothing secret.
+    env:
+      DATABASE_URL: postgres://build:build@localhost:5432/build
+      BETTER_AUTH_SECRET: build-only-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_THE_COMMONS_API_KEY: build-placeholder
     steps:
       - uses: actions/checkout@v4
       - name: Set up pnpm

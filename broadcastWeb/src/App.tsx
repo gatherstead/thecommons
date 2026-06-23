@@ -5,9 +5,11 @@ import JobProgress from "./components/JobProgress";
 import SitePicker from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { loadBundle, saveBundle } from "./lib/persist";
+import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import {
   aiAutofill,
   cancelJob,
+  directRecipe,
   getJob,
   previewBroadcast,
   retryJob,
@@ -99,6 +101,8 @@ const toApiEvent = (draft: EventDraft): EventDraft => ({
     : undefined,
 });
 
+type ExtFillStatus = "idle" | "sending" | "sent" | "error";
+
 export default function App() {
   const [accessCode, setAccessCode] = useState(PERSISTED.accessCode ?? "");
   const [verified, setVerified] = useState(PERSISTED.verified ?? false);
@@ -110,7 +114,9 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiText, setAiText] = useState("");
   const [error, setError] = useState("");
+  const [extFillStatus, setExtFillStatus] = useState<Record<string, ExtFillStatus>>({});
   const jobIdRef = useRef<string | null>(PERSISTED.jobId ?? null);
+  const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
 
@@ -222,6 +228,22 @@ export default function App() {
     }
   };
 
+  const handleExtensionAutofill = async () => {
+    if (!extensionId) return;
+    const sites = [...selected];
+    setExtFillStatus(Object.fromEntries(sites.map((k) => [k, "sending"])));
+    setError("");
+    for (const siteKey of sites) {
+      try {
+        const recipe = await directRecipe(accessCode, toApiEvent(draft), siteKey);
+        const ok = await sendFill(extensionId, recipe);
+        setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "sent" : "error" }));
+      } catch {
+        setExtFillStatus((prev) => ({ ...prev, [siteKey]: "error" }));
+      }
+    }
+  };
+
   // Core reset: clears all form/job state but keeps the verified access code.
   const resetCore = () => {
     jobIdRef.current = null;
@@ -231,6 +253,7 @@ export default function App() {
     setDraft(EMPTY_DRAFT);
     setError("");
     setAiText("");
+    setExtFillStatus({});
   };
 
   // Reset everything for a fresh event, but keep the (verified) access code.
@@ -413,19 +436,55 @@ export default function App() {
             }
             disabled={busy}
           />
+
+          {/* Per-site extension fill status */}
+          {Object.keys(extFillStatus).length > 0 && (
+            <ul className="site-list ext-fill-status">
+              {[...selected].map((key) => {
+                const st = extFillStatus[key] ?? "idle";
+                const label = st === "sending" ? "Opening…" : st === "sent" ? "Tab opened" : st === "error" ? "Failed" : "";
+                return (
+                  <li key={key} className={st === "error" ? "excluded" : undefined}>
+                    <span className="site-name">{key}</span>
+                    {label && <span className="reason">— {label}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
           <div className="actions">
+            {/* Primary: extension autofill */}
+            {!extInstalled ? (
+              <span className="section-note">
+                <a href={WEB_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={recheckExt}>
+                  Install the Commons Broadcast extension
+                </a>{" "}
+                to autofill forms in your browser.
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="dark"
+                onClick={handleExtensionAutofill}
+                disabled={busy || selected.size === 0}
+              >
+                {`Autofill ${selected.size} calendar${selected.size === 1 ? "" : "s"} with extension`}
+              </button>
+            )}
+
+            {/* Oneshot (Playwright dry-run) — kept but disabled */}
             <button
               type="button"
-              className="dark"
+              disabled
               onClick={handleSubmit}
-              disabled={busy || selected.size === 0}
+              title="Oneshot server-side fill is coming soon"
+              style={{ opacity: 0.4, cursor: "not-allowed" }}
             >
-              {busy
-                ? "Filling…"
-                : `Fill & review ${selected.size} calendar${selected.size === 1 ? "" : "s"}`}
+              {`Fill & review ${selected.size} calendar${selected.size === 1 ? "" : "s"}`}
             </button>
             <span className="section-note">
-              Forms are filled for your review first — submit the ready ones below.
+              The extension opens each calendar in a new tab — review and click Submit yourself.
             </span>
           </div>
         </section>

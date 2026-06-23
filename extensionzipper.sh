@@ -1,0 +1,1 @@
+zip -r ../broadcast-extension.zip . -x "*.DS_Store"

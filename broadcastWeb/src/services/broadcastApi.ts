@@ -108,6 +108,17 @@ export const cancelJob = (
 ): Promise<{ job_id: string; status: string; skipped: number }> =>
   post(`/broadcast/jobs/${jobId}/cancel`, { access_code: accessCode });
 
+export const directRecipe = (
+  accessCode: string,
+  event: EventDraft,
+  siteKey: string,
+): Promise<Recipe> =>
+  post<Recipe>("/broadcast/direct-recipe", {
+    access_code: accessCode,
+    event,
+    site_key: siteKey,
+  });
+
 export const getManualRecipe = async (
   accessCode: string,
   jobId: string,

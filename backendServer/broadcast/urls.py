@@ -15,4 +15,5 @@ urlpatterns = [
     path("jobs/<uuid:job_id>/manual/<str:site_key>", views.job_manual_recipe, name="job-manual-recipe"),
     path("mock-form", views.mock_form, name="mock-form"),
     path("ai-autofill", views.ai_autofill, name="ai-autofill"),
+    path("direct-recipe", views.direct_recipe, name="direct-recipe"),
 ]

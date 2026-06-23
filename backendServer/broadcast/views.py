@@ -178,6 +178,27 @@ def job_manual_recipe(request, job_id, site_key):
     return Response(manual_recipe(submission, site_key))
 
 
+@ratelimit(key="ip", rate="30/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([HasBroadcastAccessCode])
+def direct_recipe(request):
+    """Return a fill recipe for a site directly from event data — no job required.
+
+    Backs the extension-autofill-first flow where the SPA sends a recipe to the
+    extension for every selected site without creating a BroadcastSubmission.
+    """
+    site_key = request.data.get("site_key", "")
+    adapter = get_adapter(site_key)
+    if adapter is None or not adapter.recipe_fields:
+        raise Http404
+
+    serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
+    if not serializer.is_valid():
+        return Response({"event": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(adapter.recipe(serializer.to_canonical()))
+
+
 @ratelimit(key="ip", rate="5/m", method="POST", block=True)
 @api_view(["POST"])
 @permission_classes([HasBroadcastAccessCode])

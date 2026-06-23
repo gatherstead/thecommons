@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventDraft } from "../../models/broadcastModels";
 import {
   ApiError,
+  aiAutofill,
   cancelJob,
   getJob,
   getManualRecipe,
@@ -119,6 +120,71 @@ describe("POST wrappers", () => {
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/cancel`);
     expect(JSON.parse(init.body as string)).toEqual({ access_code: "CODE" });
+  });
+});
+
+describe("aiAutofill", () => {
+  it("POSTs to /broadcast/ai-autofill with access_code and text, returns the event", async () => {
+    const eventPayload: EventDraft = {
+      title: "Test Fest",
+      description: "A festival",
+      start_datetime: "2026-10-17T16:00",
+      end_datetime: "2026-10-17T23:00",
+      all_day: false,
+      venue_name: "The Venue",
+      address_line1: "1 Main St",
+      state: "NC",
+      zip: "27701",
+      locality: ["durham"],
+      categories: ["festival"],
+      event_url: "",
+      ticket_url: "",
+      price: "",
+      is_free: false,
+      image_url: "",
+      organizer_name: "",
+      contact_email: "",
+      contact_phone: "",
+    };
+    fetchMock.mockResolvedValue(jsonResponse({ event: eventPayload }));
+
+    const result = await aiAutofill("CODE", "paste event text here");
+
+    const [url, init] = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/broadcast/ai-autofill`);
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(init.body as string)).toEqual({
+      access_code: "CODE",
+      text: "paste event text here",
+    });
+    expect(result).toEqual({ event: eventPayload });
+  });
+
+  it("maps 400 (blank text) to an error", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ text: ["blank"] }, { ok: false, status: 400 }));
+
+    await expect(aiAutofill("CODE", "")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("problem"),
+    });
+  });
+
+  it("maps 403 (bad access code / rate limit) to the access-code message", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 403 }));
+
+    await expect(aiAutofill("BAD", "some text")).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("Access code not recognized"),
+    });
+  });
+
+  it("maps 502 (LLM down) to a generic failure message", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 502 }));
+
+    const err = await aiAutofill("CODE", "text").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(502);
   });
 });
 

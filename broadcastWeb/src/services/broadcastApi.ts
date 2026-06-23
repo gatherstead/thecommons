@@ -91,6 +91,15 @@ export const submitReal = (
     site_keys: siteKeys,
   });
 
+export const aiAutofill = (
+  accessCode: string,
+  text: string,
+): Promise<{ event: EventDraft }> =>
+  post<{ event: EventDraft }>("/broadcast/ai-autofill", {
+    access_code: accessCode,
+    text,
+  });
+
 // Stop a job: the backend skips pending targets and marks it canceled so the
 // worker won't pick up the remaining sites.
 export const cancelJob = (

@@ -77,7 +77,7 @@ The imperative `fill_and_submit` is the source of truth for the headless path. A
 - `RecipeField(selector, type, resolve, required, label, hint, recipe_only)` — `resolve(ev)` returns a pre-formatted string (using the same `_helpers` formatters as the imperative code). `recipe_only=True` → exported in the recipe but skipped by the shared fill loop.
 - `SiteAdapter.recipe_fields`, `submit_selector`, `captcha_hint`, `recipe_field_specs(ev)` (override when the field set depends on the event), and `recipe(ev) -> dict`.
 - `FILLABLE_TYPES = {text, textarea, date, time, select}` — what the shared loop (`_helpers.apply_specs`) fills. Widget types (`radio/checkbox/file/select2/terms/manual_widget`) are always emitted by `recipe()` even when empty.
-- Recipe-enabled sites so far: `abc11_community`, `triangle_on_the_cheap`, `triangle_weekender`.
+- Recipe-enabled sites so far: `abc11_community`, `triangle_on_the_cheap`, `triangle_weekender`, `visit_raleigh`, `chatham_arts`, `chatham_chamber`. The remaining Tier-1 sites (`fun4raleighkids`, `chapelboro`, `explore_pittsboro`, `shop_pittsboro`) are login-gated, JS-only, or bot-blocked with no deterministic public form — their adapters carry no recipe and return `needs_manual` after detecting the login wall / captcha / missing form.
 
 Recipe JSON shape (served by `GET /broadcast/jobs/<id>/manual/<site_key>`):
 
@@ -114,6 +114,7 @@ All gated by `X-Broadcast-Access-Code`; mutating endpoints are rate-limited.
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/broadcast/preview` | Eligible/excluded target sites for an event (10/m) |
+| POST | `/broadcast/ai-autofill` | LLM-extract event fields from pasted text into the form draft (5/m) |
 | POST | `/broadcast/submit` | Create submission + targets, enqueue (3/m) |
 | GET | `/broadcast/jobs/<uuid>` | Job status + per-target detail |
 | POST | `/broadcast/jobs/<uuid>/retry` | Re-queue selected targets (10/m) |
@@ -124,6 +125,8 @@ All gated by `X-Broadcast-Access-Code`; mutating endpoints are rate-limited.
 | GET | `/broadcast/mock-form` | Dev-only (`DEBUG`) mock submission form |
 
 `manual/<site_key>` gating: 404 (unknown site / no recipe / missing target), 409 (status ≠ `needs_manual`), 200 (recipe).
+
+**AI autofill** (`/broadcast/ai-autofill`, `broadcast/autofill.py`) is the *only* place broadcast touches an LLM, and it is strictly operator-side: it turns a pasted blob of free text into a draft event the operator reviews before doing anything. It uses Gemini Flash-Lite, mirrors the `events` ingestion's genai usage but imports nothing from `events`/`ingestion` (isolation contract), filters `locality`/`categories` to the controlled vocab, and only returns field values — it never previews, submits, or fills a calendar. This does **not** relax the adapter rule: adapters still never invoke an LLM at runtime.
 
 ## Management commands
 

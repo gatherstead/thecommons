@@ -6,6 +6,7 @@ import SitePicker from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { loadBundle, saveBundle } from "./lib/persist";
 import {
+  aiAutofill,
   cancelJob,
   getJob,
   previewBroadcast,
@@ -59,6 +60,30 @@ const EMPTY_DRAFT: EventDraft = {
   contact_phone: "",
 };
 
+// Returns true when the draft is functionally pristine — nothing the user has
+// entered yet. State "NC" is the default and counts as empty; any other state
+// value means the user (or AI) has touched it.
+export const isDraftEmpty = (draft: EventDraft): boolean =>
+  draft.title.trim() === "" &&
+  draft.description.trim() === "" &&
+  draft.start_datetime === "" &&
+  (draft.end_datetime === undefined || draft.end_datetime === "") &&
+  !draft.all_day &&
+  draft.venue_name.trim() === "" &&
+  draft.address_line1.trim() === "" &&
+  (draft.state === "" || draft.state === "NC") &&
+  draft.zip.trim() === "" &&
+  draft.locality.length === 0 &&
+  draft.categories.length === 0 &&
+  (draft.event_url === undefined || draft.event_url.trim() === "") &&
+  (draft.ticket_url === undefined || draft.ticket_url.trim() === "") &&
+  (draft.price === undefined || draft.price.trim() === "") &&
+  !draft.is_free &&
+  (draft.image_url === undefined || draft.image_url.trim() === "") &&
+  (draft.organizer_name === undefined || draft.organizer_name.trim() === "") &&
+  (draft.contact_email === undefined || draft.contact_email.trim() === "") &&
+  (draft.contact_phone === undefined || draft.contact_phone.trim() === "");
+
 const POLL_MS = 3000;
 
 const PERSISTED = loadBundle();
@@ -82,6 +107,8 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set(PERSISTED.selected ?? []));
   const [job, setJob] = useState<JobDetail | null>(PERSISTED.job ?? null);
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiText, setAiText] = useState("");
   const [error, setError] = useState("");
   const jobIdRef = useRef<string | null>(PERSISTED.jobId ?? null);
 
@@ -195,14 +222,38 @@ export default function App() {
     }
   };
 
-  // Reset everything for a fresh event, but keep the (verified) access code.
-  const startOver = () => {
+  // Core reset: clears all form/job state but keeps the verified access code.
+  const resetCore = () => {
     jobIdRef.current = null;
     setJob(null);
     setPreview(null);
     setSelected(new Set());
     setDraft(EMPTY_DRAFT);
     setError("");
+    setAiText("");
+  };
+
+  // Reset everything for a fresh event, but keep the (verified) access code.
+  const startOver = resetCore;
+
+  // Top-of-page reset button handler (production-visible).
+  const resetForm = resetCore;
+
+  const handleAiAutofill = async () => {
+    setAiBusy(true);
+    setError("");
+    try {
+      const result = await aiAutofill(accessCode, aiText);
+      setDraft({ ...EMPTY_DRAFT, ...result.event });
+      setPreview(null);
+      setJob(null);
+      setSelected(new Set());
+      setAiText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI autofill failed.");
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const draftValid =
@@ -228,6 +279,15 @@ export default function App() {
             ⚡ Dev autofill
           </button>
         )}
+        <button
+          type="button"
+          className="reset-form"
+          onClick={resetForm}
+          disabled={busy || aiBusy || job !== null}
+          title="Clear the form and start over"
+        >
+          Reset form
+        </button>
         <h1>BROADCAST SYNDICATE</h1>
         <p className="tagline">One event in — many local calendars out.</p>
         <div className="rule-double" />
@@ -265,12 +325,56 @@ export default function App() {
 
       <section className="section">
         <h2>AI Autofill</h2>
-        <div className="actions">
-          <button type="button" disabled title="Coming soon">
-            ✨ Generate from a link or flyer
-          </button>
-          <span className="section-note">Coming soon — paste an event link and we'll fill the form for you.</span>
-        </div>
+        <p className="hint">
+          Paste a raw event description, email, or flyer text below and the AI will fill
+          the form fields for you. Only works on a completely empty form — reset first if
+          you've already entered anything.
+        </p>
+        {!verified ? (
+          <p className="section-note">Verify your access code to begin.</p>
+        ) : !isDraftEmpty(draft) ? (
+          <>
+            <textarea
+              className="ai-autofill-textarea"
+              disabled
+              placeholder="Paste an event description / flyer text / email…"
+              value={aiText}
+            />
+            <div className="actions">
+              <button type="button" disabled>
+                ✨ Generate from text
+              </button>
+              <span className="section-note">
+                AI autofill works only on an empty form — click Reset to clear it first.
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <textarea
+              className="ai-autofill-textarea"
+              placeholder="Paste an event description / flyer text / email…"
+              value={aiText}
+              onChange={(e) => setAiText(e.target.value)}
+              disabled={aiBusy || job !== null}
+            />
+            <div className="actions">
+              <button
+                type="button"
+                onClick={handleAiAutofill}
+                disabled={
+                  !verified ||
+                  aiText.trim() === "" ||
+                  !isDraftEmpty(draft) ||
+                  aiBusy ||
+                  job !== null
+                }
+              >
+                {aiBusy ? "Generating…" : "✨ Generate from text"}
+              </button>
+            </div>
+          </>
+        )}
       </section>
 
       <section className={`section${verified ? "" : " form-dim"}`}>

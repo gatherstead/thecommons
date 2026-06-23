@@ -335,10 +335,10 @@ class ManualRecipeTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_adapter_without_recipe_not_found(self):
-        # visit_raleigh has no recipe_fields, so manual review is unavailable
-        # even when the target is awaiting it.
-        self._target("visit_raleigh", "needs_manual")
-        resp = self._get("visit_raleigh")
+        # shop_pittsboro is login-gated with no recipe_fields, so manual review
+        # is unavailable even when the target is awaiting it.
+        self._target("shop_pittsboro", "needs_manual")
+        resp = self._get("shop_pittsboro")
         self.assertEqual(resp.status_code, 404)
 
     def test_no_target_for_site_not_found(self):

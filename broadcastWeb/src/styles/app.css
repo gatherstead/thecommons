@@ -48,7 +48,7 @@ a:hover {
   padding: 1.5rem 1rem 4rem;
 }
 
-/* Dev-only autofill button */
+/* Masthead utility buttons (dev autofill + production reset) */
 .masthead {
   position: relative;
 }
@@ -67,6 +67,51 @@ a:hover {
 }
 .dev-autofill:hover {
   background: #ffe69c;
+}
+
+/* Top reset button — visible in production, left of centre */
+.reset-form {
+  position: absolute;
+  top: 0.75rem;
+  left: 0;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  background: var(--color-bg-alt);
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.reset-form:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.reset-form:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* AI autofill textarea */
+.ai-autofill-textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  background: white;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  min-height: 7rem;
+  resize: vertical;
+  display: block;
+  margin-top: 0.5rem;
+}
+.ai-autofill-textarea:disabled {
+  background: var(--color-bg-alt);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
 }
 
 /* Masthead */

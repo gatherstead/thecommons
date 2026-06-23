@@ -1,44 +1,46 @@
-from broadcast.adapters._generic import FieldSpec, standard_fill_and_submit
-from broadcast.adapters.base import SiteAdapter
+"""Explore Pittsboro events.
+
+explorepittsboro.com is a Wix build; the configured URL
+(explorepittsboro.com/events) is an events LISTING page, not a submission
+form. The scaffold capture (scaffold_adapter explore_pittsboro) found only a
+Wix search box and a newsletter email signup — no event-submission controls.
+Explore Pittsboro has no public self-serve event form, so this adapter does
+not submit automatically: it loads the page, screenshots it, and returns
+needs_manual so a human can add the event through the site's listing/contact
+process. recipe_fields is intentionally left unset so check_recipes skips it.
+"""
+from broadcast.adapters import _helpers as h
+from broadcast.adapters.base import SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
-
-_CAT_MAP = {
-    "music": "Music", "arts": "Arts", "family-kids": "Family",
-    "food-drink": "Food & Drink", "festival": "Festival", "market": "Market",
-    "literary": "Arts", "community": "Community", "nightlife": "Nightlife",
-    "wellness": "Wellness", "education": "Education",
-}
-
-_FIELDS = {
-    "title": FieldSpec("Event Title", required=True),
-    "description": FieldSpec("Description", required=True),
-    "start_date": FieldSpec("Start Date", required=True),
-    "start_time": FieldSpec("Start Time"),
-    "end_date": FieldSpec("End Date"),
-    "venue_name": FieldSpec("Venue", required=True),
-    "address": FieldSpec("Address"),
-    "event_url": FieldSpec("Website"),
-    "price": FieldSpec("Price"),
-    "contact_email": FieldSpec("Email"),
-}
 
 
 class ExplorePittsboroAdapter(SiteAdapter):
     key = "explore_pittsboro"
     name = "Explore Pittsboro"
-    #I dont know aobut this on
+    # Wix listing page — no public submission form (see module docstring).
     submission_url = "https://www.explorepittsboro.com/events"
     requires_auth = False
     eligibility = Eligibility(
         localities=frozenset({"pittsboro", "chatham"}), categories=frozenset()
     )
+    # recipe_fields intentionally absent: no public form to fill.
 
     def fill_and_submit(self, page, ev, ctx):
-        return standard_fill_and_submit(
-            self, page, ev, ctx,
-            fields=_FIELDS,
-            cat_map=_CAT_MAP,
-            categories_label="Category",
-            image_label="Image",
-            submit_button="Submit",
+        try:
+            page.goto(self.submission_url, timeout=ctx.timeout_ms)
+            page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
+        except Exception as exc:
+            return TargetResult(status="needs_manual",
+                                error=f"could not load events page: {exc}")
+        h.dismiss_consent(page)
+        shot = h.take_screenshot(page, ctx, self.key)
+        if h.has_captcha(page):
+            return TargetResult(status="needs_manual", error="captcha/bot-check present",
+                                screenshot_path=shot)
+        return TargetResult(
+            status="needs_manual",
+            error="Explore Pittsboro has no public event-submission form (Wix "
+                  "listing page); add the event via the site's listing/contact "
+                  "process manually.",
+            screenshot_path=shot,
         )

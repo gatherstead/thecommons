@@ -3,7 +3,7 @@
   "name": "The Commons — Broadcast",
   "version": "0.1.0",
   "description": "Autofills community event calendars for manual review. You solve the captcha and click submit.",
-  "permissions": ["scripting", "tabs", "storage"],
+  "permissions": ["scripting", "storage"],
   "host_permissions": [
     "https://www.trumba.com/*",
     "https://triangleonthecheap.com/*",

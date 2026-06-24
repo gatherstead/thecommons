@@ -57,3 +57,6 @@ and review — **you** handle the account and submission.
 
 Firefox; reporting submission success back to the backend; porting the full
 server-side imperative logic into JS beyond the hardcoded select2/terms drivers.
+
+
+public key for manifest: "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7U2jt6RijeKBO0g+kbZvnprWrcle9RIz6bunNk3Ev5sLrtYYlNWP4hKU3OTqP/aR+CLI/mZ/O6j7RRW25RwGj2kxJPNrPo0mDxvYL6AnoL5dRbFqfQCB6EQG/PeZIK94k2VJIRdBuvviHAdp9P3Qbe/+b33HUiOFV+lmHLHnQUHyBV5u/A3fKEGOwvb0aUBBdxgTZYplmu0EdmViD5vgBHYk1xJjF98cJk4400EzOjudsvHb+Aij9FlfY/VvJv7i/e53FjTZQCJJEzAd22BkG2SIbZnlAd7dAjA34ETqYVpYNKolVHxzCxVMBcHsazIZXfR2FTzICfX6MFqSTA4DwIDAQAB"

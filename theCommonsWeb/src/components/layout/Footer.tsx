@@ -115,6 +115,10 @@ export function Footer() {
                 <div className="max-w-300 mx-auto px-4 py-3 text-center">
                     <p className="text-xs text-(--color-text-muted)">
                         &copy; {year} The Commons &bull; Chapel Hill Area, N.C. &bull; All rights reserved.
+                        {' · '}
+                        <Link href="/privacy-policy" className="no-underline hover:text-(--color-accent) transition-colors">
+                            Privacy Policy
+                        </Link>
                     </p>
                 </div>
             </div>

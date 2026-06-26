@@ -6,12 +6,14 @@ colors), but usable on its own:
     uv run python manage.py healthcheck            # STATUS|name|detail lines
     uv run python manage.py healthcheck --json     # machine-readable JSON
 
-Checks: Postgres `SELECT 1`, Redis broker ping (DB 0), Django cache round-trip
-(DB 1), a Celery worker `control.ping`, and every django-celery-beat
-PeriodicTask (enabled + last-run freshness). Exits non-zero if any *critical*
-check fails so it can feed monitoring; staleness is a warning, not a failure.
+Checks: settings sanity (`--require-prod`), Postgres `SELECT 1`, Redis broker
+ping (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and
+every django-celery-beat PeriodicTask (enabled + last-run freshness). Exits
+non-zero if any *critical* check fails so it can feed monitoring; staleness is a
+warning, not a failure.
 """
 import json
+import os
 
 from django.conf import settings
 from django.core.cache import cache
@@ -20,6 +22,10 @@ from django.db import connection
 from django.utils import timezone
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
+
+# Hosts that prove nothing about public reachability — if ALLOWED_HOSTS contains
+# only these, the app is on dev settings and will 400 every real request.
+LOCALHOST_ONLY = {"localhost", "127.0.0.1", "[::1]"}
 
 # Per-task freshness windows (hours). A seeded task whose last_run_at is older
 # than this — or that has never run — is flagged WARN. Override on the CLI.
@@ -41,9 +47,15 @@ class Command(BaseCommand):
             "--celery-timeout", type=float, default=1.0,
             help="Seconds to wait for a Celery worker to answer control.ping (default 1.0).",
         )
+        parser.add_argument(
+            "--require-prod", action="store_true", dest="require_prod",
+            help="Assert production-safe settings (DEBUG off, public ALLOWED_HOSTS). "
+                 "Set by deploy/healthcheck.sh; catches dev settings leaking into prod.",
+        )
 
     def handle(self, *args, **options):
         results: list[tuple[str, str, str]] = []
+        results.append(self._check_config(options["require_prod"]))
         results.append(self._check_db())
         results.append(self._check_redis_broker())
         results.append(self._check_cache())
@@ -63,6 +75,32 @@ class Command(BaseCommand):
             raise SystemExit(1)
 
     # ── individual probes ────────────────────────────────────────────────────
+
+    def _check_config(self, require_prod: bool) -> tuple[str, str, str]:
+        """Surface which settings module is live, and (with --require-prod) fail
+        if it's the dev module leaking into production.
+
+        The June 2026 outage was exactly this: DJANGO_ENV unset -> dev.py ->
+        DEBUG=True and localhost-only ALLOWED_HOSTS -> every request to
+        api.thecommons.town returned DisallowedHost (400). Both signals are
+        checked here so the deploy health check turns that into a loud FAIL.
+        """
+        env = os.environ.get("DJANGO_ENV") or "(unset)"
+        hosts = [h for h in settings.ALLOWED_HOSTS if h]
+        summary = f"DJANGO_ENV={env}, DEBUG={settings.DEBUG}, ALLOWED_HOSTS={hosts or '[]'}"
+
+        if not require_prod:
+            # Local/dev run — report for visibility, never fail.
+            return (OK, "config", summary)
+
+        problems = []
+        if settings.DEBUG:
+            problems.append("DEBUG=True (dev settings active — set DJANGO_ENV=prod)")
+        if not set(hosts) - LOCALHOST_ONLY:
+            problems.append("ALLOWED_HOSTS is localhost-only — public host will 400")
+        if problems:
+            return (FAIL, "config", f"{'; '.join(problems)} [{summary}]")
+        return (OK, "config", summary)
 
     def _check_db(self) -> tuple[str, str, str]:
         try:

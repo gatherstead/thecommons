@@ -14,6 +14,15 @@ export interface EventsPage {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 const API_KEY = process.env.NEXT_PUBLIC_THE_COMMONS_API_KEY || '';
 
+// Build a descriptive Error from a failed response so console logs show the real
+// cause (status + body) instead of a generic "failed" message. A backend
+// misconfig (e.g. DisallowedHost 400) otherwise looks identical to "0 events".
+const httpError = async (method: string, url: string, response: Response): Promise<Error> => {
+    const body = await response.text().catch(() => '');
+    const snippet = body ? `: ${body.slice(0, 300)}` : '';
+    return new Error(`${method} ${url} -> ${response.status} ${response.statusText}${snippet}`);
+};
+
 
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
     const dateObj = new Date(backendEvent.date);
@@ -52,8 +61,9 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
 // --- GET ALL TOWNS ---
 export const getTowns = async (): Promise<TownOption[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events/towns/`);
-        if (!response.ok) throw new Error('Failed to fetch towns');
+        const url = `${API_BASE}/events/towns/`;
+        const response = await fetch(url);
+        if (!response.ok) throw await httpError('GET', url, response);
         return await response.json();
     } catch (error) {
         console.error('Error fetching towns:', error);
@@ -64,8 +74,9 @@ export const getTowns = async (): Promise<TownOption[]> => {
 // --- GET ALL CATEGORIES ---
 export const getCategories = async (): Promise<CategoryOption[]> => {
     try {
-        const response = await fetch(`${API_BASE}/events/categories/`);
-        if (!response.ok) throw new Error('Failed to fetch categories');
+        const url = `${API_BASE}/events/categories/`;
+        const response = await fetch(url);
+        if (!response.ok) throw await httpError('GET', url, response);
         return await response.json();
     } catch (error) {
         console.error('Error fetching categories:', error);
@@ -103,7 +114,7 @@ export const getEvents = async (params?: {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to fetch events');
+            throw await httpError('GET', url, response);
         }
 
         const data: PaginatedBackendEvents = await response.json();

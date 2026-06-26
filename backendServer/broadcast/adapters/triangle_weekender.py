@@ -22,6 +22,20 @@ from broadcast.routing import TRIANGLE, Eligibility
 
 _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 entry
 
+# Locality slugs that are county/region-level only — not useful as a city name.
+_REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
+
+
+def _city(ev) -> str:
+    """Derive a human-readable city from locality tags, mirroring
+    triangle_on_the_cheap._city.  Skips county/region-only slugs
+    (wake, chatham, triangle) and falls back to ev.city."""
+    for loc in ev.locality:
+        if loc not in _REGION_ONLY_SLUGS:
+            return loc.replace("-", " ").title()
+    return ev.city
+
+
 _COUNTY_MAP = {
     "durham": "Durham", "chatham": "Chatham", "pittsboro": "Chatham",
     "chapel-hill": "Orange", "carrboro": "Orange",
@@ -81,10 +95,38 @@ class TriangleWeekenderAdapter(SiteAdapter):
             specs.append(RecipeField("#saved_tribe_venue", "select2", lambda ev: ev.venue_name,
                                      recipe_only=True, label="Venue",
                                      hint="pick the match or choose Create"))
+            # Venue detail inputs — exported so the extension pre-fills them when
+            # the user chooses "Create" (existing venues self-populate). Selectors
+            # verified in broadcast/captures/triangle_weekender.html. City maps
+            # from our locality; website maps from event_url.
+            _venue_create_hint = "only applies if you choose Create above"
+            specs += [
+                RecipeField("input[name='venue[Address][]']", "text",
+                            lambda ev: ev.address_line1, recipe_only=True,
+                            label="Venue address", hint=_venue_create_hint),
+                RecipeField("input[name='venue[City][]']", "text", _city,
+                            recipe_only=True, label="Venue city", hint=_venue_create_hint),
+                RecipeField("#StateProvinceText", "text", lambda ev: ev.state,
+                            recipe_only=True, label="Venue state", hint=_venue_create_hint),
+                RecipeField("#EventZip", "text", lambda ev: ev.zip,
+                            recipe_only=True, label="Venue ZIP", hint=_venue_create_hint),
+                RecipeField("input[name='venue[URL][]']", "text", lambda ev: ev.event_url,
+                            recipe_only=True, label="Venue website", hint=_venue_create_hint),
+            ]
         if ev.organizer_name:
             specs.append(RecipeField("#saved_tribe_organizer", "select2",
                                      lambda ev: ev.organizer_name, recipe_only=True,
                                      label="Organizer", hint="pick the match or choose Create"))
+            # Organizer detail inputs — exported so the extension pre-fills the
+            # contact email/phone when the user chooses "Create" above.
+            specs += [
+                RecipeField("#organizer-email", "text", lambda ev: ev.contact_email,
+                            recipe_only=True, label="Organizer email",
+                            hint="only applies if you choose Create above"),
+                RecipeField("#organizer-phone", "text", lambda ev: ev.contact_phone,
+                            recipe_only=True, label="Organizer phone",
+                            hint="only applies if you choose Create above"),
+            ]
         for county in sorted({_COUNTY_MAP[loc] for loc in ev.locality if loc in _COUNTY_MAP}):
             specs.append(RecipeField(
                 f"input[name='_ecp_custom_2[]'][value='{county}']", "checkbox",
@@ -122,13 +164,17 @@ class TriangleWeekenderAdapter(SiteAdapter):
 
         # Venue: reuse an existing venue on a close match, else create. Only fill
         # detail fields when we created a new one (existing venues self-populate).
+        # City is derived from our locality tag; the website maps from event_url
+        # (Venue URL field, id=EventWebsite name=venue[URL][] — verified in the
+        # committed capture broadcast/captures/triangle_weekender.html).
         if ev.venue_name:
             if _select2_match_or_create(page, "saved_tribe_venue", ev.venue_name) == "created":
                 for selector, value in [
                     ("input[name='venue[Address][]']", ev.address_line1),
-                    ("input[name='venue[City][]']", ev.city),
+                    ("input[name='venue[City][]']", _city(ev)),
                     ("#StateProvinceText", ev.state),
                     ("#EventZip", ev.zip),
+                    ("input[name='venue[URL][]']", ev.event_url),
                 ]:
                     _try_fill(page, selector, value)
 

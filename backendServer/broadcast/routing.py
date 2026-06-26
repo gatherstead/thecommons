@@ -20,6 +20,45 @@ CATEGORIES = frozenset({
 
 TRIANGLE = LOCALITIES  # region-wide sites accept every Triangle locality
 
+# Human-readable labels for locality slugs and category slugs.
+# Deliberately local — do NOT import from events/.
+_LOCALITY_LABELS: dict[str, str] = {
+    "pittsboro":   "Pittsboro",
+    "chatham":     "Chatham County",
+    "chapel-hill": "Chapel Hill",
+    "carrboro":    "Carrboro",
+    "durham":      "Durham",
+    "raleigh":     "Raleigh",
+    "cary":        "Cary",
+    "wake":        "Wake County",
+    "triangle":    "the Triangle",
+}
+
+_CATEGORY_LABELS: dict[str, str] = {
+    "music":       "music",
+    "arts":        "arts",
+    "family-kids": "family/kids",
+    "wellness":    "wellness",
+    "food-drink":  "food & drink",
+    "festival":    "festival",
+    "market":      "market",
+    "literary":    "literary",
+    "community":   "community",
+    "nightlife":   "nightlife",
+    "education":   "education",
+}
+
+
+def _join_labels(labels: list[str]) -> str:
+    """Join a list of labels with commas and an ampersand before the last."""
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} & {labels[1]}"
+    return ", ".join(labels[:-1]) + " & " + labels[-1]
+
 
 @dataclass(frozen=True)
 class Eligibility:
@@ -28,9 +67,21 @@ class Eligibility:
 
     def matches(self, ev: CanonicalEvent) -> tuple[bool, str]:
         if self.localities and not (set(ev.locality) & self.localities):
-            return False, f"localities {ev.locality} not covered"
+            if self.localities == TRIANGLE:
+                loc_desc = "the Triangle"
+            else:
+                labels = [_LOCALITY_LABELS.get(s, s) for s in sorted(self.localities)]
+                loc_desc = _join_labels(labels)
+            return False, (
+                f"Covers {loc_desc} only — "
+                "check one of those localities to include it."
+            )
         if self.categories and not (set(ev.categories) & self.categories):
-            return False, f"none of {ev.categories} in accepted categories"
+            labels = [_CATEGORY_LABELS.get(s, s) for s in sorted(self.categories)]
+            cat_desc = _join_labels(labels)
+            return False, (
+                f"Only accepts {cat_desc} events — add a matching category."
+            )
         return True, ""
 
 

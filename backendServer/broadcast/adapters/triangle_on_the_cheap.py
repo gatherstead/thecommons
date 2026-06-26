@@ -6,10 +6,11 @@ we fill every field (the before-submit screenshot shows the completed form),
 then return needs_manual instead of clicking. Dry runs still fill + screenshot
 so the field mapping can be verified.
 
-The form also asks for submitter/org identity we don't carry on the canonical
-event. For now we hardcode a single "The Commons" identity (_SUBMITTER);
-later this becomes a per-client lookup keyed by an access code —
-see TODO(per-client-access-codes).
+Submitter/org identity comes from the user-entered Contact block:
+ev.organizer_name feeds both #input_5_1 (Organization name) and #input_5_4
+(Your name); ev.contact_email feeds #input_5_5 (Your email).
+
+Two static fields remain: position (#input_5_3) and heard_about (#input_5_22).
 
 Field input_26 ("Email", autocomplete=new-password) is an anti-spam honeypot —
 intentionally left blank.
@@ -18,15 +19,9 @@ from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import TRIANGLE, Eligibility
 
-# TODO(per-client-access-codes): replace with a DB-backed identity lookup
-# (each client gets an access code mapping to their org/contact details).
-_SUBMITTER = {
-    "org_name": "The Commons",
-    "position": "Editor",
-    "submitter_name": "The Commons",
-    "submitter_email": "broadcast@thecommons.org",  # TODO confirm real address
-    "heard_about": "Word of mouth",
-}
+# Static submitter defaults — position and heard_about are not user-entered.
+_POSITION = "Editor"
+_HEARD_ABOUT = "Word of mouth"
 
 
 def _dates(ev) -> str:
@@ -50,12 +45,12 @@ def _end(ev):
 # Plain fillable fields. The anti-spam honeypot #input_5_26 is intentionally
 # absent here (filling it flags the submission as a bot).
 _RECIPE_FIELDS = [
-    RecipeField("#input_5_1", "text", lambda ev: _SUBMITTER["org_name"], required=True,
+    RecipeField("#input_5_1", "text", lambda ev: ev.organizer_name, required=True,
                 label="Organization name"),
-    RecipeField("#input_5_3", "text", lambda ev: _SUBMITTER["position"], label="Your position"),
-    RecipeField("#input_5_4", "text", lambda ev: _SUBMITTER["submitter_name"], required=True,
+    RecipeField("#input_5_3", "text", lambda ev: _POSITION, label="Your position"),
+    RecipeField("#input_5_4", "text", lambda ev: ev.organizer_name, required=True,
                 label="Your name"),
-    RecipeField("#input_5_5", "text", lambda ev: _SUBMITTER["submitter_email"], required=True,
+    RecipeField("#input_5_5", "text", lambda ev: ev.contact_email, required=True,
                 label="Your email"),
     RecipeField("#input_5_6", "text", lambda ev: ev.title, required=True, label="Event title"),
     RecipeField("#input_5_7", "textarea", lambda ev: ev.description, required=True,
@@ -72,7 +67,7 @@ _RECIPE_FIELDS = [
     RecipeField("#input_5_14", "text", lambda ev: ev.event_url, required=True, label="Event URL"),
     RecipeField("#input_5_16", "text", lambda ev: "0" if ev.is_free else ev.price, required=True,
                 label="Cost"),
-    RecipeField("#input_5_22", "text", lambda ev: _SUBMITTER["heard_about"], label="How heard"),
+    RecipeField("#input_5_22", "text", lambda ev: _HEARD_ABOUT, label="How heard"),
 ]
 
 

@@ -4,7 +4,7 @@ import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
-import { loadBundle, saveBundle } from "./lib/persist";
+import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import {
   aiAutofill,
@@ -13,7 +13,6 @@ import {
   getJob,
   previewBroadcast,
   retryJob,
-  submitBroadcast,
   submitReal,
 } from "./services/broadcastApi";
 
@@ -86,9 +85,25 @@ export const isDraftEmpty = (draft: EventDraft): boolean =>
   (draft.contact_email === undefined || draft.contact_email.trim() === "") &&
   (draft.contact_phone === undefined || draft.contact_phone.trim() === "");
 
+// Returns friendly labels for blank optional fields. Mirrors the empties logic
+// in isDraftEmpty for the optional subset of fields.
+export const unfilledOptionalFields = (draft: EventDraft): string[] => {
+  const missing: string[] = [];
+  if (!draft.end_datetime || draft.end_datetime === "") missing.push("Ends");
+  if (!draft.event_url || draft.event_url.trim() === "") missing.push("Event Page URL");
+  if (!draft.ticket_url || draft.ticket_url.trim() === "") missing.push("Ticket URL");
+  if (!draft.price || draft.price.trim() === "") missing.push("Price");
+  if (!draft.image_url || draft.image_url.trim() === "") missing.push("Image URL");
+  if (!draft.organizer_name || draft.organizer_name.trim() === "") missing.push("Contact Name");
+  if (!draft.contact_email || draft.contact_email.trim() === "") missing.push("Contact Email");
+  if (!draft.contact_phone || draft.contact_phone.trim() === "") missing.push("Contact Phone");
+  return missing;
+};
+
 const POLL_MS = 3000;
 
-const PERSISTED = loadBundle();
+const SESSION = loadSession();
+const DRAFT = loadDraft();
 
 // datetime-local gives a naive local string; send an unambiguous instant.
 const toApiEvent = (draft: EventDraft): EventDraft => ({
@@ -101,38 +116,44 @@ const toApiEvent = (draft: EventDraft): EventDraft => ({
     : undefined,
 });
 
-type ExtFillStatus = "idle" | "sending" | "sent" | "error";
+type ExtFillStatus =
+  | "idle"
+  | "sending"
+  | "sent"
+  | "error"
+  | "ready"
+  | "filling"
+  | "submitted"
+  | "unavailable";
 
 export default function App() {
-  const [accessCode, setAccessCode] = useState(PERSISTED.accessCode ?? "");
-  const [verified, setVerified] = useState(PERSISTED.verified ?? false);
-  const [draft, setDraft] = useState<EventDraft>(PERSISTED.draft ?? EMPTY_DRAFT);
-  const [preview, setPreview] = useState<PreviewResult | null>(PERSISTED.preview ?? null);
-  const [selected, setSelected] = useState<Set<string>>(new Set(PERSISTED.selected ?? []));
-  const [job, setJob] = useState<JobDetail | null>(PERSISTED.job ?? null);
+  const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
+  const [verified, setVerified] = useState(SESSION.verified ?? false);
+  const [draft, setDraft] = useState<EventDraft>(DRAFT.draft ?? EMPTY_DRAFT);
+  const [preview, setPreview] = useState<PreviewResult | null>(DRAFT.preview ?? null);
+  const [selected, setSelected] = useState<Set<string>>(new Set(DRAFT.selected ?? []));
+  const [job, setJob] = useState<JobDetail | null>(DRAFT.job ?? null);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiText, setAiText] = useState("");
   const [error, setError] = useState("");
   const [extFillStatus, setExtFillStatus] = useState<Record<string, ExtFillStatus>>({});
-  const jobIdRef = useRef<string | null>(PERSISTED.jobId ?? null);
+  const [speedSubmit, setSpeedSubmit] = useState(false);
+  const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
 
-  // Persist the whole page while there's unfinished work; saveBundle clears the
-  // saved state once a job reaches a terminal status.
+  // Session: you stay "signed in" with your access code across events/refreshes.
   useEffect(() => {
-    saveBundle({
-      accessCode,
-      verified,
-      draft,
-      preview,
-      selected: [...selected],
-      job,
-      jobId: jobIdRef.current,
-    });
-  }, [accessCode, verified, draft, preview, selected, job]);
+    saveSession({ accessCode, verified });
+  }, [accessCode, verified]);
+
+  // Draft: the event you're working on, auto-saved until an explicit start-over
+  // (resetCore clears it). Survives refreshes even once the job finishes.
+  useEffect(() => {
+    saveDraft({ draft, preview, selected: [...selected], job, jobId: jobIdRef.current });
+  }, [draft, preview, selected, job]);
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
@@ -163,27 +184,6 @@ export default function App() {
       setSelected(new Set(result.eligible.map((s) => s.site_key)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Preview failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSubmit = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      // Fill-first: every broadcast starts as a dry run so the operator can
-      // review, then submits "ready" sites for real from the progress panel.
-      const { job_id } = await submitBroadcast(
-        accessCode,
-        toApiEvent(draft),
-        [...selected],
-        true,
-      );
-      jobIdRef.current = job_id;
-      setJob(await getJob(accessCode, job_id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Submit failed.");
     } finally {
       setBusy(false);
     }
@@ -228,24 +228,27 @@ export default function App() {
     }
   };
 
-  const handleExtensionAutofill = async () => {
-    if (!extensionId) return;
-    const sites = [...selected];
-    setExtFillStatus(Object.fromEntries(sites.map((k) => [k, "sending"])));
-    setError("");
-    for (const siteKey of sites) {
-      try {
-        const recipe = await directRecipe(accessCode, toApiEvent(draft), siteKey);
-        const ok = await sendFill(extensionId, recipe);
-        setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "sent" : "error" }));
-      } catch {
-        setExtFillStatus((prev) => ({ ...prev, [siteKey]: "error" }));
-      }
+  // Fills a single calendar via the extension. Called when the user clicks a
+  // calendar row in the per-calendar speed-submit checklist.
+  const fillOne = async (siteKey: string) => {
+    if (!extensionId) {
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
+      return;
+    }
+    setExtFillStatus((prev) => ({ ...prev, [siteKey]: "filling" }));
+    try {
+      const recipe = await directRecipe(accessCode, toApiEvent(draft), siteKey);
+      const ok = await sendFill(extensionId, recipe);
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "submitted" : "unavailable" }));
+    } catch {
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
     }
   };
 
-  // Core reset: clears all form/job state but keeps the verified access code.
+  // Core reset: clears all form/job state (and the saved draft) but keeps the
+  // verified access code — you stay signed in for the next event.
   const resetCore = () => {
+    clearDraft();
     jobIdRef.current = null;
     setJob(null);
     setPreview(null);
@@ -254,6 +257,7 @@ export default function App() {
     setError("");
     setAiText("");
     setExtFillStatus({});
+    setSpeedSubmit(false);
   };
 
   // Reset everything for a fresh event, but keep the (verified) access code.
@@ -288,6 +292,12 @@ export default function App() {
     draft.zip.trim() !== "" &&
     draft.locality.length > 0 &&
     draft.categories.length > 0;
+
+  // Derived values used in the Destinations section
+  const unfilled = unfilledOptionalFields(draft);
+  const nameByKey: Record<string, string> = preview
+    ? Object.fromEntries(preview.eligible.map((s) => [s.site_key, s.name]))
+    : {};
 
   return (
     <div className="page">
@@ -341,7 +351,46 @@ export default function App() {
                 {verified ? "✓ Success" : "Verify"}
               </button>
             </div>
-            <p className="hint">Provided by The Commons. Saved on this device so a reload keeps your place.</p>
+            <p className="hint">Provided by The Commons. Remembered on this device — you stay signed in across events.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="contact-name">Contact Name</label>
+            <input
+              id="contact-name"
+              type="text"
+              value={draft.organizer_name ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
+              disabled={busy || job !== null || !verified}
+              maxLength={200}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="contact-email">Contact Email</label>
+            <input
+              id="contact-email"
+              type="email"
+              value={draft.contact_email ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
+              disabled={busy || job !== null || !verified}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="contact-phone">Contact Phone</label>
+            <input
+              id="contact-phone"
+              type="tel"
+              value={draft.contact_phone ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
+              disabled={busy || job !== null || !verified}
+              maxLength={40}
+            />
+          </div>
+
+          <div className="field span-2">
+            <p className="hint">Used as the organizer/submitter contact on every calendar.</p>
           </div>
         </div>
       </section>
@@ -402,6 +451,9 @@ export default function App() {
 
       <section className={`section${verified ? "" : " form-dim"}`}>
         <h2>The Event</h2>
+        {!isDraftEmpty(draft) && (
+          <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
+        )}
         <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null} />
         <div className="actions">
           <button
@@ -423,70 +475,92 @@ export default function App() {
       {preview && !job && (
         <section className="section">
           <h2>Destinations</h2>
-          <SitePicker
-            preview={preview}
-            selected={selected}
-            onToggle={(key) =>
-              setSelected((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })
-            }
-            disabled={busy}
-          />
 
-          {/* Per-site extension fill status */}
-          {Object.keys(extFillStatus).length > 0 && (
-            <ul className="site-list ext-fill-status">
-              {[...selected].map((key) => {
-                const st = extFillStatus[key] ?? "idle";
-                const label = st === "sending" ? "Opening…" : st === "sent" ? "Tab opened" : st === "error" ? "Failed" : "";
+          {/* Optional unfilled fields — hidden once the user enters speed-submit mode */}
+          {!speedSubmit && unfilled.length > 0 && (
+            <p className="optional-unfilled">
+              <em>Not provided: {unfilled.join(", ")}</em>
+            </p>
+          )}
+
+          {speedSubmit ? (
+            /* Per-calendar submit checklist: one clickable row per selected site */
+            <ul className="site-list">
+              {[...selected].map((siteKey) => {
+                const siteName = nameByKey[siteKey] ?? siteKey;
+                const status = extFillStatus[siteKey] ?? "ready";
+                const isTerminal = status === "submitted" || status === "unavailable";
+                const isFilling = status === "filling";
                 return (
-                  <li key={key} className={st === "error" ? "excluded" : undefined}>
-                    <span className="site-name">{key}</span>
-                    {label && <span className="reason">— {label}</span>}
+                  <li key={siteKey}>
+                    <button
+                      type="button"
+                      className="linklike site-name"
+                      onClick={() => fillOne(siteKey)}
+                      disabled={isTerminal || isFilling}
+                    >
+                      {siteName}
+                    </button>
+                    {status === "filling" && (
+                      <span className="target-status pending">opening…</span>
+                    )}
+                    {status === "submitted" && (
+                      <span className="target-status submitted">submitted</span>
+                    )}
+                    {status === "unavailable" && (
+                      <span className="target-status unavailable">not available</span>
+                    )}
+                    {status !== "filling" && status !== "submitted" && status !== "unavailable" && (
+                      <span className="target-status ready">ready</span>
+                    )}
                   </li>
                 );
               })}
             </ul>
+          ) : (
+            <>
+              <SitePicker
+                preview={preview}
+                selected={selected}
+                onToggle={(key) =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(key)) next.delete(key);
+                    else next.add(key);
+                    return next;
+                  })
+                }
+                disabled={busy}
+              />
+
+              <div className="actions">
+                {!extInstalled ? (
+                  <span className="section-note">
+                    <a href={WEB_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={recheckExt}>
+                      Install the Commons Broadcast extension
+                    </a>{" "}
+                    to autofill forms in your browser.
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="dark"
+                    onClick={() => {
+                      setSpeedSubmit(true);
+                      setExtFillStatus(
+                        Object.fromEntries(
+                          [...selected].map((k): [string, ExtFillStatus] => [k, "ready"])
+                        )
+                      );
+                    }}
+                    disabled={busy || selected.size === 0}
+                  >
+                    Speed submit events!
+                  </button>
+                )}
+              </div>
+            </>
           )}
-
-          <div className="actions">
-            {/* Primary: extension autofill */}
-            {!extInstalled ? (
-              <span className="section-note">
-                <a href={WEB_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={recheckExt}>
-                  Install the Commons Broadcast extension
-                </a>{" "}
-                to autofill forms in your browser.
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="dark"
-                onClick={handleExtensionAutofill}
-                disabled={busy || selected.size === 0}
-              >
-                {`Autofill ${selected.size} calendar${selected.size === 1 ? "" : "s"} with extension`}
-              </button>
-            )}
-
-            {/* Oneshot (Playwright dry-run) — kept but disabled */}
-            <button
-              type="button"
-              disabled
-              onClick={handleSubmit}
-              title="Oneshot server-side fill is coming soon"
-              style={{ opacity: 0.4, cursor: "not-allowed" }}
-            >
-              {`Fill & review ${selected.size} calendar${selected.size === 1 ? "" : "s"}`}
-            </button>
-            <span className="section-note">
-              The extension opens each calendar in a new tab — review and click Submit yourself.
-            </span>
-          </div>
         </section>
       )}
 
@@ -522,6 +596,17 @@ export default function App() {
             <button type="button" onClick={startOver}>
               Submit another event
             </button>
+            <a
+              href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn"
+            >
+              Have suggestions?
+            </a>
+            <span className="section-note">
+              Tell us which calendars/websites you'd like added, or send any other feedback.
+            </span>
           </div>
         </section>
       )}

@@ -1,6 +1,6 @@
 """Chatham Chamber events — ChamberMaster / GrowthZone public "Submit Event"
-form (business.ccucc.net/ap/Event/Submit/yr4lawrl). Selectors picked from a
-captured form dump (scaffold_adapter chatham_chamber).
+form (business.ccucc.net/ap/Event/Submit/yr4lawrl). Selectors verified against a
+fresh live capture (capture_broadcast_form chatham_chamber → captures/).
 
 The form carries a reCAPTCHA (a `g-recaptcha-response` widget is present), so a
 real submission always defers to a human: we fill the fields we could verify
@@ -8,16 +8,26 @@ real submission always defers to a human: we fill the fields we could verify
 needs_manual instead of clicking — exactly like triangle_on_the_cheap. Dry runs
 fill + screenshot the same way so the mapping can be reviewed.
 
-Capture notes / honesty:
-- Verified name-based controls: eventTitle (req), eventStartDate (req, date),
-  eventContactEmailAddress (req, email), and the locationDescription /
-  contactDescription textareas (by id).
-- The end date/time controls came back ambiguous in the capture (GrowthZone's
-  combined date/time pickers reuse the `eventEndDate` name) so they are
-  deliberately omitted rather than guessed.
-- The submit selector is a best-guess GrowthZone primary button; it is never
-  clicked here (reCAPTCHA → always needs_manual), so it only documents intent
-  for the manual-review extension.
+Capture notes / honesty (all confirmed in the live capture):
+- Fillable controls: eventTitle (req, text), eventStartDate (req, date),
+  eventContactEmailAddress (req, email), eventIsAllDay (checkbox), and the
+  locationDescription / contactDescription <textarea>s (by id).
+- The main Description (#eventDescription), Date-and-Time Description
+  (#hoursDescription) and Fees/Admission (#pricingDescription) are Froala
+  rich-text editors (micronet-rich-text-editor) whose editable body lives inside
+  an <iframe class="fr-iframe"> — NOT fillable by a content script via .value or
+  innerText. We deliberately do not pretend to fill them; the human types the
+  description on review. To avoid losing the schedule, _location folds a
+  human-readable "When: <date/time>" line into the locationDescription textarea
+  we CAN fill — the three native time/end-date inputs all share
+  name="eventEndDate" with no unique id, so they are not safely addressable.
+- #contactDescription carries ev.organizer_name · ev.contact_phone · ev.event_url.
+- IMPORTANT: this form's host (business.ccucc.net) must be in the extension's
+  manifest host_permissions or the content script can't inject — that was the
+  root cause of "nothing filled" before.
+- The submit selector is the GrowthZone primary button; never clicked here
+  (reCAPTCHA → always needs_manual), so it only documents intent for the
+  manual-review extension.
 """
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
@@ -28,14 +38,29 @@ def _iso_date(dt) -> str:
     return dt.strftime("%Y-%m-%d")  # GrowthZone uses <input type="date"> (ISO)
 
 
-def _location(ev) -> str:
-    parts = [p for p in (ev.venue_name, h.full_address(ev)) if p and p.strip(", ")]
-    return "\n".join(parts)
-
-
 def _contact(ev) -> str:
     parts = [p for p in (ev.organizer_name, ev.contact_phone, ev.event_url) if p]
     return " · ".join(parts)
+
+
+def _hours(ev) -> str:
+    """Human-readable date + time. The native time/end-date inputs share a
+    non-unique name and can't be driven, and the dedicated "Date and Time
+    Description" field is a Froala iframe editor we can't fill — so we surface the
+    schedule inside the one free-text textarea we can (locationDescription)."""
+    if ev.all_day:
+        return f"{h.format_date(ev.start_datetime)} — All day"
+    start = f"{h.format_date(ev.start_datetime)}, {h.format_time(ev.start_datetime)}"
+    if ev.end_datetime:
+        if ev.end_datetime.date() != ev.start_datetime.date():
+            return f"{start} – {h.format_date(ev.end_datetime)}, {h.format_time(ev.end_datetime)}"
+        return f"{start} – {h.format_time(ev.end_datetime)}"
+    return start
+
+
+def _location(ev) -> str:
+    parts = [ev.venue_name, h.full_address(ev), f"When: {_hours(ev)}"]
+    return "\n".join(p for p in parts if p and p.strip(", "))
 
 
 _RECIPE_FIELDS = [
@@ -43,7 +68,7 @@ _RECIPE_FIELDS = [
                 label="Event title"),
     RecipeField("input[name='eventStartDate']", "date", lambda ev: _iso_date(ev.start_datetime),
                 required=True, label="Start date"),
-    RecipeField("#locationDescription", "textarea", _location, label="Location"),
+    RecipeField("#locationDescription", "textarea", _location, label="Location & schedule"),
     RecipeField("#contactDescription", "textarea", _contact, label="Contact details"),
     RecipeField("input[name='eventContactEmailAddress']", "text", lambda ev: ev.contact_email,
                 required=True, label="Contact email"),
@@ -69,6 +94,17 @@ class ChathamChamberAdapter(SiteAdapter):
     captcha_hint = "reCAPTCHA — solve it, then click Submit."
     # Best-guess GrowthZone primary submit; never clicked (always needs_manual).
     submit_selector = "button[type='submit']"
+
+    def recipe_field_specs(self, ev):
+        """Static fields + the all-day checkbox, which is only emitted when the
+        event is all-day (the extension checks any emitted checkbox regardless of
+        value, so a falsey one must be left out entirely)."""
+        specs = list(_RECIPE_FIELDS)
+        if ev.all_day:
+            specs.append(RecipeField("input[name='eventIsAllDay']", "checkbox",
+                                     lambda ev: "true", recipe_only=True,
+                                     label="All-day event"))
+        return specs
 
     def fill_and_submit(self, page, ev, ctx):
         try:

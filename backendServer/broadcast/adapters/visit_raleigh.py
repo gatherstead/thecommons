@@ -19,19 +19,12 @@ Form structure (notable details):
 - Submit: input[name='submitevent'] (type=button).
 - No captcha on page load; no password-protected gate.
 
-Submitter identity is hardcoded to a "The Commons" editorial account.
-TODO(per-client-access-codes): replace with a DB-backed identity lookup.
+Submitter identity comes from the user-entered Contact block on the canonical
+event: ev.organizer_name / ev.contact_email / ev.contact_phone.
 """
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
-
-# TODO(per-client-access-codes): replace with a DB-backed identity lookup.
-_SUBMITTER = {
-    "name": "The Commons",
-    "email": "broadcast@thecommons.org",  # TODO: confirm real address
-    "phone": "919-000-0000",              # TODO: confirm real number
-}
 
 # Map our canonical category slugs to the site's real option strings.
 # Options captured from the select-multiple#categories field.
@@ -83,12 +76,12 @@ def _map_categories(ev) -> list[str]:
 # Fields driven imperatively (categories select-multiple, image file upload) are
 # recipe_only so apply_specs skips them on the server path.
 _RECIPE_FIELDS = [
-    # --- Contact Info (submitter identity) ---
-    RecipeField("#postname", "text", lambda ev: _SUBMITTER["name"],
+    # --- Contact Info (submitter identity — from ev.organizer_name / contact_email / contact_phone) ---
+    RecipeField("#postname", "text", lambda ev: ev.organizer_name,
                 required=True, label="Submitter Name"),
-    RecipeField("#postemail", "text", lambda ev: _SUBMITTER["email"],
+    RecipeField("#postemail", "text", lambda ev: ev.contact_email,
                 required=True, label="Submitter Email"),
-    RecipeField("#postphone", "text", lambda ev: _SUBMITTER["phone"],
+    RecipeField("#postphone", "text", lambda ev: ev.contact_phone,
                 label="Submitter Phone"),
 
     # --- Event core ---

@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { JobDetail } from "../../models/broadcastModels";
-import { loadBundle, saveBundle, STORAGE_KEY, type PersistBundle } from "../persist";
+import {
+  clearDraft,
+  DRAFT_KEY,
+  loadDraft,
+  loadSession,
+  saveDraft,
+  saveSession,
+  SESSION_KEY,
+  type DraftBundle,
+  type SessionBundle,
+} from "../persist";
 
 // Minimal in-memory localStorage so the round-trip runs in the node (fast) tier
 // without a DOM.
@@ -36,51 +46,89 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("persist round-trip", () => {
-  it("saves and restores a bundle for unfinished work", () => {
-    const bundle: PersistBundle = {
-      accessCode: "CODE",
-      verified: true,
+describe("session scope", () => {
+  it("saves and restores the access code + verified flag", () => {
+    const session: SessionBundle = { accessCode: "CODE", verified: true };
+    saveSession(session);
+    expect(loadSession()).toEqual(session);
+  });
+
+  it("returns an empty session when nothing is stored", () => {
+    expect(loadSession()).toEqual({});
+  });
+
+  it("returns an empty session when stored JSON is corrupt", () => {
+    localStorage.setItem(SESSION_KEY, "{not json");
+    expect(loadSession()).toEqual({});
+  });
+});
+
+describe("draft scope", () => {
+  it("saves and restores an in-progress draft", () => {
+    const draft: DraftBundle = {
       draft: undefined,
       preview: null,
       selected: ["a", "b"],
       job: jobWith("running"),
       jobId: "j1",
     };
-
-    saveBundle(bundle);
-
-    expect(loadBundle()).toEqual(bundle);
+    saveDraft(draft);
+    expect(loadDraft()).toEqual(draft);
   });
 
-  it("returns an empty bundle when nothing is stored", () => {
-    expect(loadBundle()).toEqual({});
-  });
-
-  it("returns an empty bundle when stored JSON is corrupt", () => {
-    localStorage.setItem(STORAGE_KEY, "{not json");
-
-    expect(loadBundle()).toEqual({});
-  });
-});
-
-describe("clearing on terminal status", () => {
   it.each(["done", "failed", "canceled"] as const)(
-    "drops saved state once the job is %s",
+    "still restores the draft once the job is %s (no auto-wipe)",
     (status) => {
-      saveBundle({ accessCode: "CODE", job: jobWith("running") });
-      expect(loadBundle()).not.toEqual({});
-
-      saveBundle({ accessCode: "CODE", job: jobWith(status) });
-
-      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
-      expect(loadBundle()).toEqual({});
+      saveDraft({ selected: ["a"], job: jobWith(status), jobId: "j1" });
+      expect(loadDraft().job?.status).toBe(status);
     },
   );
 
-  it("keeps state while the job is still queued", () => {
-    saveBundle({ accessCode: "CODE", job: jobWith("queued") });
+  it("returns an empty draft when nothing is stored", () => {
+    expect(loadDraft()).toEqual({});
+  });
 
-    expect(loadBundle().job?.status).toBe("queued");
+  it("returns an empty draft when stored JSON is corrupt", () => {
+    localStorage.setItem(DRAFT_KEY, "{not json");
+    expect(loadDraft()).toEqual({});
+  });
+});
+
+describe("clearDraft", () => {
+  it("removes the draft but leaves the session intact", () => {
+    saveSession({ accessCode: "CODE", verified: true });
+    saveDraft({ job: jobWith("running"), jobId: "j1" });
+
+    clearDraft();
+
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
+    expect(loadDraft()).toEqual({});
+    expect(loadSession()).toEqual({ accessCode: "CODE", verified: true });
+  });
+});
+
+describe("legacy migration", () => {
+  it("seeds both scopes from the old fused bundle when new keys are absent", () => {
+    localStorage.setItem(
+      "broadcast:state:v1",
+      JSON.stringify({
+        accessCode: "OLD",
+        verified: true,
+        selected: ["x"],
+        job: jobWith("queued"),
+        jobId: "old-job",
+      }),
+    );
+
+    expect(loadSession()).toEqual({ accessCode: "OLD", verified: true });
+    expect(loadDraft().jobId).toBe("old-job");
+    expect(loadDraft().selected).toEqual(["x"]);
+  });
+
+  it("prefers the new keys over the legacy bundle", () => {
+    localStorage.setItem("broadcast:state:v1", JSON.stringify({ accessCode: "OLD" }));
+    saveSession({ accessCode: "NEW", verified: false });
+
+    expect(loadSession().accessCode).toBe("NEW");
   });
 });

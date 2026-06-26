@@ -37,6 +37,9 @@ SITES = {
         "url": "https://abc11.com/community/submitevent/",
         "continue": "Continue",
     },
+    "chatham_chamber": {
+        "url": "https://business.ccucc.net/ap/Event/Submit/yr4lawrl",
+    },
 }
 
 

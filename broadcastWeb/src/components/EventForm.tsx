@@ -287,40 +287,6 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
         <p className="hint">Sites that take an upload receive this image as a file.</p>
       </div>
 
-      <div className="field">
-        <label htmlFor="organizer">Organizer Name</label>
-        <input
-          id="organizer"
-          type="text"
-          value={draft.organizer_name ?? ""}
-          onChange={(e) => set("organizer_name", e.target.value)}
-          disabled={disabled}
-          maxLength={200}
-        />
-      </div>
-
-      <div className="field">
-        <label htmlFor="email">Contact Email</label>
-        <input
-          id="email"
-          type="email"
-          value={draft.contact_email ?? ""}
-          onChange={(e) => set("contact_email", e.target.value)}
-          disabled={disabled}
-        />
-      </div>
-
-      <div className="field">
-        <label htmlFor="phone">Contact Phone</label>
-        <input
-          id="phone"
-          type="tel"
-          value={draft.contact_phone ?? ""}
-          onChange={(e) => set("contact_phone", e.target.value)}
-          disabled={disabled}
-          maxLength={40}
-        />
-      </div>
     </div>
   );
 }

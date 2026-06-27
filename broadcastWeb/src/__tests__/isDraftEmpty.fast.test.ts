@@ -93,12 +93,16 @@ describe("isDraftEmpty", () => {
     expect(isDraftEmpty({ ...EMPTY, event_url: "https://example.com" })).toBe(false);
   });
 
-  it("returns false when organizer_name is set", () => {
-    expect(isDraftEmpty({ ...EMPTY, organizer_name: "The Org" })).toBe(false);
+  // Contact details are session-sticky operator data, not event content, so a
+  // saved contact must NOT make the form look non-empty (it would block AI Autofill).
+  it("ignores organizer_name (session-sticky contact, not event content)", () => {
+    expect(isDraftEmpty({ ...EMPTY, organizer_name: "The Org" })).toBe(true);
   });
 
-  it("returns false when contact_email is set", () => {
-    expect(isDraftEmpty({ ...EMPTY, contact_email: "a@b.com" })).toBe(false);
+  it("ignores contact_email and contact_phone (session-sticky contact)", () => {
+    expect(isDraftEmpty({ ...EMPTY, contact_email: "a@b.com", contact_phone: "919-555-0100" })).toBe(
+      true,
+    );
   });
 
   it("returns true when optional fields are undefined (as EventDraft allows)", () => {

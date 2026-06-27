@@ -1,8 +1,9 @@
 // Two independent persistence scopes so the page reload (or accidental close)
 // keeps your place without the two concerns clobbering each other:
 //
-//   session — your access code + verified flag. You stay "signed in" on this
-//             device across events and refreshes; never auto-cleared.
+//   session — your access code + verified flag + operator contact details
+//             (name/email/phone). You stay "signed in" on this device across
+//             events and refreshes; never auto-cleared.
 //   draft   — the event you're working on (form, preview, picks, running job).
 //             Survives refreshes even once the job finishes; cleared only on an
 //             explicit start-over.
@@ -20,6 +21,10 @@ const LEGACY_KEY = "broadcast:state:v1";
 export interface SessionBundle {
   accessCode?: string;
   verified?: boolean;
+  // Operator contact, sticky like the access code — reused across events.
+  organizer_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
 }
 
 export interface DraftBundle {
@@ -55,7 +60,14 @@ export const loadSession = (): SessionBundle => {
   const fresh = read<SessionBundle>(SESSION_KEY);
   if (fresh) return fresh;
   const old = legacy();
-  return old ? { accessCode: old.accessCode, verified: old.verified } : {};
+  if (!old) return {};
+  return {
+    accessCode: old.accessCode,
+    verified: old.verified,
+    organizer_name: old.draft?.organizer_name,
+    contact_email: old.draft?.contact_email,
+    contact_phone: old.draft?.contact_phone,
+  };
 };
 
 export const saveSession = (session: SessionBundle): void => write(SESSION_KEY, session);

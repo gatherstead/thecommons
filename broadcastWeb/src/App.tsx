@@ -61,9 +61,11 @@ const EMPTY_DRAFT: EventDraft = {
   contact_phone: "",
 };
 
-// Returns true when the draft is functionally pristine — nothing the user has
-// entered yet. State "NC" is the default and counts as empty; any other state
-// value means the user (or AI) has touched it.
+// Returns true when the draft is functionally pristine — no *event* content the
+// user has entered yet. State "NC" is the default and counts as empty; any other
+// state value means the user (or AI) has touched it. Operator contact details
+// (name/email/phone) are session-sticky, not event content, so they're excluded
+// here — a saved contact must not block AI Autofill on an otherwise blank form.
 export const isDraftEmpty = (draft: EventDraft): boolean =>
   draft.title.trim() === "" &&
   draft.description.trim() === "" &&
@@ -80,10 +82,7 @@ export const isDraftEmpty = (draft: EventDraft): boolean =>
   (draft.ticket_url === undefined || draft.ticket_url.trim() === "") &&
   (draft.price === undefined || draft.price.trim() === "") &&
   !draft.is_free &&
-  (draft.image_url === undefined || draft.image_url.trim() === "") &&
-  (draft.organizer_name === undefined || draft.organizer_name.trim() === "") &&
-  (draft.contact_email === undefined || draft.contact_email.trim() === "") &&
-  (draft.contact_phone === undefined || draft.contact_phone.trim() === "");
+  (draft.image_url === undefined || draft.image_url.trim() === "");
 
 // Returns friendly labels for blank optional fields. Mirrors the empties logic
 // in isDraftEmpty for the optional subset of fields.
@@ -104,6 +103,13 @@ const POLL_MS = 3000;
 
 const SESSION = loadSession();
 const DRAFT = loadDraft();
+
+// Session-sticky operator contact: reused across events, survives start-over.
+const STICKY_CONTACT = {
+  organizer_name: SESSION.organizer_name ?? "",
+  contact_email: SESSION.contact_email ?? "",
+  contact_phone: SESSION.contact_phone ?? "",
+};
 
 // datetime-local gives a naive local string; send an unambiguous instant.
 const toApiEvent = (draft: EventDraft): EventDraft => ({
@@ -129,7 +135,10 @@ type ExtFillStatus =
 export default function App() {
   const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
   const [verified, setVerified] = useState(SESSION.verified ?? false);
-  const [draft, setDraft] = useState<EventDraft>(DRAFT.draft ?? EMPTY_DRAFT);
+  const [draft, setDraft] = useState<EventDraft>({
+    ...(DRAFT.draft ?? EMPTY_DRAFT),
+    ...STICKY_CONTACT,
+  });
   const [preview, setPreview] = useState<PreviewResult | null>(DRAFT.preview ?? null);
   const [selected, setSelected] = useState<Set<string>>(new Set(DRAFT.selected ?? []));
   const [job, setJob] = useState<JobDetail | null>(DRAFT.job ?? null);
@@ -144,10 +153,17 @@ export default function App() {
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
 
-  // Session: you stay "signed in" with your access code across events/refreshes.
+  // Session: you stay "signed in" with your access code across events/refreshes,
+  // and your contact details stick the same way (reused for every event).
   useEffect(() => {
-    saveSession({ accessCode, verified });
-  }, [accessCode, verified]);
+    saveSession({
+      accessCode,
+      verified,
+      organizer_name: draft.organizer_name,
+      contact_email: draft.contact_email,
+      contact_phone: draft.contact_phone,
+    });
+  }, [accessCode, verified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
 
   // Draft: the event you're working on, auto-saved until an explicit start-over
   // (resetCore clears it). Survives refreshes even once the job finishes.
@@ -246,14 +262,20 @@ export default function App() {
   };
 
   // Core reset: clears all form/job state (and the saved draft) but keeps the
-  // verified access code — you stay signed in for the next event.
+  // verified access code and sticky contact details — you stay signed in and
+  // your contact carries over to the next event.
   const resetCore = () => {
     clearDraft();
     jobIdRef.current = null;
     setJob(null);
     setPreview(null);
     setSelected(new Set());
-    setDraft(EMPTY_DRAFT);
+    setDraft((prev) => ({
+      ...EMPTY_DRAFT,
+      organizer_name: prev.organizer_name,
+      contact_email: prev.contact_email,
+      contact_phone: prev.contact_phone,
+    }));
     setError("");
     setAiText("");
     setExtFillStatus({});
@@ -271,7 +293,13 @@ export default function App() {
     setError("");
     try {
       const result = await aiAutofill(accessCode, aiText);
-      setDraft({ ...EMPTY_DRAFT, ...result.event });
+      setDraft((prev) => ({
+        ...EMPTY_DRAFT,
+        organizer_name: prev.organizer_name,
+        contact_email: prev.contact_email,
+        contact_phone: prev.contact_phone,
+        ...result.event,
+      }));
       setPreview(null);
       setJob(null);
       setSelected(new Set());
@@ -390,7 +418,7 @@ export default function App() {
           </div>
 
           <div className="field span-2">
-            <p className="hint">Used as the organizer/submitter contact on every calendar.</p>
+            <p className="hint">Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.</p>
           </div>
         </div>
       </section>
@@ -399,8 +427,8 @@ export default function App() {
         <h2>AI Autofill</h2>
         <p className="hint">
           Paste a raw event description, email, or flyer text below and the AI will fill
-          the form fields for you. Only works on a completely empty form — reset first if
-          you've already entered anything.
+          the event fields for you. Works on a blank event form — your saved contact
+          details are fine; reset first if you've already entered event details.
         </p>
         {!verified ? (
           <p className="section-note">Verify your access code to begin.</p>
@@ -417,7 +445,7 @@ export default function App() {
                 ✨ Generate from text
               </button>
               <span className="section-note">
-                AI autofill works only on an empty form — click Reset to clear it first.
+                AI autofill works on a blank event form — click Reset to clear the event details first.
               </span>
             </div>
           </>
@@ -555,7 +583,7 @@ export default function App() {
                     }}
                     disabled={busy || selected.size === 0}
                   >
-                    Speed submit events!
+                    Submit events!
                   </button>
                 )}
               </div>

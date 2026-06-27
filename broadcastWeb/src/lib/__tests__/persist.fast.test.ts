@@ -47,8 +47,14 @@ afterEach(() => {
 });
 
 describe("session scope", () => {
-  it("saves and restores the access code + verified flag", () => {
-    const session: SessionBundle = { accessCode: "CODE", verified: true };
+  it("saves and restores the access code, verified flag, and contact details", () => {
+    const session: SessionBundle = {
+      accessCode: "CODE",
+      verified: true,
+      organizer_name: "The Org",
+      contact_email: "a@b.com",
+      contact_phone: "919-555-0100",
+    };
     saveSession(session);
     expect(loadSession()).toEqual(session);
   });
@@ -114,13 +120,20 @@ describe("legacy migration", () => {
       JSON.stringify({
         accessCode: "OLD",
         verified: true,
+        draft: { organizer_name: "Old Org", contact_email: "old@b.com" },
         selected: ["x"],
         job: jobWith("queued"),
         jobId: "old-job",
       }),
     );
 
-    expect(loadSession()).toEqual({ accessCode: "OLD", verified: true });
+    expect(loadSession()).toEqual({
+      accessCode: "OLD",
+      verified: true,
+      organizer_name: "Old Org",
+      contact_email: "old@b.com",
+      contact_phone: undefined,
+    });
     expect(loadDraft().jobId).toBe("old-job");
     expect(loadDraft().selected).toEqual(["x"]);
   });

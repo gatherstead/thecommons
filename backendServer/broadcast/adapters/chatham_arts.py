@@ -27,6 +27,31 @@ _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 e
 # Chatham-County confirmation checkbox (required to submit).
 _CHATHAM_CONFIRM = "#tribe_custom-_ecp_custom_4-PleaseconfirmthatthiseventtakesplaceinChathamCounty-0"
 
+# Mapping from our canonical category slugs to Chatham Arts' AJAX category
+# search terms (tribe_events_cat taxonomy). Eligibility already restricts this
+# calendar to arts/literary events, but we map all known slugs in case the
+# operator submits a broader event here.
+# LIVE VERIFICATION REQUIRED: confirm these terms appear in the site's dropdown.
+_CA_CATEGORY_MAP: dict[str, str] = {
+    "arts":        "Arts",
+    "literary":    "Literary",
+    "music":       "Music",
+    "festival":    "Festival",
+    "community":   "Community",
+    "education":   "Education",
+    "family-kids": "Family",
+    "wellness":    "Wellness",
+    "market":      "Market",
+    "food-drink":  "Food",
+    "nightlife":   "Nightlife",
+}
+
+
+def _ca_category_terms(ev) -> str:
+    """Comma-joined search terms for ev.categories; empty string if none map."""
+    terms = [_CA_CATEGORY_MAP[c] for c in ev.categories if c in _CA_CATEGORY_MAP]
+    return ",".join(terms)
+
 
 def _ca_date(dt) -> str:
     return f"{dt.month}/{dt.day}/{dt.year}"  # matches the datepicker's n/j/Y
@@ -88,13 +113,21 @@ class ChathamArtsAdapter(SiteAdapter):
             specs.append(RecipeField("#saved_tribe_organizer", "select2",
                                      lambda ev: ev.organizer_name, recipe_only=True,
                                      label="Organizer", hint="pick the match or choose Create"))
+        # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). Same
+        # Tribe Events plugin as Triangle Weekender; selector is identical. Only
+        # emitted when ev.categories contains known slugs.
+        # LIVE VERIFICATION REQUIRED: confirm search terms hit real options.
+        specs.append(RecipeField(
+            "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
+            _ca_category_terms, recipe_only=True, label="Event categories",
+            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
         specs.append(RecipeField(_CHATHAM_CONFIRM, "checkbox", lambda ev: "Yes",
                                  required=True, recipe_only=True,
                                  label="Confirm event is in Chatham County"))
         if ev.image_url:
             specs.append(RecipeField("#event_image", "file", lambda ev: ev.image_url,
                                      recipe_only=True, label="Event image",
-                                     hint="upload the image manually — files can't be auto-filled"))
+                                     hint="auto-uploaded by the extension; falls back to manual highlight if needed"))
         return specs
 
     def fill_and_submit(self, page, ev, ctx):

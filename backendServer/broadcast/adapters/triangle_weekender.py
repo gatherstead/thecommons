@@ -25,6 +25,54 @@ _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 e
 # Locality slugs that are county/region-level only — not useful as a city name.
 _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
 
+# Mapping from our canonical category slugs (routing.CATEGORIES) to the search
+# terms the Triangle Weekender's AJAX category dropdown understands. The
+# extension searches each term; unmatched terms are skipped silently.
+# LIVE VERIFICATION REQUIRED: confirm these terms appear in the site's dropdown.
+_WK_CATEGORY_MAP: dict[str, str] = {
+    "music":       "Music",
+    "arts":        "Arts",
+    "family-kids": "Family",
+    "wellness":    "Wellness",
+    "food-drink":  "Food",
+    "festival":    "Festival",
+    "market":      "Market",
+    "literary":    "Literary",
+    "community":   "Community",
+    "nightlife":   "Nightlife",
+    "education":   "Education",
+}
+
+# Same search terms for the post_tag AJAX dropdown. Tags are free-form so the
+# site may have exactly these as tags, or may not — the extension skips
+# unmatched terms.
+# LIVE VERIFICATION REQUIRED: confirm these tag terms exist on the site.
+_WK_TAG_MAP: dict[str, str] = {
+    "music":       "Music",
+    "arts":        "Arts",
+    "family-kids": "Family",
+    "wellness":    "Wellness",
+    "food-drink":  "Food",
+    "festival":    "Festival",
+    "market":      "Market",
+    "literary":    "Literary",
+    "community":   "Community",
+    "nightlife":   "Nightlife",
+    "education":   "Education",
+}
+
+
+def _wk_category_terms(ev) -> str:
+    """Comma-joined search terms for ev.categories; empty string if none map."""
+    terms = [_WK_CATEGORY_MAP[c] for c in ev.categories if c in _WK_CATEGORY_MAP]
+    return ",".join(terms)
+
+
+def _wk_tag_terms(ev) -> str:
+    """Comma-joined search terms for ev.categories mapped to tag vocabulary."""
+    terms = [_WK_TAG_MAP[c] for c in ev.categories if c in _WK_TAG_MAP]
+    return ",".join(terms)
+
 
 def _city(ev) -> str:
     """Derive a human-readable city from locality tags, mirroring
@@ -131,10 +179,24 @@ class TriangleWeekenderAdapter(SiteAdapter):
             specs.append(RecipeField(
                 f"input[name='_ecp_custom_2[]'][value='{county}']", "checkbox",
                 lambda ev, c=county: c, recipe_only=True, label=f"County: {county}"))
+        # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). The
+        # selector targets the hidden <select> whose next sibling is the visible
+        # select2 container. Only emitted when ev.categories contains known slugs.
+        # LIVE VERIFICATION REQUIRED: confirm search terms hit real options.
+        specs.append(RecipeField(
+            "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
+            _wk_category_terms, recipe_only=True, label="Event categories",
+            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
+        # Tags — same AJAX select2 multi pattern (post_tag taxonomy).
+        # LIVE VERIFICATION REQUIRED: confirm tag terms exist on the site.
+        specs.append(RecipeField(
+            "select[name='tax_input[post_tag][]']", "select2_multi",
+            _wk_tag_terms, recipe_only=True, label="Event tags",
+            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
         if ev.image_url:
             specs.append(RecipeField("#event_image", "file", lambda ev: ev.image_url,
                                      recipe_only=True, label="Event image",
-                                     hint="upload the image manually — files can't be auto-filled"))
+                                     hint="auto-uploaded by the extension; falls back to manual highlight if needed"))
         specs.append(RecipeField("#terms", "terms", lambda ev: "true", required=True,
                                  recipe_only=True, label="Accept community terms"))
         return specs

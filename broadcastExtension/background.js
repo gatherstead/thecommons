@@ -65,3 +65,31 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete pendingTabs[tabId];
 });
+
+// Internal messages from injected content scripts (not the SPA). Currently
+// handles one operation: fetching an image URL and returning it as a data URL
+// so content.js can build a File and assign it to a file input via DataTransfer.
+// The service worker has "https://*/*" host_permissions so it bypasses the
+// page's CORS policy — event images are arbitrary user-supplied URLs.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "fetch-image" && msg.url) {
+    fetchImageAsDataUrl(msg.url).then(
+      (dataUrl) => sendResponse({ ok: true, dataUrl }),
+      (err) => sendResponse({ ok: false, error: String(err) }),
+    );
+    return true; // keep channel open for the async response
+  }
+  return false;
+});
+
+async function fetchImageAsDataUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status} fetching image`);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}

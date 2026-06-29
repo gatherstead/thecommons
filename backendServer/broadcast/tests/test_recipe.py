@@ -8,11 +8,12 @@ from broadcast.adapters import _helpers as h
 from broadcast.adapters import get_adapter
 from broadcast.schema import CanonicalEvent, event_from_submission
 
-RECIPE_KEYS = ["triangle_on_the_cheap", "triangle_weekender", "abc11_community"]
+RECIPE_KEYS = ["triangle_on_the_cheap", "triangle_weekender", "abc11_community", "chatham_arts"]
 
 VALID_TYPES = {
     "text", "textarea", "date", "time", "select",
-    "radio", "checkbox", "file", "select2", "terms", "manual_widget",
+    "radio", "checkbox", "file", "select2", "select2_multi", "react_select",
+    "terms", "manual_widget",
 }
 
 
@@ -97,6 +98,59 @@ class ConditionalFieldsTest(SimpleTestCase):
         terms = next(f for f in recipe["fields"] if f["selector"] == "#terms")
         self.assertEqual(terms["type"], "terms")
         self.assertTrue(terms["required"])
+
+    def test_weekender_category_field_emitted_when_categories_present(self):
+        # select2_multi category field must appear when ev.categories has slugs
+        # and carry the comma-joined search terms.
+        recipe = get_adapter("triangle_weekender").recipe(
+            _event(categories=["music", "arts", "festival"])
+        )
+        cat = next(
+            (f for f in recipe["fields"]
+             if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"),
+            None,
+        )
+        self.assertIsNotNone(cat, "weekender category select2_multi field missing")
+        self.assertEqual(cat["type"], "select2_multi")
+        self.assertFalse(cat["required"])
+        self.assertIn("Music", cat["value"])
+        self.assertIn("Arts", cat["value"])
+        self.assertIn("Festival", cat["value"])
+
+    def test_weekender_tag_field_emitted_when_categories_present(self):
+        recipe = get_adapter("triangle_weekender").recipe(
+            _event(categories=["music"])
+        )
+        tag = next(
+            (f for f in recipe["fields"]
+             if f["selector"] == "select[name='tax_input[post_tag][]']"),
+            None,
+        )
+        self.assertIsNotNone(tag, "weekender tag select2_multi field missing")
+        self.assertEqual(tag["type"], "select2_multi")
+        self.assertIn("Music", tag["value"])
+
+    def test_weekender_category_field_absent_when_no_categories(self):
+        # select2_multi with empty value is dropped by recipe() — not required
+        # and not in _ALWAYS_EMIT_TYPES.
+        recipe = get_adapter("triangle_weekender").recipe(_event(categories=[]))
+        selectors = _selectors(recipe)
+        self.assertNotIn("select[name='tax_input[tribe_events_cat][]']", selectors)
+        self.assertNotIn("select[name='tax_input[post_tag][]']", selectors)
+
+    def test_chatham_arts_category_field_emitted_when_categories_present(self):
+        recipe = get_adapter("chatham_arts").recipe(
+            _event(categories=["arts", "literary"])
+        )
+        cat = next(
+            (f for f in recipe["fields"]
+             if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"),
+            None,
+        )
+        self.assertIsNotNone(cat, "chatham_arts category select2_multi field missing")
+        self.assertEqual(cat["type"], "select2_multi")
+        self.assertIn("Arts", cat["value"])
+        self.assertIn("Literary", cat["value"])
 
 
 def _submission(start_utc, end_utc=None, all_day=False):

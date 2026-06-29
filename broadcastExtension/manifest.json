@@ -10,7 +10,8 @@
     "https://thetriangleweekender.com/*",
     "https://business.ccucc.net/*",
     "https://www.chathamartscouncil.org/*",
-    "https://www.visitraleigh.com/*"
+    "https://www.visitraleigh.com/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

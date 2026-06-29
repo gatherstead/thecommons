@@ -145,6 +145,9 @@ class VisitRaleighAdapter(SiteAdapter):
     )
     recipe_fields = _RECIPE_FIELDS
     submit_selector = _SUBMIT_SELECTOR
+    # The form markup renders a beat after page load; wait for the description
+    # textarea (near the bottom of the form) before autofilling so fields exist.
+    ready_selector = "#description"
     captcha_hint = (
         "If a bot-check appears before or after filling the form, "
         "solve it manually then submit."

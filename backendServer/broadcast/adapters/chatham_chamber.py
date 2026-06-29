@@ -38,6 +38,10 @@ def _iso_date(dt) -> str:
     return dt.strftime("%Y-%m-%d")  # GrowthZone uses <input type="date"> (ISO)
 
 
+def _iso_time(dt) -> str:
+    return dt.strftime("%H:%M")  # <input type="time"> wants 24-hour HH:MM
+
+
 def _contact(ev) -> str:
     parts = [p for p in (ev.organizer_name, ev.contact_phone, ev.event_url) if p]
     return " · ".join(parts)
@@ -96,14 +100,26 @@ class ChathamChamberAdapter(SiteAdapter):
     submit_selector = "button[type='submit']"
 
     def recipe_field_specs(self, ev):
-        """Static fields + the all-day checkbox, which is only emitted when the
-        event is all-day (the extension checks any emitted checkbox regardless of
-        value, so a falsey one must be left out entirely)."""
+        """Static fields + the now-required End Date and the start/end time
+        inputs. The three date/time inputs all share name="eventEndDate", so we
+        address them by their distinct ng-model bindings instead. All-day events
+        get the checkbox and skip the time fields."""
         specs = list(_RECIPE_FIELDS)
+        end = ev.end_datetime or ev.start_datetime
+        specs.append(RecipeField(
+            "input[ng-model='vm.model.EndDateTime'][type='date']", "date",
+            lambda ev, e=end: _iso_date(e), required=True, label="End date"))
         if ev.all_day:
             specs.append(RecipeField("input[name='eventIsAllDay']", "checkbox",
                                      lambda ev: "true", recipe_only=True,
                                      label="All-day event"))
+        else:
+            specs.append(RecipeField(
+                "input[ng-model='vm.model.StartDateTime'][type='time']", "time",
+                lambda ev: _iso_time(ev.start_datetime), label="Start time"))
+            specs.append(RecipeField(
+                "input[ng-model='vm.model.EndDateTime'][type='time']", "time",
+                lambda ev, e=end: _iso_time(e), label="End time"))
         return specs
 
     def fill_and_submit(self, page, ev, ctx):
@@ -119,7 +135,7 @@ class ChathamChamberAdapter(SiteAdapter):
             return TargetResult(status="needs_manual", error="member login wall present",
                                 screenshot_path=h.take_screenshot(page, ctx, self.key))
 
-        missing = h.apply_specs(page, self.recipe_fields, ev, ctx.timeout_ms)
+        missing = h.apply_specs(page, self.recipe_field_specs(ev), ev, ctx.timeout_ms)
         if missing:
             return TargetResult(status="needs_manual",
                                 error="required fields unfilled: " + "; ".join(missing),

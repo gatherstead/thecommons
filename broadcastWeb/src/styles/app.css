@@ -135,7 +135,7 @@ a:hover {
   border-top: 1px solid var(--color-border-light);
   padding: 1.25rem 0;
 }
-.section > h2 {
+.section h2 {
   font-size: 1.05rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -166,6 +166,33 @@ a:hover {
 }
 .field-grid .span-2 {
   grid-column: 1 / -1;
+}
+
+/* Access/contact split: access code centred in left cell, contacts stacked on right */
+.field-grid .access-col {
+  align-self: center;
+}
+.contact-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.contact-col .hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* "You saved X minutes" note at bottom of Destinations section. Tight bottom
+   margin so the "Request it here" note sits right under it (no stray gap). */
+.time-saved {
+  font-family: var(--font-headline);
+  font-style: italic;
+  color: var(--color-submitted-bg);
+  margin: 0.75rem 0 0.25rem;
+}
+.calendar-request {
+  margin: 0;
 }
 
 .field label {
@@ -414,6 +441,11 @@ a.btn {
   font-size: 0.95rem;
   font-weight: 700;
   padding: 0.5rem 1.25rem;
+  line-height: 1.2;
+  /* Keep the label on one line so the left/right padding stays symmetric
+     (a wrapped, left-aligned label left a lopsided gap on the right). */
+  white-space: nowrap;
+  text-align: center;
   border: 1px solid var(--color-border);
   border-radius: 0;
   background: var(--color-bg-alt);

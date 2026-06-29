@@ -87,6 +87,10 @@ class SiteAdapter:
     recipe_fields: list[RecipeField] = []
     submit_selector: str = ""
     captcha_hint: str = ""
+    # Optional CSS selector the extension waits for before filling — for forms
+    # whose markup renders a beat after the page "completes". Defaults to the
+    # first field when empty.
+    ready_selector: str = ""
 
     def fill_and_submit(self, page: "Page", ev: "CanonicalEvent", ctx: RunContext) -> TargetResult:
         raise NotImplementedError
@@ -118,4 +122,5 @@ class SiteAdapter:
             "fields": fields,
             "captcha_hint": self.captcha_hint or None,
             "submit_selector": self.submit_selector,
+            "ready_selector": self.ready_selector or None,
         }

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from broadcast.routing import CATEGORIES, LOCALITIES
-from broadcast.schema import CanonicalEvent
+from broadcast.schema import CanonicalEvent, _to_local
 
 
 class CanonicalEventSerializer(serializers.Serializer):
@@ -36,5 +36,6 @@ class CanonicalEventSerializer(serializers.Serializer):
 
     def to_canonical(self) -> CanonicalEvent:
         data = dict(self.validated_data)
-        data["end_datetime"] = data.get("end_datetime") or None
+        data["start_datetime"] = _to_local(data["start_datetime"])
+        data["end_datetime"] = _to_local(data.get("end_datetime") or None)
         return CanonicalEvent(**data)

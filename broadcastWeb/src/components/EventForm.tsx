@@ -284,7 +284,7 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
           onChange={(e) => set("image_url", e.target.value)}
           disabled={disabled}
         />
-        <p className="hint">Sites that take an upload receive this image as a file.</p>
+        <p className="hint">The extension auto-uploads this to sites with a standard file input. If that fails (non-standard widget or fetch error) the field is highlighted for manual upload instead.</p>
       </div>
 
     </div>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
-import SitePicker from "./components/SitePicker";
+import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
@@ -152,6 +152,7 @@ export default function App() {
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
+  const locked = Boolean(preview);
 
   // Session: you stay "signed in" with your access code across events/refreshes,
   // and your contact details stick the same way (reused for every event).
@@ -197,7 +198,15 @@ export default function App() {
     try {
       const result = await previewBroadcast(accessCode, toApiEvent(draft));
       setPreview(result);
-      setSelected(new Set(result.eligible.map((s) => s.site_key)));
+      // Coming-soon calendars are shown in the picker but can't be submitted —
+      // keep them out of the default selection so they never enter the submit list.
+      setSelected(
+        new Set(
+          result.eligible
+            .map((s) => s.site_key)
+            .filter((key) => !COMING_SOON.has(key))
+        )
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Preview failed.");
     } finally {
@@ -323,6 +332,7 @@ export default function App() {
 
   // Derived values used in the Destinations section
   const unfilled = unfilledOptionalFields(draft);
+  const submittedCount = Object.values(extFillStatus).filter((s) => s === "submitted").length;
   const nameByKey: Record<string, string> = preview
     ? Object.fromEntries(preview.eligible.map((s) => [s.site_key, s.name]))
     : {};
@@ -354,10 +364,10 @@ export default function App() {
         <div className="rule-double" />
       </header>
 
-      <section className="section">
+      <section className={`section${locked ? " form-dim" : ""}`}>
         <h2>Access</h2>
         <div className="field-grid">
-          <div className="field">
+          <div className="field access-col">
             <label htmlFor="access-code">
               Access Code <span className="required-mark">*</span>
             </label>
@@ -368,7 +378,7 @@ export default function App() {
                 value={accessCode}
                 onChange={(e) => { setAccessCode(e.target.value); setVerified(false); }}
                 autoComplete="off"
-                disabled={busy || job !== null}
+                disabled={busy || job !== null || locked}
               />
               <button
                 type="button"
@@ -382,48 +392,48 @@ export default function App() {
             <p className="hint">Provided by The Commons. Remembered on this device — you stay signed in across events.</p>
           </div>
 
-          <div className="field">
-            <label htmlFor="contact-name">Contact Name</label>
-            <input
-              id="contact-name"
-              type="text"
-              value={draft.organizer_name ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-              disabled={busy || job !== null || !verified}
-              maxLength={200}
-            />
-          </div>
+          <div className="contact-col">
+            <div className="field">
+              <label htmlFor="contact-name">Contact Name</label>
+              <input
+                id="contact-name"
+                type="text"
+                value={draft.organizer_name ?? ""}
+                onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
+                disabled={busy || job !== null || !verified || locked}
+                maxLength={200}
+              />
+            </div>
 
-          <div className="field">
-            <label htmlFor="contact-email">Contact Email</label>
-            <input
-              id="contact-email"
-              type="email"
-              value={draft.contact_email ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-              disabled={busy || job !== null || !verified}
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="contact-email">Contact Email</label>
+              <input
+                id="contact-email"
+                type="email"
+                value={draft.contact_email ?? ""}
+                onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
+                disabled={busy || job !== null || !verified || locked}
+              />
+            </div>
 
-          <div className="field">
-            <label htmlFor="contact-phone">Contact Phone</label>
-            <input
-              id="contact-phone"
-              type="tel"
-              value={draft.contact_phone ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-              disabled={busy || job !== null || !verified}
-              maxLength={40}
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="contact-phone">Contact Phone</label>
+              <input
+                id="contact-phone"
+                type="tel"
+                value={draft.contact_phone ?? ""}
+                onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
+                disabled={busy || job !== null || !verified || locked}
+                maxLength={40}
+              />
+            </div>
 
-          <div className="field span-2">
             <p className="hint">Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.</p>
           </div>
         </div>
       </section>
 
-      <section className="section">
+      <section className={`section${locked ? " form-dim" : ""}`}>
         <h2>AI Autofill</h2>
         <p className="hint">
           Paste a raw event description, email, or flyer text below and the AI will fill
@@ -456,7 +466,7 @@ export default function App() {
               placeholder="Paste an event description / flyer text / email…"
               value={aiText}
               onChange={(e) => setAiText(e.target.value)}
-              disabled={aiBusy || job !== null}
+              disabled={aiBusy || job !== null || locked}
             />
             <div className="actions">
               <button
@@ -467,7 +477,8 @@ export default function App() {
                   aiText.trim() === "" ||
                   !isDraftEmpty(draft) ||
                   aiBusy ||
-                  job !== null
+                  job !== null ||
+                  locked
                 }
               >
                 {aiBusy ? "Generating…" : "✨ Generate from text"}
@@ -477,25 +488,43 @@ export default function App() {
         )}
       </section>
 
-      <section className={`section${verified ? "" : " form-dim"}`}>
-        <h2>The Event</h2>
-        {!isDraftEmpty(draft) && (
-          <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
-        )}
-        <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null} />
-        <div className="actions">
-          <button
-            type="button"
-            onClick={handlePreview}
-            disabled={busy || job !== null || !draftValid || accessCode.trim() === "" || !verified}
-          >
-            {busy && !preview ? "Checking…" : "Preview Destinations"}
-          </button>
-          {!verified && (
-            <span className="section-note">Verify your access code to begin.</span>
+      <section className="section">
+        <div className={verified && !locked ? "" : "form-dim"}>
+          <h2>The Event</h2>
+          {!isDraftEmpty(draft) && (
+            <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
-          {verified && !draftValid && (
-            <span className="section-note">Fill the required (*) fields to preview.</span>
+          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked} />
+        </div>
+        <div className="actions">
+          {preview ? (
+            <>
+              <button
+                type="button"
+                onClick={() => { setPreview(null); setSelected(new Set()); setExtFillStatus({}); setSpeedSubmit(false); }}
+              >
+                Make changes
+              </button>
+              <button type="button" onClick={resetForm}>
+                Reset form
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handlePreview}
+                disabled={busy || job !== null || !draftValid || accessCode.trim() === "" || !verified}
+              >
+                {busy ? "Checking…" : "Preview Destinations"}
+              </button>
+              {!verified && (
+                <span className="section-note">Verify your access code to begin.</span>
+              )}
+              {verified && !draftValid && (
+                <span className="section-note">Fill the required (*) fields to preview.</span>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -589,6 +618,20 @@ export default function App() {
               </div>
             </>
           )}
+          {submittedCount > 0 && (
+            <p className="time-saved">You've saved {submittedCount * 10} minutes today!</p>
+          )}
+          <p className="section-note calendar-request">
+            Don't see a calendar you expect?{" "}
+            <a
+              href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Request it here
+            </a>
+            .
+          </p>
         </section>
       )}
 
@@ -621,8 +664,8 @@ export default function App() {
       {(job || preview) && (
         <section className="section">
           <div className="actions">
-            <button type="button" onClick={startOver}>
-              Submit another event
+            <button type="button" className="dark" onClick={startOver}>
+              Reset &amp; submit another event
             </button>
             <a
               href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
@@ -632,9 +675,6 @@ export default function App() {
             >
               Have suggestions?
             </a>
-            <span className="section-note">
-              Tell us which calendars/websites you'd like added, or send any other feedback.
-            </span>
           </div>
         </section>
       )}

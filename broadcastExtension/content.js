@@ -86,6 +86,7 @@
     date: fillInput,
     time: fillInput,
     select: fillInput,
+    froala: fillFroala,   // Froala/micronet rich-text editors (iframe-mode)
     radio: checkInput,
     checkbox: checkInput,
     file: fillFile,       // upgraded from fileHint — auto-uploads via background worker
@@ -101,6 +102,54 @@
     const el = resolveInput(field.selector);
     if (!el) return;
     setNativeValue(el, field.value);
+  }
+
+  // Fill a Froala / micronet-rich-text-editor. We can't reach the page's Froala
+  // JS API from the isolated content-script world, but the editable lives in a
+  // same-origin <iframe class="fr-iframe"> we CAN reach through the DOM: set the
+  // iframe body's HTML, then fire input/keyup/blur so Froala's own listeners
+  // sync the value to the underlying ng-model (vm.model.*). Handles both
+  // div-initialized editors (the id sits on the .fr-box) and textarea-
+  // initialized editors (hidden <textarea> whose .fr-box is a sibling).
+  function fillFroala(field) {
+    if (!field.value) return;
+    const box = findFroalaBox(field.selector);
+    if (!box) return;
+    const iframe = box.querySelector("iframe.fr-iframe");
+    const body = iframe && iframe.contentDocument && iframe.contentDocument.body;
+    const html = "<p>" + escapeHtml(field.value).replace(/\n/g, "<br>") + "</p>";
+    if (body) {
+      body.innerHTML = html;
+      for (const type of ["input", "keydown", "keyup", "blur"]) {
+        body.dispatchEvent(new Event(type, { bubbles: true }));
+      }
+    }
+    // Belt-and-suspenders: if the original element is a <textarea>, set its
+    // value too (some configs read the source element on submit).
+    const orig = document.querySelector(field.selector);
+    if (orig && orig.tagName === "TEXTAREA") setNativeValue(orig, field.value);
+  }
+
+  // Resolve the .fr-box for a Froala field selector. The selector may point at
+  // the .fr-box directly (div-initialized) or at a hidden source element whose
+  // .fr-box Froala inserted as a following sibling (textarea-initialized).
+  function findFroalaBox(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    if (el.classList && el.classList.contains("fr-box")) return el;
+    let sib = el.nextElementSibling;
+    while (sib) {
+      if (sib.classList && sib.classList.contains("fr-box")) return sib;
+      sib = sib.nextElementSibling;
+    }
+    return (el.parentElement && el.parentElement.querySelector(".fr-box")) || null;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 
   function checkInput(field) {

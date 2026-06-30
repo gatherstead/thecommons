@@ -262,6 +262,25 @@ fieldset.category-set legend {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.25rem 1rem;
 }
+.category-options input[type="checkbox"]:checked + label {
+  font-weight: 700;
+}
+
+/* Section heading row — h2 left, inline action button right */
+.section-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  margin-bottom: 0.5rem;
+}
+.section-title-row h2 {
+  margin-bottom: 0;
+}
+/* Reset button sits just to the right of the section header, always active
+   (never inherits the form-dim greying). */
+.reset-form-inline {
+  margin-left: 8px;
+}
 
 /* Buttons: square, inky; accent only on the primary action */
 button {
@@ -387,6 +406,23 @@ button.verify.is-verified {
 }
 .site-list li.excluded {
   opacity: 0.6;
+}
+/* Small redo button on a finished row — re-opens + re-fills that one calendar
+   (e.g. if the tab got closed before you submitted). */
+.resubmit-icon {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+  background: var(--color-bg-alt);
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.resubmit-icon:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text);
 }
 
 /* Job progress */

@@ -113,6 +113,18 @@ class ChathamArtsAdapter(SiteAdapter):
             specs.append(RecipeField("#saved_tribe_organizer", "select2",
                                      lambda ev: ev.organizer_name, recipe_only=True,
                                      label="Organizer", hint="pick the match or choose Create"))
+            # Emit organizer detail inputs as plain text so the extension fills
+            # them directly via DOM (the recipe-only select2 above only carries
+            # the name). These inputs always exist in the DOM; emitting them
+            # unconditionally is harmless (empty-value fields are dropped by
+            # recipe()). organizer-website uses event_url — CanonicalEvent has no
+            # separate organizer URL field.
+            specs.append(RecipeField("#organizer-phone", "text",
+                                     lambda ev: ev.contact_phone, label="Organizer phone"))
+            specs.append(RecipeField("#organizer-website", "text",
+                                     lambda ev: ev.event_url, label="Organizer website"))
+            specs.append(RecipeField("#organizer-email", "text",
+                                     lambda ev: ev.contact_email, label="Organizer email"))
         # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). Same
         # Tribe Events plugin as Triangle Weekender; selector is identical. Only
         # emitted when ev.categories contains known slugs.
@@ -170,6 +182,8 @@ class ChathamArtsAdapter(SiteAdapter):
             if _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name) == "created":
                 _try_fill(page, "#organizer-email", ev.contact_email)
                 _try_fill(page, "#organizer-phone", ev.contact_phone)
+                # organizer-website uses event_url (no separate organizer URL on CanonicalEvent).
+                _try_fill(page, "#organizer-website", ev.event_url)
 
         _dismiss_popups(page)
 

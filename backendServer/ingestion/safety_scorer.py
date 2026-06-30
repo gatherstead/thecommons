@@ -81,9 +81,11 @@ def score_event(staged: StagedEvent) -> tuple[float, str]:
     return score, notes
 
 
-def score_all_unscored():
+def score_all_unscored(source=None):
     """Score all pending StagedEvents that have not yet been safety-scored."""
     unscored = StagedEvent.objects.filter(status='pending', safety_score__isnull=True)
+    if source:
+        unscored = unscored.filter(raw_event__source=source)
     count = 0
 
     for staged in unscored:

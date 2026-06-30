@@ -5,13 +5,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Recipe } from "../models/broadcastModels";
 
-const EXTENSION_ID = import.meta.env.VITE_BROADCAST_EXTENSION_ID as
-  | string
-  | undefined;
+// One or more extension IDs, comma-separated — lets the dev (unpacked) and the
+// published Web Store builds coexist in env. We ping each and use whichever is
+// actually installed (see resolved id below).
+const EXTENSION_IDS: string[] = (
+  (import.meta.env.VITE_BROADCAST_EXTENSION_ID as string | undefined) ?? ""
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-// Unlisted Chrome Web Store install link. TODO: replace once the listing exists.
+// Chrome Web Store install link for the published "The Commons — Broadcast"
+// listing (user-specific ?authuser/&hl params stripped).
 export const WEB_STORE_URL =
-  "https://chromewebstore.google.com/detail/the-commons-broadcast";
+  "https://chromewebstore.google.com/detail/the-commons-%E2%80%94-broadcast/jidmhdmlbjfnblbheglmodhpcjhafjmi";
 
 interface PingResponse {
   ok?: boolean;
@@ -46,24 +53,31 @@ const POLL_ATTEMPTS = 60;
 
 export function useExtension(): ExtensionState {
   const [installed, setInstalled] = useState(false);
+  // The id that actually answered a ping — the one sendFill should target when
+  // several are configured. undefined until something responds.
+  const [resolvedId, setResolvedId] = useState<string | undefined>(undefined);
   const installedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const ping = useCallback((): void => {
     const runtime = getRuntime();
-    if (!runtime || !EXTENSION_ID) return;
-    try {
-      runtime.sendMessage(EXTENSION_ID, { type: "ping" }, (response) => {
-        // Reading lastError suppresses the "no receiving end" console error
-        // Chrome logs when the extension isn't installed.
-        const err = getRuntime()?.lastError;
-        if (!err && response?.ok) {
-          installedRef.current = true;
-          setInstalled(true);
-        }
-      });
-    } catch {
-      /* not a Chromium runtime — treat as not installed */
+    if (!runtime || EXTENSION_IDS.length === 0) return;
+    // Ping every configured id; the first to answer wins.
+    for (const id of EXTENSION_IDS) {
+      try {
+        runtime.sendMessage(id, { type: "ping" }, (response) => {
+          // Reading lastError suppresses the "no receiving end" console error
+          // Chrome logs when an extension isn't installed.
+          const err = getRuntime()?.lastError;
+          if (!err && response?.ok && !installedRef.current) {
+            installedRef.current = true;
+            setInstalled(true);
+            setResolvedId(id);
+          }
+        });
+      } catch {
+        /* not a Chromium runtime — treat as not installed */
+      }
     }
   }, []);
 
@@ -89,7 +103,7 @@ export function useExtension(): ExtensionState {
     };
   }, [ping]);
 
-  return { installed, extensionId: EXTENSION_ID, recheck };
+  return { installed, extensionId: resolvedId, recheck };
 }
 
 export function sendFill(extensionId: string, recipe: Recipe): Promise<boolean> {

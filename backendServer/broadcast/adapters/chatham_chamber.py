@@ -12,16 +12,22 @@ Capture notes / honesty (all confirmed in the live capture):
 - Fillable controls: eventTitle (req, text), eventStartDate (req, date),
   eventContactEmailAddress (req, email), eventIsAllDay (checkbox), and the
   locationDescription / contactDescription <textarea>s (by id).
-- The main Description (#eventDescription), Date-and-Time Description
-  (#hoursDescription) and Fees/Admission (#pricingDescription) are Froala
-  rich-text editors (micronet-rich-text-editor) whose editable body lives inside
-  an <iframe class="fr-iframe"> — NOT fillable by a content script via .value or
-  innerText. We deliberately do not pretend to fill them; the human types the
-  description on review. To avoid losing the schedule, _location folds a
-  human-readable "When: <date/time>" line into the locationDescription textarea
-  we CAN fill — the three native time/end-date inputs all share
-  name="eventEndDate" with no unique id, so they are not safely addressable.
-- #contactDescription carries ev.organizer_name · ev.contact_phone · ev.event_url.
+- The Description (#eventDescription), Date-and-Time Description
+  (#hoursDescription), Fees/Admission (#pricingDescription) and Location
+  (#locationDescription) are Froala rich-text editors (micronet-rich-text-editor)
+  whose editable body lives inside an <iframe class="fr-iframe">. The
+  browser-extension content script fills them via a dedicated "froala" field
+  type: it writes the iframe body's HTML and fires input/keyup/blur so Froala
+  syncs the value to the underlying ng-model. (The server Playwright path can't
+  drive Froala through apply_specs, so dry runs leave these blank — verify the
+  fill via the live extension.) We emit ev.description → #eventDescription, a
+  human-readable schedule → #hoursDescription, and the price → #pricingDescription.
+- #locationDescription is a hidden <textarea> (Froala's visible box is a sibling)
+  carrying ev.venue_name + full address. The machine schedule is also captured by
+  the native start/end time + end-date inputs (driven via their ng-model bindings
+  in recipe_field_specs), so the location no longer folds in a "When:" line.
+- #contactDescription is a plain <textarea> (no Froala) carrying
+  ev.organizer_name · ev.contact_phone · ev.contact_email · ev.event_url.
 - IMPORTANT: this form's host (business.ccucc.net) must be in the extension's
   manifest host_permissions or the content script can't inject — that was the
   root cause of "nothing filled" before.
@@ -43,15 +49,19 @@ def _iso_time(dt) -> str:
 
 
 def _contact(ev) -> str:
-    parts = [p for p in (ev.organizer_name, ev.contact_phone, ev.event_url) if p]
+    parts = [p for p in (ev.organizer_name, ev.contact_phone, ev.contact_email, ev.event_url) if p]
     return " · ".join(parts)
 
 
+def _price(ev) -> str:
+    """Fees / Admission text for #pricingDescription (a Froala editor)."""
+    return "Free" if ev.is_free else (ev.price or "")
+
+
 def _hours(ev) -> str:
-    """Human-readable date + time. The native time/end-date inputs share a
-    non-unique name and can't be driven, and the dedicated "Date and Time
-    Description" field is a Froala iframe editor we can't fill — so we surface the
-    schedule inside the one free-text textarea we can (locationDescription)."""
+    """Human-readable schedule for the "Date and Time Description"
+    (#hoursDescription, a Froala editor). The native time/end-date inputs carry
+    the machine schedule; this is the matching free-text summary."""
     if ev.all_day:
         return f"{h.format_date(ev.start_datetime)} — All day"
     start = f"{h.format_date(ev.start_datetime)}, {h.format_time(ev.start_datetime)}"
@@ -63,7 +73,10 @@ def _hours(ev) -> str:
 
 
 def _location(ev) -> str:
-    parts = [ev.venue_name, h.full_address(ev), f"When: {_hours(ev)}"]
+    """Venue + address only. The schedule is filled into the native start/end
+    time and end-date inputs (see recipe_field_specs), so we no longer fold a
+    'When:' line in here."""
+    parts = [ev.venue_name, h.full_address(ev)]
     return "\n".join(p for p in parts if p and p.strip(", "))
 
 
@@ -72,7 +85,10 @@ _RECIPE_FIELDS = [
                 label="Event title"),
     RecipeField("input[name='eventStartDate']", "date", lambda ev: _iso_date(ev.start_datetime),
                 required=True, label="Start date"),
-    RecipeField("#locationDescription", "textarea", _location, label="Location & schedule"),
+    RecipeField("#eventDescription", "froala", lambda ev: ev.description, label="Description"),
+    RecipeField("#locationDescription", "froala", _location, label="Location"),
+    RecipeField("#hoursDescription", "froala", _hours, label="Date and Time Description"),
+    RecipeField("#pricingDescription", "froala", _price, label="Fees / Admission"),
     RecipeField("#contactDescription", "textarea", _contact, label="Contact details"),
     RecipeField("input[name='eventContactEmailAddress']", "text", lambda ev: ev.contact_email,
                 required=True, label="Contact email"),

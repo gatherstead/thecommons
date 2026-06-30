@@ -1,0 +1,836 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Ingestion Playground — Devtools{% endblock %}
+
+{% block content %}
+<style>
+  .playground { max-width: 1040px; }
+  .playground h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .playground p { margin: 0.5rem 0; line-height: 1.65; }
+  .playground .description { margin: 1rem 0 1.5rem; color: #6b7280; }
+
+  /* Controls */
+  .playground .controls { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .playground .controls label { font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.25rem; }
+  .playground .controls select,
+  .playground .controls input[type="url"],
+  .playground .controls input[type="text"] {
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  .playground .btn-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; }
+  .playground .btn-run {
+    display: inline-block;
+    background: #2563eb;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playground .btn-run:hover { background: #1d4ed8; }
+  .playground .btn-run:disabled { background: #93c5fd; cursor: not-allowed; }
+  .playground .btn-save {
+    display: inline-block;
+    background: #16a34a;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playground .btn-save:hover { background: #15803d; }
+  .playground .btn-save:disabled { background: #86efac; cursor: not-allowed; }
+
+  /* Warning / info boxes */
+  .playground .warning {
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    padding: 0.6rem 1rem;
+    border-radius: 0 4px 4px 0;
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+  }
+  .playground .result {
+    margin-top: 1.25rem;
+    padding: 1rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  .playground .result.success { background: #f0fdf4; border-left: 3px solid #16a34a; }
+  .playground .result.empty   { background: #fafafa;  border-left: 3px solid #d1d5db; color: #6b7280; }
+  .playground .result.error   { background: #fef2f2;  border-left: 3px solid #dc2626; }
+  .playground .result strong  { font-weight: 600; }
+
+  /* Stage progress */
+  .playground .stages { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+  .playground .stage-badge {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    color: #6b7280;
+  }
+  .playground .stage-badge.running  { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+  .playground .stage-badge.done     { border-color: #16a34a; background: #f0fdf4; color: #15803d; }
+
+  /* Log area */
+  .playground .log-box {
+    background: #111827;
+    color: #d1d5db;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 1rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .playground .log-box .log-info    { color: #d1d5db; }
+  .playground .log-box .log-warning { color: #fbbf24; }
+  .playground .log-box .log-error   { color: #f87171; }
+
+  /* Town-mismatch warnings list */
+  .playground .mismatch-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+
+  /* Results table */
+  .playground .results-table-wrap { overflow-x: auto; margin-top: 1rem; }
+  .playground .results-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  .playground .results-table th {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    background: #f3f4f6;
+    border-bottom: 2px solid #e5e7eb;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .playground .results-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: top;
+  }
+  .playground .results-table tr:last-child td { border-bottom: none; }
+  .playground .results-table .source-empty { color: #dc2626; font-weight: 600; }
+  .playground .results-table a { color: #2563eb; }
+
+  /* Event explorer (master/detail) */
+  .playground .explorer { display: flex; gap: 1rem; margin-top: 0.75rem; align-items: flex-start; }
+  .playground .explorer-table-wrap { flex: 1 1 auto; overflow-x: auto; min-width: 0; }
+  .playground .explorer .results-table tbody tr { cursor: pointer; }
+  .playground .explorer .results-table tbody tr:hover { background: #f9fafb; }
+  .playground .explorer .results-table tbody tr.selected { background: #eff6ff; }
+  .playground .explorer .results-table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
+
+  .playground .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .playground .dot.published { background: #16a34a; }
+  .playground .dot.held      { background: #f59e0b; }
+  .playground .dot.dropped   { background: #9ca3af; }
+
+  .playground .detail-card {
+    flex: 0 0 300px;
+    position: sticky;
+    top: 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    padding: 1rem 1.1rem;
+    max-height: 78vh;
+    overflow-y: auto;
+  }
+  .playground .detail-card h3 { margin: 0 0 0.5rem; font-size: 1rem; line-height: 1.3; }
+  .playground .detail-empty { color: #9ca3af; font-size: 0.85rem; }
+  .playground .detail-hint { font-size: 0.72rem; color: #9ca3af; margin-top: 0.75rem; }
+  .playground .kv { margin: 0.5rem 0; }
+  .playground .kv .k {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+    color: #9ca3af; font-weight: 700; margin-bottom: 0.1rem;
+  }
+  .playground .kv .v { font-size: 0.85rem; word-break: break-word; line-height: 1.45; }
+  .playground .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+  .playground .badge.published { background: #f0fdf4; color: #15803d; }
+  .playground .badge.held      { background: #fffbeb; color: #b45309; }
+  .playground .badge.dropped   { background: #f3f4f6; color: #6b7280; }
+  .playground .tag-chip { display: inline-block; background: #f3f4f6; border-radius: 4px; padding: 0.1rem 0.45rem; margin: 0 0.25rem 0.25rem 0; font-size: 0.75rem; }
+  .playground .src-missing { color: #dc2626; font-weight: 600; }
+  .playground .town-arrow { color: #9ca3af; }
+  .playground .legend { font-size: 0.75rem; color: #6b7280; margin: 0.25rem 0 0; display: flex; gap: 1rem; flex-wrap: wrap; }
+
+  @media (max-width: 760px) {
+    .playground .explorer { flex-direction: column; }
+    .playground .detail-card { position: static; flex-basis: auto; width: 100%; max-height: none; }
+  }
+
+  /* Traceback */
+  .playground .traceback {
+    background: #111827;
+    color: #f87171;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.78rem;
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  /* Section headings */
+  .playground .section-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #9ca3af;
+    margin: 1.25rem 0 0.4rem;
+  }
+</style>
+
+{% csrf_token %}
+
+<div class="playground">
+  <h1>Ingestion Playground</h1>
+  <p class="description">
+    Pick a city, paste an ICS feed URL, and run a <strong>dry-run</strong> to watch the full
+    ingestion pipeline execute live. No data is written until you click
+    <em>Save source &amp; publish</em>.
+  </p>
+
+  <div class="warning">
+    <strong>Dev-only tool.</strong> The <em>Save source &amp; publish</em> button writes to the
+    live database. Confirm results in the dry-run before saving.
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div>
+      <label for="city">City</label>
+      <select id="city">
+        {% for t in towns %}
+          <option value="{{ t.slug }}">{{ t.name }}</option>
+        {% empty %}
+          <option value="" disabled>No towns configured</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="ics_url">ICS Feed URL</label>
+      <input id="ics_url" type="url" placeholder="https://example.com/events.ics" />
+    </div>
+    <div>
+      <label for="source_name">Source Name <span style="font-weight:400;color:#6b7280;">(optional human-readable label)</span></label>
+      <input id="source_name" type="text" placeholder="e.g. Chapel Hill Arts Council" />
+    </div>
+    <div class="btn-row">
+      <button id="run-btn" class="btn-run">Run (dry-run)</button>
+      <button id="save-btn" class="btn-save">Save source &amp; publish</button>
+    </div>
+  </div>
+
+  <!-- Stage progress -->
+  <div id="stages-area" style="display:none;">
+    <div class="section-label">Pipeline stages</div>
+    <div class="stages" id="stages-row"></div>
+  </div>
+
+  <!-- Town-mismatch warnings -->
+  <div id="warnings-area" style="display:none;">
+    <div class="section-label">Warnings</div>
+    <div id="warnings-list" class="mismatch-list"></div>
+  </div>
+
+  <!-- Live log -->
+  <div id="log-area" style="display:none;">
+    <div class="section-label">Live log</div>
+    <div id="log-box" class="log-box"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="results-area"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ── DOM refs ─────────────────────────────────────────────── */
+  const cityEl       = document.getElementById("city");
+  const icsUrlEl     = document.getElementById("ics_url");
+  const sourceNameEl = document.getElementById("source_name");
+  const runBtn       = document.getElementById("run-btn");
+  const saveBtn      = document.getElementById("save-btn");
+
+  const stagesArea   = document.getElementById("stages-area");
+  const stagesRow    = document.getElementById("stages-row");
+  const warningsArea = document.getElementById("warnings-area");
+  const warningsList = document.getElementById("warnings-list");
+  const logArea      = document.getElementById("log-area");
+  const logBox       = document.getElementById("log-box");
+  const resultsArea  = document.getElementById("results-area");
+
+  const STAGES = ["fetch", "standardize", "force_town", "dedup", "safety", "publish"];
+
+  /* badge elements keyed by stage name */
+  const stageBadges = {};
+
+  /* flag set once 'done' fires so a trailing connection-close error is ignored */
+  let streamDone = false;
+
+  /* Per-run event store, populated from `stage_data` frames and merged with the
+     final `published` list. Keyed by StagedEvent id; `eventOrder` preserves the
+     standardize ordering. Powers the master/detail event explorer. */
+  let eventStore     = {};
+  let eventOrder     = [];
+  let extraPublished = [];   // published rows that didn't match any staged event
+  let pinnedKey      = null;  // a clicked row stays selected until clicked again
+
+  /* CSRF token — read from the hidden input rendered by {% csrf_token %} */
+  function getCsrf() {
+    const el = document.querySelector("[name=csrfmiddlewaretoken]");
+    return el ? el.value : "";
+  }
+
+  /* ── Helpers ──────────────────────────────────────────────── */
+  function escHtml(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function show(el) { el.style.display = ""; }
+
+  /* ── Reset UI between runs ────────────────────────────────── */
+  function resetStream() {
+    streamDone    = false;
+    eventStore    = {};
+    eventOrder    = [];
+    extraPublished = [];
+    pinnedKey     = null;
+    logBox.innerHTML  = "";
+    stagesRow.innerHTML = "";
+    warningsList.innerHTML = "";
+    resultsArea.innerHTML = "";
+    stagesArea.style.display  = "none";
+    warningsArea.style.display = "none";
+    logArea.style.display     = "none";
+
+    STAGES.forEach(s => {
+      const badge = document.createElement("span");
+      badge.className = "stage-badge";
+      badge.id = "stage-badge-" + s;
+      badge.textContent = s;
+      stageBadges[s] = badge;
+      stagesRow.appendChild(badge);
+    });
+    show(stagesArea);
+    show(logArea);
+  }
+
+  /* ── Log rendering ────────────────────────────────────────── */
+  function appendLog(data) {
+    const level = (data.level || "INFO").toUpperCase();
+    const cls   = level === "WARNING" ? "log-warning"
+                : level === "ERROR"   ? "log-error"
+                :                       "log-info";
+    const line  = document.createElement("div");
+    line.className = cls;
+    line.textContent =
+      "[" + (data.ts || "") + "] [" + level + "] [" + (data.stage || "") + "] " +
+      (data.message || "");
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  /* ── Stage badge updates ──────────────────────────────────── */
+  function handleStage(data) {
+    const badge = stageBadges[data.stage];
+    if (!badge) return;
+    if (data.status === "start") {
+      badge.className = "stage-badge running";
+    } else if (data.status === "end") {
+      badge.className = "stage-badge done";
+      if (data.summary) {
+        badge.title = JSON.stringify(data.summary, null, 2);
+      }
+    }
+  }
+
+  /* ── Warning rendering ────────────────────────────────────── */
+  function handleWarning(data) {
+    show(warningsArea);
+    const box = document.createElement("div");
+    box.className = "warning";
+    box.innerHTML =
+      "<strong>" + escHtml(data.code || "warning") + ":</strong> " +
+      escHtml(data.message || "") +
+      (data.detail ? " <span style='color:#92400e;'>(" + escHtml(data.detail) + ")</span>" : "");
+    warningsList.appendChild(box);
+  }
+
+  /* ── stage_data capture ───────────────────────────────────── */
+  /* Merge the per-stage record streams into one event-per-row store so the
+     explorer can show what each event looked like at every stage. */
+  function handleStageData(data) {
+    const stage = data.stage;
+    const recs  = data.records || [];
+
+    if (stage === "standardize") {
+      recs.forEach(function (r) {
+        if (!(r.id in eventStore)) eventOrder.push(r.id);
+        const e = eventStore[r.id] || {};
+        e.title         = r.title;
+        e.geminiTown    = r.town;          // captured BEFORE force_town overrides it
+        e.location_name = r.location_name;
+        e.start_datetime = r.start_datetime;
+        e.tags          = r.tags;
+        e.price         = r.price;
+        e.link          = r.link;
+        eventStore[r.id] = e;
+      });
+    } else if (stage === "safety") {
+      recs.forEach(function (r) {
+        if (!(r.id in eventStore)) eventOrder.push(r.id);
+        const e = eventStore[r.id] || {};
+        if (r.title != null) e.title = r.title;
+        e.safety_score = r.safety_score;
+        e.safety_notes = r.safety_notes;
+        e.scored       = true;            // reached safety stage (i.e. not deduped)
+        eventStore[r.id] = e;
+      });
+    }
+    /* fetch records carry raw RawEvent ids (a different id space) — surfaced via
+       the live log and stage badge counts rather than the per-event table. */
+  }
+
+  /* ── Merge the final published[] into the store (match by title) ── */
+  function mergePublished(published) {
+    const norm = function (s) { return (s == null ? "" : String(s)).trim().toLowerCase(); };
+    const byTitle = {};
+    eventOrder.forEach(function (id) {
+      byTitle[norm(eventStore[id].title)] = id;
+    });
+    (published || []).forEach(function (p) {
+      const id = byTitle[norm(p.title)];
+      if (id != null && id in eventStore) {
+        const e = eventStore[id];
+        e.published     = true;
+        e.uuid          = p.uuid;
+        e.publishedTown = p.town;
+        e.venue         = p.venue;
+        e.date          = p.date;
+        e.source_name   = p.source_name;
+        if (p.price != null) e.publishedPrice = p.price;
+      } else {
+        extraPublished.push(p);
+      }
+    });
+  }
+
+  /* ── Build the normalized event list the explorer renders ── */
+  function buildEventList() {
+    const list = eventOrder.map(function (id) {
+      const e = eventStore[id];
+      const status = e.published ? "published" : (e.scored ? "held" : "dropped");
+      return {
+        key:           "s" + id,
+        title:         e.title,
+        status:        status,
+        published:     !!e.published,
+        geminiTown:    e.geminiTown,
+        town:          e.publishedTown || null,
+        location_name: e.location_name,
+        venue:         e.venue || null,
+        start_datetime: e.start_datetime,
+        date:          e.date || null,
+        tags:          e.tags,
+        price:         (e.publishedPrice != null ? e.publishedPrice : e.price),
+        link:          e.link,
+        source_name:   e.source_name,        // only set once published
+        safety_score:  e.safety_score,
+        safety_notes:  e.safety_notes,
+        uuid:          e.uuid,
+      };
+    });
+    extraPublished.forEach(function (p, i) {
+      list.push({
+        key: "p" + i, title: p.title, status: "published", published: true,
+        town: p.town, venue: p.venue, date: p.date, price: p.price,
+        link: p.link, source_name: p.source_name, uuid: p.uuid,
+      });
+    });
+    return list;
+  }
+
+  /* Save path returns only published[] (no stage_data) — build directly. */
+  function listFromPublished(published) {
+    return (published || []).map(function (p, i) {
+      return {
+        key: "p" + i, title: p.title, status: "published", published: true,
+        town: p.town, venue: p.venue, date: p.date, price: p.price,
+        link: p.link, source_name: p.source_name, uuid: p.uuid,
+      };
+    });
+  }
+
+  /* ── Formatting helpers ───────────────────────────────────── */
+  const STATUS_LABEL = { published: "Published", held: "Held for review", dropped: "Dropped (deduped/failed)" };
+
+  function fmtPrice(p) {
+    if (p == null || p === "") return "—";
+    const n = Number(p);
+    if (isNaN(n)) return escHtml(p);
+    if (n < 0)  return "N/A";
+    if (n === 0) return "Free";
+    return "$" + n.toFixed(2).replace(/\.00$/, "");
+  }
+
+  function fmtScore(s) {
+    if (s == null) return "—";
+    const n = Number(s);
+    return isNaN(n) ? escHtml(s) : n.toFixed(2);
+  }
+
+  function linkHtml(url) {
+    return url
+      ? "<a href='" + escHtml(url) + "' target='_blank' rel='noopener'>" + escHtml(url) + "</a>"
+      : "<span style='color:#9ca3af;'>none</span>";
+  }
+
+  /* ── Selected-event detail card ───────────────────────────── */
+  function renderDetail(card, ev) {
+    if (!ev) {
+      card.innerHTML =
+        "<div class='detail-empty'>Hover or click a row to inspect an event.</div>" +
+        "<div class='detail-hint'>Click to pin a selection.</div>";
+      return;
+    }
+
+    const rows = [];
+    const status = ev.status || "held";
+    rows.push(
+      "<h3>" + escHtml(ev.title || "(untitled)") + "</h3>" +
+      "<span class='badge " + status + "'>" + escHtml(STATUS_LABEL[status] || status) + "</span>"
+    );
+
+    function kv(k, vHtml) { rows.push("<div class='kv'><div class='k'>" + k + "</div><div class='v'>" + vHtml + "</div></div>"); }
+
+    /* Town: show Gemini's guess and what it was forced/published to. */
+    if (ev.geminiTown != null || ev.town != null) {
+      let townHtml = escHtml(ev.geminiTown != null ? ev.geminiTown : "—");
+      if (ev.town && ev.town !== ev.geminiTown) {
+        townHtml += " <span class='town-arrow'>→</span> <strong>" + escHtml(ev.town) + "</strong>";
+      }
+      kv("Town (gemini → forced)", townHtml);
+    }
+
+    if (ev.location_name) kv("Location", escHtml(ev.location_name));
+    if (ev.venue && ev.venue !== ev.location_name) kv("Published venue", escHtml(ev.venue));
+    if (ev.start_datetime) kv("Start", escHtml(ev.start_datetime));
+    if (ev.date && ev.date !== ev.start_datetime) kv("Published date", escHtml(ev.date));
+
+    if (ev.tags && ev.tags.length) {
+      kv("Tags", ev.tags.map(function (t) { return "<span class='tag-chip'>" + escHtml(t) + "</span>"; }).join(""));
+    }
+
+    kv("Price", fmtPrice(ev.price));
+
+    if (ev.safety_score != null || ev.safety_notes) {
+      let s = "Score: <strong>" + fmtScore(ev.safety_score) + "</strong>";
+      if (ev.safety_notes) s += "<br><span style='color:#6b7280;'>" + escHtml(ev.safety_notes) + "</span>";
+      kv("Safety", s);
+    }
+
+    /* source_name — the field this tool exists to validate. */
+    if (ev.published) {
+      const srcEmpty = !ev.source_name || String(ev.source_name).trim() === "";
+      kv("Source name", srcEmpty
+        ? "<span class='src-missing'>⚠ MISSING</span>"
+        : escHtml(ev.source_name));
+    }
+
+    kv("Link", linkHtml(ev.link));
+    if (ev.uuid) kv("Event UUID", "<code style='font-size:0.78rem;'>" + escHtml(ev.uuid) + "</code>");
+
+    rows.push("<div class='detail-hint'>Click the row again to unpin.</div>");
+    card.innerHTML = rows.join("");
+  }
+
+  /* ── Event explorer (master table + detail card) ──────────── */
+  function renderExplorer(parent, events) {
+    if (!events || events.length === 0) {
+      const box = document.createElement("div");
+      box.className = "result empty";
+      box.innerHTML = "<strong>No events.</strong> The pipeline produced no output for this feed.";
+      parent.appendChild(box);
+      return;
+    }
+
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    legend.innerHTML =
+      "<span><span class='dot published'></span>Published</span>" +
+      "<span><span class='dot held'></span>Held for review</span>" +
+      "<span><span class='dot dropped'></span>Dropped (deduped/failed)</span>";
+    parent.appendChild(legend);
+
+    const explorer = document.createElement("div");
+    explorer.className = "explorer";
+
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "explorer-table-wrap";
+    const table = document.createElement("table");
+    table.className = "results-table";
+    table.innerHTML =
+      "<thead><tr><th>Status</th><th>Title</th><th>Town</th><th>Safety</th><th>Source</th><th>Link</th></tr></thead>";
+
+    const tbody = document.createElement("tbody");
+    const card = document.createElement("div");
+    card.className = "detail-card";
+
+    function select(idx) {
+      Array.prototype.forEach.call(tbody.children, function (row, i) {
+        row.classList.toggle("selected", i === idx);
+      });
+      renderDetail(card, events[idx]);
+    }
+
+    events.forEach(function (ev, idx) {
+      const tr = document.createElement("tr");
+      const town = ev.town || ev.geminiTown || "";
+      const srcEmpty = ev.published && (!ev.source_name || String(ev.source_name).trim() === "");
+      let srcCell;
+      if (!ev.published)      srcCell = "<span style='color:#9ca3af;'>—</span>";
+      else if (srcEmpty)      srcCell = "<span class='source-empty'>⚠ MISSING</span>";
+      else                    srcCell = escHtml(ev.source_name);
+
+      tr.innerHTML =
+        "<td><span class='dot " + (ev.status || "held") + "'></span>" + escHtml(STATUS_LABEL[ev.status] || ev.status || "") + "</td>" +
+        "<td>" + escHtml(ev.title) + "</td>" +
+        "<td>" + escHtml(town) + "</td>" +
+        "<td>" + fmtScore(ev.safety_score) + "</td>" +
+        "<td>" + srcCell + "</td>" +
+        "<td>" + (ev.link ? "<a href='" + escHtml(ev.link) + "' target='_blank' rel='noopener'>link</a>" : "") + "</td>";
+
+      tr.addEventListener("mouseenter", function () {
+        if (pinnedKey == null) select(idx);
+      });
+      tr.addEventListener("click", function (e) {
+        /* let link clicks through without toggling the pin */
+        if (e.target.tagName === "A") return;
+        if (pinnedKey === ev.key) {
+          pinnedKey = null;
+        } else {
+          pinnedKey = ev.key;
+          select(idx);
+        }
+      });
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    explorer.appendChild(tableWrap);
+    explorer.appendChild(card);
+    parent.appendChild(explorer);
+
+    renderDetail(card, null);  // initial empty state
+  }
+
+  function renderResults(data, label, eventList) {
+    const isDry  = data.dry_run;
+    const counts = data.counts || {};
+    const events = eventList || buildEventList();
+
+    const hdr = document.createElement("div");
+    hdr.className = "result success";
+    hdr.innerHTML =
+      "<strong>" + (label || (isDry ? "Dry-run complete" : "Published")) + "</strong>" +
+      (data.town ? " — <em>" + escHtml(data.town) + "</em>" : "") +
+      (isDry ? " <span style='color:#6b7280;'>(no data written)</span>" : "") +
+      "<br>" +
+      "Auto-approved: <strong>" + (counts.auto_approved || 0) + "</strong> &nbsp;|&nbsp; " +
+      "Held for review: <strong>" + (counts.held_for_review || 0) + "</strong>";
+    resultsArea.appendChild(hdr);
+
+    const section = document.createElement("div");
+    section.className = "section-label";
+    section.textContent = "Events (" + events.length + ")";
+    resultsArea.appendChild(section);
+
+    renderExplorer(resultsArea, events);
+  }
+
+  /* ── Error rendering ──────────────────────────────────────── */
+  function renderError(msg, traceback) {
+    const box = document.createElement("div");
+    box.className = "result error";
+    box.innerHTML = "<strong>Error:</strong> " + escHtml(msg);
+    if (traceback) {
+      const pre = document.createElement("div");
+      pre.className = "traceback";
+      pre.textContent = traceback;
+      box.appendChild(pre);
+    }
+    resultsArea.appendChild(box);
+    runBtn.disabled  = false;
+    saveBtn.disabled = false;
+  }
+
+  /* ── SSE / Run button ─────────────────────────────────────── */
+  runBtn.addEventListener("click", function () {
+    const city       = cityEl.value;
+    const icsUrl     = icsUrlEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+
+    if (!city) {
+      alert("Please select a city.");
+      return;
+    }
+    if (!icsUrl) {
+      alert("Please enter an ICS feed URL.");
+      return;
+    }
+
+    resetStream();
+    runBtn.disabled  = true;
+    saveBtn.disabled = true;
+
+    const params = new URLSearchParams({
+      city:        city,
+      ics_url:     icsUrl,
+      source_name: sourceName,
+    });
+    const url = "/devtools/run?" + params.toString();
+
+    const es = new EventSource(url);
+
+    es.addEventListener("log", function (e) {
+      appendLog(JSON.parse(e.data));
+    });
+
+    es.addEventListener("stage", function (e) {
+      handleStage(JSON.parse(e.data));
+    });
+
+    es.addEventListener("stage_data", function (e) {
+      try {
+        handleStageData(JSON.parse(e.data));
+      } catch (_) {}
+    });
+
+    es.addEventListener("warning", function (e) {
+      handleWarning(JSON.parse(e.data));
+    });
+
+    es.addEventListener("done", function (e) {
+      streamDone = true;
+      es.close();
+      const data = JSON.parse(e.data);
+      mergePublished(data.published || []);
+      renderResults(data);
+      runBtn.disabled  = false;
+      saveBtn.disabled = false;
+    });
+
+    es.addEventListener("error", function (e) {
+      /* Guard: the browser fires a generic 'error' on normal connection close
+         after 'done'. Ignore it once the stream has completed. */
+      if (streamDone) {
+        es.close();
+        return;
+      }
+
+      /* Attempt to extract structured error payload; fall back to generic message */
+      let msg = "Stream connection error or server error.";
+      let traceback = null;
+      if (e.data) {
+        try {
+          const d = JSON.parse(e.data);
+          msg = d.message || msg;
+          traceback = d.traceback || null;
+        } catch (_) {}
+      }
+      es.close();
+      renderError(msg, traceback);
+    });
+  });
+
+  /* ── Save button ──────────────────────────────────────────── */
+  saveBtn.addEventListener("click", function () {
+    const city       = cityEl.value;
+    const icsUrl     = icsUrlEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+
+    if (!city || !icsUrl) {
+      alert("Please fill in City and ICS Feed URL before saving.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "This will write to the LIVE database.\n\n" +
+      "City: " + city + "\nICS URL: " + icsUrl + "\nSource name: " + (sourceName || "(empty)") + "\n\n" +
+      "Continue?"
+    );
+    if (!confirmed) return;
+
+    runBtn.disabled  = true;
+    saveBtn.disabled = true;
+
+    const body = new URLSearchParams({
+      city:        city,
+      ics_url:     icsUrl,
+      source_name: sourceName,
+    });
+
+    fetch("/devtools/save", {
+      method:  "POST",
+      headers: {
+        "X-CSRFToken":  getCsrf(),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) {
+          throw new Error("Server returned " + resp.status + ": " + t);
+        });
+      }
+      return resp.json();
+    })
+    .then(function (data) {
+      const successBox = document.createElement("div");
+      successBox.className = "result success";
+      successBox.innerHTML =
+        "<strong>Saved &amp; published successfully.</strong> The source has been recorded and events are live.";
+      resultsArea.appendChild(successBox);
+
+      renderResults(data, "Save complete", listFromPublished(data.published));
+    })
+    .catch(function (err) {
+      renderError(err.message || String(err), null);
+    })
+    .finally(function () {
+      runBtn.disabled  = false;
+      saveBtn.disabled = false;
+    });
+  });
+}());
+</script>
+{% endblock %}

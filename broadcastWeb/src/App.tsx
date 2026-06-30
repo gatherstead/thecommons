@@ -132,6 +132,23 @@ type ExtFillStatus =
   | "submitted"
   | "unavailable";
 
+// Restore per-destination fill status from a persisted draft. An in-flight
+// "filling" (or other transient) status is stale after a reload — no fill is
+// actually running — so downgrade those to "ready" (actionable again). Terminal
+// results ("submitted"/"unavailable") are kept so you can see what you already
+// did vs. what's still outstanding.
+const restoreFillStatus = (
+  saved: Record<string, string> | undefined
+): Record<string, ExtFillStatus> => {
+  const out: Record<string, ExtFillStatus> = {};
+  for (const [key, value] of Object.entries(saved ?? {})) {
+    out[key] = value === "submitted" || value === "unavailable"
+      ? (value as ExtFillStatus)
+      : "ready";
+  }
+  return out;
+};
+
 export default function App() {
   const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
   const [verified, setVerified] = useState(SESSION.verified ?? false);
@@ -146,8 +163,10 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiText, setAiText] = useState("");
   const [error, setError] = useState("");
-  const [extFillStatus, setExtFillStatus] = useState<Record<string, ExtFillStatus>>({});
-  const [speedSubmit, setSpeedSubmit] = useState(false);
+  const [extFillStatus, setExtFillStatus] = useState<Record<string, ExtFillStatus>>(
+    restoreFillStatus(DRAFT.extFillStatus)
+  );
+  const [speedSubmit, setSpeedSubmit] = useState(DRAFT.speedSubmit ?? false);
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
@@ -169,8 +188,11 @@ export default function App() {
   // Draft: the event you're working on, auto-saved until an explicit start-over
   // (resetCore clears it). Survives refreshes even once the job finishes.
   useEffect(() => {
-    saveDraft({ draft, preview, selected: [...selected], job, jobId: jobIdRef.current });
-  }, [draft, preview, selected, job]);
+    saveDraft({
+      draft, preview, selected: [...selected], job, jobId: jobIdRef.current,
+      extFillStatus, speedSubmit,
+    });
+  }, [draft, preview, selected, job, extFillStatus, speedSubmit]);
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
@@ -350,15 +372,6 @@ export default function App() {
             ⚡ Dev autofill
           </button>
         )}
-        <button
-          type="button"
-          className="reset-form"
-          onClick={resetForm}
-          disabled={busy || aiBusy || job !== null}
-          title="Clear the form and start over"
-        >
-          Reset form
-        </button>
         <h1>BROADCAST SYNDICATE</h1>
         <p className="tagline">One event in — many local calendars out.</p>
         <div className="rule-double" />
@@ -489,8 +502,19 @@ export default function App() {
       </section>
 
       <section className="section">
-        <div className={verified && !locked ? "" : "form-dim"}>
+        <div className="section-title-row">
           <h2>The Event</h2>
+          <button
+            type="button"
+            className="reset-form-inline"
+            onClick={resetForm}
+            disabled={busy || aiBusy || job !== null}
+            title="Clear the form and start over"
+          >
+            Reset form
+          </button>
+        </div>
+        <div className={verified && !locked ? "" : "form-dim"}>
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
@@ -569,6 +593,17 @@ export default function App() {
                     )}
                     {status !== "filling" && status !== "submitted" && status !== "unavailable" && (
                       <span className="target-status ready">ready</span>
+                    )}
+                    {isTerminal && (
+                      <button
+                        type="button"
+                        className="resubmit-icon"
+                        onClick={() => fillOne(siteKey)}
+                        title="Re-open and re-fill this calendar"
+                        aria-label={`Resubmit ${siteName}`}
+                      >
+                        ↻
+                      </button>
                     )}
                   </li>
                 );

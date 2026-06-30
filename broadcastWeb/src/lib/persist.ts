@@ -33,6 +33,11 @@ export interface DraftBundle {
   selected?: string[];
   job?: JobDetail | null;
   jobId?: string | null;
+  // Per-destination extension-fill progress (site_key -> status) and whether the
+  // user is in the per-calendar speed-submit checklist. Persisted so a reload
+  // mid-submit still shows which calendars are done vs. outstanding.
+  extFillStatus?: Record<string, string>;
+  speedSubmit?: boolean;
 }
 
 const read = <T>(key: string): T | null => {

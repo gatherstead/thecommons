@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "The Commons — Broadcast",
-  "version": "0.1.0",
+  "name": "The Commons - Broadcast",
+  "version": "0.2.0",
   "description": "Autofills community event calendars for manual review. You solve the captcha and click submit.",
   "permissions": ["scripting", "storage"],
   "host_permissions": [
@@ -10,8 +10,7 @@
     "https://thetriangleweekender.com/*",
     "https://business.ccucc.net/*",
     "https://www.chathamartscouncil.org/*",
-    "https://www.visitraleigh.com/*",
-    "https://*/*"
+    "https://www.visitraleigh.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -26,6 +25,6 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "The Commons — Broadcast"
+    "default_title": "The Commons - Broadcast"
   }
 }

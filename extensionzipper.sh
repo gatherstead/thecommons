@@ -1,1 +1,1 @@
-zip -r ../broadcast-extension.zip . -x "*.DS_Store"
+zip -r broadcast-extension.zip broadcastExtension/ -x "*.DS_Store"

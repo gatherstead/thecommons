@@ -612,7 +612,7 @@ export default function App() {
                       Download the extension
                     </a>
                     <p className="section-note">
-                      Needed to autofill forms in your browser.
+                      Needed to autofill the forms so you don't have to.
                     </p>
                   </div>
                 ) : (
@@ -638,17 +638,19 @@ export default function App() {
           {submittedCount > 0 && (
             <p className="time-saved">You've saved {submittedCount * 10} minutes today!</p>
           )}
-          <p className="section-note calendar-request">
-            Don't see a calendar you expect?{" "}
-            <a
-              href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Request it here
-            </a>
-            .
-          </p>
+          {extInstalled && (
+            <p className="section-note calendar-request">
+              Don't see a calendar you expect?{" "}
+              <a
+                href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Request it here
+              </a>
+              .
+            </p>
+          )}
         </section>
       )}
 

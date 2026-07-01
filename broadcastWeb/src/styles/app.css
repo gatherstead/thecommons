@@ -505,9 +505,9 @@ a.btn.dark:hover {
 
 .ext-download {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
 }
 .ext-download .section-note {
   margin: 0;

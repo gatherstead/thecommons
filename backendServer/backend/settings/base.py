@@ -98,10 +98,16 @@ LOGGING = {
         "events": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "broadcast": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
     },
 }
 
 # ── Broadcast (event syndication) ────────────────────────────────────────────
+# nginx proxies to gunicorn over a Unix socket, which leaves REMOTE_ADDR empty —
+# django-ratelimit's default key="ip" reads REMOTE_ADDR directly and raises
+# ImproperlyConfigured (-> 500) when it's blank. Point it at the header nginx
+# sets instead (proxy_set_header X-Real-IP $remote_addr;).
+RATELIMIT_IP_META_KEY = "HTTP_X_REAL_IP"
 # BROADCAST_ACCESS_CODES is read from the env at request time (broadcast/access.py),
 # never via settings — it must not leak into settings dumps.
 BROADCAST_HEADLESS = os.getenv("BROADCAST_HEADLESS", "true").lower() != "false"

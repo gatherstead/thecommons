@@ -1,6 +1,6 @@
 from datetime import datetime, timezone as dt_timezone
 
-from django.test import TestCase
+from django.test import TestCase, tag
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from broadcast.worker import claim_next, recover_orphans
@@ -17,6 +17,7 @@ def make_submission(status="queued"):
     )
 
 
+@tag("db")
 class WorkerQueueTest(TestCase):
     def test_claim_oldest_queued_and_mark_running(self):
         first = make_submission()

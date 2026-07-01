@@ -2,7 +2,7 @@
 Covers branches the API tests don't already assert."""
 from datetime import datetime, timezone as dt_timezone
 
-from django.test import TestCase
+from django.test import TestCase, tag
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from broadcast.services import cancel_submission, retry_targets, submit_real_targets
@@ -19,6 +19,7 @@ def make_submission(status="queued"):
     )
 
 
+@tag("db")
 class CancelSubmissionTests(TestCase):
     def test_cancel_active_skips_pending_targets(self):
         submission = make_submission(status="queued")
@@ -41,6 +42,7 @@ class CancelSubmissionTests(TestCase):
                 self.assertEqual(submission.targets.get(site_key="a_site").status, "pending")
 
 
+@tag("db")
 class SubmitRealTargetsTests(TestCase):
     def test_only_dry_run_targets_flip_to_real(self):
         submission = make_submission(status="done")
@@ -64,6 +66,7 @@ class SubmitRealTargetsTests(TestCase):
         self.assertEqual(real.status, "succeeded")
 
 
+@tag("db")
 class RetryTargetsTests(TestCase):
     def test_only_non_pending_targets_reset(self):
         submission = make_submission(status="failed")

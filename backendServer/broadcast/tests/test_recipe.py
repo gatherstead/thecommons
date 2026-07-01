@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 from broadcast.adapters import _helpers as h
 from broadcast.adapters import get_adapter
@@ -39,6 +39,7 @@ def _selectors(recipe):
     return {f["selector"] for f in recipe["fields"]}
 
 
+@tag("fast")
 class RecipeShapeTest(SimpleTestCase):
     def test_recipe_well_formed(self):
         ev = _event()
@@ -63,12 +64,14 @@ class RecipeShapeTest(SimpleTestCase):
         self.assertEqual(title["value"], "Jazz Night")
 
 
+@tag("fast")
 class HoneypotTest(SimpleTestCase):
     def test_honeypot_never_in_recipe(self):
         recipe = get_adapter("triangle_on_the_cheap").recipe(_event())
         self.assertNotIn("#input_5_26", _selectors(recipe))
 
 
+@tag("fast")
 class ConditionalFieldsTest(SimpleTestCase):
     def test_weekender_times_only_when_not_all_day(self):
         timed = _selectors(get_adapter("triangle_weekender").recipe(_event(all_day=False)))
@@ -163,6 +166,7 @@ def _submission(start_utc, end_utc=None, all_day=False):
     )
 
 
+@tag("fast")
 class TimezoneTest(SimpleTestCase):
     def test_utc_storage_formats_as_eastern_wall_clock(self):
         # 4pm Eastern (EDT) is stored as 20:00 UTC; it must render as 4:00 PM.

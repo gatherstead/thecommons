@@ -1,11 +1,12 @@
 import os
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 from broadcast.access import resolve_client_label
 
 
+@tag("fast")
 class AccessCodeTest(SimpleTestCase):
     CODES = "makrs:CODE1,theplant:CODE2"
 

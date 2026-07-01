@@ -2,7 +2,7 @@ import os
 from unittest import mock
 
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import TestCase, override_settings, tag
 from rest_framework.test import APIClient
 
 from broadcast.models import BroadcastSubmission
@@ -24,6 +24,7 @@ EVENT = {
 
 
 @override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
 class PreviewTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -77,6 +78,7 @@ class PreviewTest(TestCase):
 
 
 @override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
 class SubmitAndJobTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -148,6 +150,7 @@ class SubmitAndJobTest(TestCase):
 
 
 @override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
 class SubmitRealTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -219,6 +222,7 @@ class SubmitRealTest(TestCase):
 
 
 @override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
 class CancelJobTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -283,6 +287,7 @@ class CancelJobTest(TestCase):
 
 
 @override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
 class ManualRecipeTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -346,6 +351,7 @@ class ManualRecipeTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+@tag("db")
 class RateLimitTest(TestCase):
     def setUp(self):
         self.client = APIClient()

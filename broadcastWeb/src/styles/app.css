@@ -508,9 +508,17 @@ a.btn.dark:hover {
   flex-direction: row;
   align-items: center;
   gap: 0.75rem;
+  padding: 0.5rem 0 1.25rem;
 }
 .ext-download .section-note {
   margin: 0;
+}
+
+/* Dims the calendar checklist so it doesn't compete with the extension
+   download button above it, while still describing what's being routed. */
+.greyed-out {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .footer-rule {

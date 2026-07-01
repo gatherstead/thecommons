@@ -1,11 +1,12 @@
 import ast
 import pathlib
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 FORBIDDEN_ROOTS = {"events", "ingestion"}
 
 
+@tag("fast")
 class IsolationTest(SimpleTestCase):
     def test_broadcast_imports_nothing_from_events_or_ingestion(self):
         root = pathlib.Path(__file__).resolve().parents[1]

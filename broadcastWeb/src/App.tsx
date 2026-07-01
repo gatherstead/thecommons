@@ -585,37 +585,41 @@ export default function App() {
             </ul>
           ) : (
             <>
-              <SitePicker
-                preview={preview}
-                selected={selected}
-                onToggle={(key) =>
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(key)) next.delete(key);
-                    else next.add(key);
-                    return next;
-                  })
-                }
-                disabled={busy}
-              />
+              {!extInstalled && (
+                <div className="ext-download">
+                  <a
+                    href={WEB_STORE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={recheckExt}
+                    className="dark btn"
+                  >
+                    Download the extension
+                  </a>
+                  <p className="section-note">
+                    Needed to autofill the forms so you don't have to. Free, two click install.
+                  </p>
+                </div>
+              )}
 
-              <div className="actions">
-                {!extInstalled ? (
-                  <div className="ext-download">
-                    <a
-                      href={WEB_STORE_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={recheckExt}
-                      className="dark btn"
-                    >
-                      Download the extension
-                    </a>
-                    <p className="section-note">
-                      Needed to autofill the forms so you don't have to.
-                    </p>
-                  </div>
-                ) : (
+              <div className={!extInstalled ? "greyed-out" : undefined}>
+                <SitePicker
+                  preview={preview}
+                  selected={selected}
+                  onToggle={(key) =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(key)) next.delete(key);
+                      else next.add(key);
+                      return next;
+                    })
+                  }
+                  disabled={busy || !extInstalled}
+                />
+              </div>
+
+              {extInstalled && (
+                <div className="actions">
                   <button
                     type="button"
                     className="dark"
@@ -631,8 +635,8 @@ export default function App() {
                   >
                     Submit events!
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </>
           )}
           {submittedCount > 0 && (

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 from broadcast.adapters import _TIER1
 from broadcast.routing import eligible_targets
@@ -22,6 +22,7 @@ def keys(adapters):
     return {a.key for a in adapters}
 
 
+@tag("fast")
 class RoutingMatrixTest(SimpleTestCase):
     def test_pittsboro_music(self):
         eligible, excluded = eligible_targets(

@@ -4,8 +4,24 @@
 
 import type { EventDraft, JobDetail, PreviewResult, Recipe } from "../models/broadcastModels";
 
-const API_BASE =
+const RAW_BASE =
   import.meta.env.VITE_BROADCAST_API_BASE_URL || "http://127.0.0.1:8000";
+
+// A value like "https:api.thecommons.town" (missing "//") passes `new URL()`
+// on its own — the WHATWG parser silently inserts the "//" when there's no
+// base URL. But fetch() always resolves against the page's origin as a base,
+// and in that mode the same string is treated as *relative*, silently
+// resolving API calls against the SPA's own origin instead of the API host.
+// Require the "//" explicitly so a typo fails loudly instead of both "working"
+// in a one-off check and misrouting in fetch().
+if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(RAW_BASE)) {
+  throw new Error(
+    `VITE_BROADCAST_API_BASE_URL is not a valid absolute URL: "${RAW_BASE}". ` +
+      `Check broadcastWeb/.env — a missing "//" silently resolves relative to the SPA's own origin.`,
+  );
+}
+new URL(RAW_BASE); // still throws on genuinely malformed values (spaces, no scheme, etc.)
+const API_BASE = RAW_BASE;
 
 export class ApiError extends Error {
   status: number;

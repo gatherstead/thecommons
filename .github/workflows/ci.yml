@@ -113,6 +113,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Type-check (build)
+        env:
+          VITE_BROADCAST_API_BASE_URL: http://localhost:8000
         run: pnpm build
       - name: Tests (fast tier)
         run: pnpm test:fast
@@ -190,5 +192,54 @@ jobs:
             pnpm install --frozen-lockfile
             pnpm run build
 
+            # Bug-class check: a malformed VITE_BROADCAST_API_BASE_URL (e.g. missing
+            # "//") builds "successfully" but silently misroutes every API call.
+            # Fail here, before the broken build goes live, rather than discovering
+            # it later via a confusing 404/405 in production.
+            if ! grep -rq 'https\?://[a-zA-Z0-9.-]*thecommons\.town' dist/assets/*.js; then
+              echo "::error::broadcastWeb build does not reference a thecommons.town API origin — check broadcastWeb/.env"
+              exit 1
+            fi
+
             sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker
             systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker
+      - name: Post-deploy smoke test
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          fingerprint: ${{ steps.fp.outputs.fingerprint }}
+          # Confirms the deployed system actually serves correct responses, not
+          # just that the systemd units are "active" (a crashing view or a
+          # misrouted SPA build both restart cleanly and pass is-active).
+          script: |
+            set -e
+            check() { # check <url> <expected-code>
+              code=$(curl -s -o /dev/null -w '%{http_code}' "$1")
+              if [ "$code" != "$2" ]; then
+                echo "::error::smoke test failed: $1 returned $code, expected $2"
+                exit 1
+              fi
+            }
+            check "https://thecommons.town/" 200
+            check "https://broadcast.thecommons.town/" 200
+            check "https://api.thecommons.town/events/" 200
+
+            # Regression check for the Unix-socket REMOTE_ADDR gap: nginx proxies
+            # to gunicorn over a Unix socket, which used to leave REMOTE_ADDR
+            # empty and crash django-ratelimit's key="ip" with an unhandled 500
+            # on every rate-limited broadcast endpoint. No access code is sent —
+            # HasBroadcastAccessCode is checked *inside* the rate-limited view,
+            # so an invalid/missing code still exercises the exact IP-resolution
+            # path; a healthy system returns 403 regardless of code validity.
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST https://api.thecommons.town/broadcast/direct-recipe \
+              -H 'Content-Type: application/json' -d '{"site_key":"none","event":{}}')
+            if [ "$code" = "500" ]; then
+              echo "::error::broadcast rate-limit path returned 500 (Unix-socket REMOTE_ADDR regression)"
+              exit 1
+            fi
+            if [ "$code" != "403" ]; then
+              echo "::error::unexpected status $code from direct-recipe smoke test (expected 403)"
+              exit 1
+            fi

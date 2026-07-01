@@ -97,7 +97,7 @@ DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=
 DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=db   # DB
 ```
 
-> Note: many `broadcast/tests/` files and `ingestion/tests/test_pipeline.py` carry no `@tag`, so they run only under a bare `manage.py test` — **not** in CI (which runs only `--tag=fast` / `--tag=db`).
+> Note: all `broadcast/tests/` files are now tagged `fast`/`db` and run in CI (a prior gap where 10 of 12 files carried no `@tag` — including the rate-limit tests — let two prod-only bugs ship undetected). `ingestion/tests/test_pipeline.py` still carries no `@tag`, so it runs only under a bare `manage.py test` — **not** in CI.
 
 ## Quick Start
 

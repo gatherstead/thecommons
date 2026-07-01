@@ -1,13 +1,14 @@
 import os
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, tag
 
 from broadcast.adapters import _TIER1, get_adapter, registry
 from broadcast.adapters.base import SiteAdapter
 from broadcast.routing import CATEGORIES, LOCALITIES
 
 
+@tag("fast")
 class RegistryTest(SimpleTestCase):
     def test_tier1_adapters_registered(self):
         expected = {

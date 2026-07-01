@@ -3,7 +3,7 @@ Playwright/browser launches (that heavy path lives in test_mock_adapter.py)."""
 from datetime import datetime, timezone as dt_timezone
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, tag
 
 from broadcast.adapters.base import TargetResult
 from broadcast.models import BroadcastSubmission, BroadcastTarget
@@ -24,6 +24,7 @@ def make_submission(site_keys, status="running", dry_run=False):
     return submission
 
 
+@tag("db")
 class RunSubmissionTests(TestCase):
     def test_all_success_marks_submission_done(self):
         submission = make_submission(["a_site", "b_site"])

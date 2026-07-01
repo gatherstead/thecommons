@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone as dt_timezone
 
-from django.test import TestCase, override_settings
+from django.test import TestCase, override_settings, tag
 
 from broadcast.adapters._mock import MockSiteAdapter
 from broadcast.adapters.base import RunContext
@@ -47,6 +47,7 @@ def make_event():
     )
 
 
+@tag("db")
 @unittest.skipUnless(CHROMIUM, "Playwright Chromium not installed")
 class MockAdapterEndToEndTest(TestCase):
     def _run(self, dry_run: bool):
@@ -80,6 +81,7 @@ class MockAdapterEndToEndTest(TestCase):
         self.assertIn("#submitted", result.external_url)
 
 
+@tag("db")
 @unittest.skipUnless(CHROMIUM, "Playwright Chromium not installed")
 class WorkerPipelineTest(TestCase):
     """Full path: submission row → worker claim → runner → target row updated."""

@@ -177,6 +177,11 @@ jobs:
             # over SSH); without it pnpm aborts with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY.
             export CI=true
             cd /home/ubuntu/thecommons
+            # pnpm build regenerates tsconfig.tsbuildinfo locally each run, which used
+            # to be tracked in git and would then block the fast-forward pull below.
+            # It's a generated TS incremental-build cache, now gitignored — discard any
+            # local copy so the pull can proceed even before that lands on this VM.
+            git checkout -- theCommonsWeb/tsconfig.tsbuildinfo broadcastWeb/tsconfig.tsbuildinfo 2>/dev/null || true
             git pull origin main
 
             cd backendServer

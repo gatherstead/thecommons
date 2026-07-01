@@ -493,6 +493,25 @@ a.btn:hover {
   background: var(--color-bg);
   color: var(--color-text);
 }
+a.btn.dark {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+a.btn.dark:hover {
+  background: #000;
+  color: var(--color-bg);
+}
+
+.ext-download {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.ext-download .section-note {
+  margin: 0;
+}
 
 .footer-rule {
   margin-top: 3rem;

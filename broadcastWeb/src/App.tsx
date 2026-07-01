@@ -601,12 +601,20 @@ export default function App() {
 
               <div className="actions">
                 {!extInstalled ? (
-                  <span className="section-note">
-                    <a href={WEB_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={recheckExt}>
-                      Install the Commons Broadcast extension
-                    </a>{" "}
-                    to autofill forms in your browser.
-                  </span>
+                  <div className="ext-download">
+                    <a
+                      href={WEB_STORE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={recheckExt}
+                      className="dark btn"
+                    >
+                      Download the extension
+                    </a>
+                    <p className="section-note">
+                      Needed to autofill forms in your browser.
+                    </p>
+                  </div>
                 ) : (
                   <button
                     type="button"
@@ -670,7 +678,7 @@ export default function App() {
         </section>
       )}
 
-      {(job || preview) && (
+      {(job || preview) && extInstalled && (
         <section className="section">
           <div className="actions">
             <button type="button" className="dark" onClick={startOver}>

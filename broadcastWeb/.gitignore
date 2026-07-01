@@ -1,3 +1,4 @@
-/commons-broadcast.pem
+.env
+.vite/deps/*
+commons-broadcast.pem
 *.pem
-/.vite/deps/*

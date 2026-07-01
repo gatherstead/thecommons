@@ -22,6 +22,66 @@ from broadcast.routing import TRIANGLE, Eligibility
 
 _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 entry
 
+# Locality slugs that are county/region-level only — not useful as a city name.
+_REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
+
+# Mapping from our canonical category slugs (routing.CATEGORIES) to the search
+# terms the Triangle Weekender's AJAX category dropdown understands. The
+# extension searches each term; unmatched terms are skipped silently.
+_WK_CATEGORY_MAP: dict[str, str] = {
+    "music":       "Music",
+    "arts":        "Arts",
+    "family-kids": "Family",
+    "wellness":    "Wellness",
+    "food-drink":  "Food",
+    "festival":    "Festival",
+    "market":      "Market",
+    "literary":    "Literary",
+    "community":   "Community",
+    "nightlife":   "Nightlife",
+    "education":   "Education",
+}
+
+# Same search terms for the post_tag AJAX dropdown. Tags are free-form so the
+# site may have exactly these as tags, or may not — the extension skips
+# unmatched terms.
+_WK_TAG_MAP: dict[str, str] = {
+    "music":       "Music",
+    "arts":        "Arts",
+    "family-kids": "Family",
+    "wellness":    "Wellness",
+    "food-drink":  "Food",
+    "festival":    "Festival",
+    "market":      "Market",
+    "literary":    "Literary",
+    "community":   "Community",
+    "nightlife":   "Nightlife",
+    "education":   "Education",
+}
+
+
+def _wk_category_terms(ev) -> str:
+    """Comma-joined search terms for ev.categories; empty string if none map."""
+    terms = [_WK_CATEGORY_MAP[c] for c in ev.categories if c in _WK_CATEGORY_MAP]
+    return ",".join(terms)
+
+
+def _wk_tag_terms(ev) -> str:
+    """Comma-joined search terms for ev.categories mapped to tag vocabulary."""
+    terms = [_WK_TAG_MAP[c] for c in ev.categories if c in _WK_TAG_MAP]
+    return ",".join(terms)
+
+
+def _city(ev) -> str:
+    """Derive a human-readable city from locality tags, mirroring
+    triangle_on_the_cheap._city.  Skips county/region-only slugs
+    (wake, chatham, triangle) and falls back to ev.city."""
+    for loc in ev.locality:
+        if loc not in _REGION_ONLY_SLUGS:
+            return loc.replace("-", " ").title()
+    return ev.city
+
+
 _COUNTY_MAP = {
     "durham": "Durham", "chatham": "Chatham", "pittsboro": "Chatham",
     "chapel-hill": "Orange", "carrboro": "Orange",
@@ -81,18 +141,58 @@ class TriangleWeekenderAdapter(SiteAdapter):
             specs.append(RecipeField("#saved_tribe_venue", "select2", lambda ev: ev.venue_name,
                                      recipe_only=True, label="Venue",
                                      hint="pick the match or choose Create"))
+            # Venue detail inputs — exported so the extension pre-fills them when
+            # the user chooses "Create" (existing venues self-populate). Selectors
+            # verified in broadcast/captures/triangle_weekender.html. City maps
+            # from our locality; website maps from event_url.
+            _venue_create_hint = "only applies if you choose Create above"
+            specs += [
+                RecipeField("input[name='venue[Address][]']", "text",
+                            lambda ev: ev.address_line1, recipe_only=True,
+                            label="Venue address", hint=_venue_create_hint),
+                RecipeField("input[name='venue[City][]']", "text", _city,
+                            recipe_only=True, label="Venue city", hint=_venue_create_hint),
+                RecipeField("#StateProvinceText", "text", lambda ev: ev.state,
+                            recipe_only=True, label="Venue state", hint=_venue_create_hint),
+                RecipeField("#EventZip", "text", lambda ev: ev.zip,
+                            recipe_only=True, label="Venue ZIP", hint=_venue_create_hint),
+                RecipeField("input[name='venue[URL][]']", "text", lambda ev: ev.event_url,
+                            recipe_only=True, label="Venue website", hint=_venue_create_hint),
+            ]
         if ev.organizer_name:
             specs.append(RecipeField("#saved_tribe_organizer", "select2",
                                      lambda ev: ev.organizer_name, recipe_only=True,
                                      label="Organizer", hint="pick the match or choose Create"))
+            # Organizer detail inputs — exported so the extension pre-fills the
+            # contact email/phone when the user chooses "Create" above.
+            specs += [
+                RecipeField("#organizer-email", "text", lambda ev: ev.contact_email,
+                            recipe_only=True, label="Organizer email",
+                            hint="only applies if you choose Create above"),
+                RecipeField("#organizer-phone", "text", lambda ev: ev.contact_phone,
+                            recipe_only=True, label="Organizer phone",
+                            hint="only applies if you choose Create above"),
+            ]
         for county in sorted({_COUNTY_MAP[loc] for loc in ev.locality if loc in _COUNTY_MAP}):
             specs.append(RecipeField(
                 f"input[name='_ecp_custom_2[]'][value='{county}']", "checkbox",
                 lambda ev, c=county: c, recipe_only=True, label=f"County: {county}"))
+        # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). The
+        # selector targets the hidden <select> whose next sibling is the visible
+        # select2 container. Only emitted when ev.categories contains known slugs.
+        specs.append(RecipeField(
+            "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
+            _wk_category_terms, recipe_only=True, label="Event categories",
+            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
+        # Tags — same AJAX select2 multi pattern (post_tag taxonomy).
+        specs.append(RecipeField(
+            "select[name='tax_input[post_tag][]']", "select2_multi",
+            _wk_tag_terms, recipe_only=True, label="Event tags",
+            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
         if ev.image_url:
             specs.append(RecipeField("#event_image", "file", lambda ev: ev.image_url,
                                      recipe_only=True, label="Event image",
-                                     hint="upload the image manually — files can't be auto-filled"))
+                                     hint="auto-uploaded by the extension; falls back to manual highlight if needed"))
         specs.append(RecipeField("#terms", "terms", lambda ev: "true", required=True,
                                  recipe_only=True, label="Accept community terms"))
         return specs
@@ -122,13 +222,17 @@ class TriangleWeekenderAdapter(SiteAdapter):
 
         # Venue: reuse an existing venue on a close match, else create. Only fill
         # detail fields when we created a new one (existing venues self-populate).
+        # City is derived from our locality tag; the website maps from event_url
+        # (Venue URL field, id=EventWebsite name=venue[URL][] — verified in the
+        # committed capture broadcast/captures/triangle_weekender.html).
         if ev.venue_name:
             if _select2_match_or_create(page, "saved_tribe_venue", ev.venue_name) == "created":
                 for selector, value in [
                     ("input[name='venue[Address][]']", ev.address_line1),
-                    ("input[name='venue[City][]']", ev.city),
+                    ("input[name='venue[City][]']", _city(ev)),
                     ("#StateProvinceText", ev.state),
                     ("#EventZip", ev.zip),
+                    ("input[name='venue[URL][]']", ev.event_url),
                 ]:
                     _try_fill(page, selector, value)
 

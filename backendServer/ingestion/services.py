@@ -9,7 +9,7 @@ from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD
 logger = logging.getLogger(__name__)
 
 
-def publish_all_approved():
+def publish_all_approved(source=None, force_town=None):
     """
     Atomically moves all approved StagedEvents into the Events table,
     then deletes them from the staged table.
@@ -19,10 +19,15 @@ def publish_all_approved():
         already_published  — approved staged events that already had an Event record
         removed            — total StagedEvents deleted
     """
-    approved_staged = list(
-        StagedEvent.objects.filter(status='approved')
-        .select_related('raw_event__source', 'submitted_by')
-    )
+    # NOTE: do not eager-join `submitted_by` — it maps to the cross-schema
+    # `neon_auth."user"` mirror, which is absent on isolated dev DB branches and
+    # makes the whole query fail there. Pipeline events have submitted_by=None
+    # (no lazy query fires), so dropping the join is result-identical and also
+    # avoids a pointless LEFT JOIN in prod.
+    approved_qs = StagedEvent.objects.filter(status='approved').select_related('raw_event__source')
+    if source:
+        approved_qs = approved_qs.filter(raw_event__source=source)
+    approved_staged = list(approved_qs)
 
     if not approved_staged:
         return {'published': 0, 'already_published': 0, 'removed': 0}
@@ -33,10 +38,17 @@ def publish_all_approved():
 
         for staged in approved_staged:
             if staged.published_event_id is None:
-                town_slug = staged.town.lower().replace(' ', '-') if staged.town else None
-                town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
-                if town_obj is None:
-                    continue
+                if force_town is not None:
+                    town_obj = force_town
+                else:
+                    town_slug = staged.town.lower().replace(' ', '-') if staged.town else None
+                    town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
+                    if town_obj is None:
+                        logger.warning(
+                            "Dropping staged event '%s' — no Town matches slug '%s' (gemini town=%r)",
+                            staged.title, town_slug, staged.town,
+                        )
+                        continue
                 if staged.raw_event_id and staged.raw_event and staged.raw_event.source:
                     source_name = staged.raw_event.source.name
                 else:
@@ -70,9 +82,10 @@ def publish_all_approved():
             else:
                 already_published_count += 1
 
-        removed_count = StagedEvent.objects.filter(
-            status='approved', published_event__isnull=False
-        ).delete()[0]
+        removed_qs = StagedEvent.objects.filter(status='approved', published_event__isnull=False)
+        if source:
+            removed_qs = removed_qs.filter(raw_event__source=source)
+        removed_count = removed_qs.delete()[0]
 
     return {
         'published': published_count,
@@ -81,7 +94,7 @@ def publish_all_approved():
     }
 
 
-def auto_publish_safe_events():
+def auto_publish_safe_events(source=None, force_town=None):
     """
     Auto-approve and publish scored events below the safety threshold.
     Events above the threshold remain pending for manual review.
@@ -91,6 +104,8 @@ def auto_publish_safe_events():
         held_for_review — events left pending (score above threshold or unscored)
     """
     pending = StagedEvent.objects.filter(status='pending', safety_score__isnull=False)
+    if source:
+        pending = pending.filter(raw_event__source=source)
 
     to_approve = [s for s in pending if s.safety_score <= SAFETY_SCORE_THRESHOLD]
     held_count = pending.count() - len(to_approve)
@@ -103,7 +118,7 @@ def auto_publish_safe_events():
             staged.status = 'approved'
             staged.save(update_fields=['status'])
 
-    result = publish_all_approved()
+    result = publish_all_approved(source=source, force_town=force_town)
     logger.info(
         f"Auto-published {result['published']} events "
         f"(threshold={SAFETY_SCORE_THRESHOLD}); {held_count} held for review"

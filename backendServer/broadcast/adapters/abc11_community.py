@@ -38,6 +38,40 @@ def _location(ev) -> str:
     return ", ".join(parts)
 
 
+def _duration(ev):
+    """(hours, minutes) between start and end, or None when not computable.
+
+    The Trumba form has no end-time field — it asks for a Duration as separate
+    Hours/Minutes inputs. end - start is a timedelta, so day rollovers and
+    am/pm shifts are handled naturally (both datetimes are Eastern-local here)."""
+    if ev.all_day or not ev.end_datetime:
+        return None
+    total = int((ev.end_datetime - ev.start_datetime).total_seconds() // 60)
+    if total <= 0:
+        return None
+    return divmod(total, 60)
+
+
+# Map our canonical category slugs to a search term to type into ABC11's
+# react-select Category box; the extension types it and picks the first option.
+_CAT_MAP = {
+    "music": "Music", "arts": "Arts", "family-kids": "Family",
+    "food-drink": "Food", "festival": "Festival", "market": "Market",
+    "literary": "Literature", "community": "Community", "nightlife": "Nightlife",
+    "wellness": "Health", "education": "Education", "sports": "Sports",
+    "film": "Film", "dance": "Dance", "comedy": "Comedy", "theatre": "Theater",
+}
+
+
+def _cat_terms(ev) -> str:
+    seen: list[str] = []
+    for slug in ev.categories:
+        term = _CAT_MAP.get(slug)
+        if term and term not in seen:
+            seen.append(term)
+    return ",".join(seen)
+
+
 # Declared once; consumed by the server-side fill loop (h.apply_specs) and the
 # manual-review recipe export. Date/time are best-effort (optional) as before.
 # NOTE: #eventStartDate-label is the field's <label>, not the input — the
@@ -72,6 +106,24 @@ class Abc11CommunityAdapter(SiteAdapter):
     recipe_fields = _RECIPE_FIELDS
     submit_selector = "button[type='submit'].clrCommit"
     captcha_hint = "Solve any captcha or Trumba/Disney sign-in shown before submitting."
+
+    def recipe_field_specs(self, ev):
+        """Static fields + computed Duration (hours/minutes) and the Category
+        react-select, both event-dependent so only added when we can resolve them."""
+        specs = list(_RECIPE_FIELDS)
+        dur = _duration(ev)
+        if dur:
+            hours, minutes = dur
+            specs.append(RecipeField("#eventDurationHours", "text",
+                                     lambda ev, hh=hours: str(hh), label="Duration (hours)"))
+            specs.append(RecipeField("#eventDurationMinutes", "text",
+                                     lambda ev, mm=minutes: str(mm), label="Duration (minutes)"))
+        cats = _cat_terms(ev)
+        if cats:
+            specs.append(RecipeField("#cf33292", "react_select", lambda ev, c=cats: c,
+                                     recipe_only=True, label="Category",
+                                     hint="type each term and pick the first option"))
+        return specs
 
     def fill_and_submit(self, page, ev, ctx):
         page.goto(self.submission_url, timeout=ctx.timeout_ms)

@@ -9,7 +9,8 @@ const VERSION = chrome.runtime.getManifest().version;
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  "https://broadcast.thecommons.example", // TODO: replace with the prod SPA origin
+  "https://broadcast.thecommons.town/",
+  "https://broadcast.thecommons.town/*"
 ];
 
 // tabId -> storage nonce, so we only inject into tabs we opened ourselves.
@@ -64,3 +65,28 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete pendingTabs[tabId];
 });
+
+// Internal messages from content scripts (not the SPA). The service worker's
+// host_permissions bypass page CORS — needed for arbitrary event image URLs.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "fetch-image" && msg.url) {
+    fetchImageAsDataUrl(msg.url).then(
+      (dataUrl) => sendResponse({ ok: true, dataUrl }),
+      (err) => sendResponse({ ok: false, error: String(err) }),
+    );
+    return true; // keep channel open for the async response
+  }
+  return false;
+});
+
+async function fetchImageAsDataUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status} fetching image`);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}

@@ -33,6 +33,26 @@ describe("useExtension", () => {
     expect(sendMessage).toHaveBeenCalledWith("ext-123", { type: "ping" }, expect.any(Function));
   });
 
+  it("resolves to whichever of several comma-separated ids answers", async () => {
+    vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "dev-unpacked, jidmhdmlbjfnblbheglmodhpcjhafjmi");
+    // Only the published id answers ok; the dev one reports "no receiving end".
+    const sendMessage = vi.fn(
+      (id: string, _msg: unknown, cb: (r?: { ok: boolean }) => void) =>
+        cb(id === "jidmhdmlbjfnblbheglmodhpcjhafjmi" ? { ok: true } : undefined),
+    );
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    const useExtension = await loadHook();
+    const { result } = renderHook(() => useExtension());
+
+    await waitFor(() => expect(result.current.installed).toBe(true));
+    expect(result.current.extensionId).toBe("jidmhdmlbjfnblbheglmodhpcjhafjmi");
+    expect(sendMessage).toHaveBeenCalledWith("dev-unpacked", { type: "ping" }, expect.any(Function));
+    expect(sendMessage).toHaveBeenCalledWith(
+      "jidmhdmlbjfnblbheglmodhpcjhafjmi", { type: "ping" }, expect.any(Function),
+    );
+  });
+
   it("stays not-installed in a non-Chromium environment", async () => {
     vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "ext-123");
     // No window.chrome — getRuntime() returns undefined.

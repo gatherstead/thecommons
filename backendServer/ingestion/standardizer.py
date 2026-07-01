@@ -187,9 +187,11 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
     return staged
 
 
-def standardize_all_unprocessed():
+def standardize_all_unprocessed(source=None):
     """Process all RawEvents that haven't been standardized yet."""
     unprocessed = RawEvent.objects.filter(processed=False)
+    if source:
+        unprocessed = unprocessed.filter(source=source)
     count = 0
 
     for raw_event in unprocessed:

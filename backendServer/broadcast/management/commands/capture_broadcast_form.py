@@ -37,6 +37,15 @@ SITES = {
         "url": "https://abc11.com/community/submitevent/",
         "continue": "Continue",
     },
+    "chatham_chamber": {
+        "url": "https://business.ccucc.net/ap/Event/Submit/yr4lawrl",
+    },
+    "chatham_arts": {
+        "url": "https://www.chathamartscouncil.org/calendar/community/add/",
+    },
+    "visit_raleigh": {
+        "url": "https://www.visitraleigh.com/events/submit-an-event/",
+    },
 }
 
 

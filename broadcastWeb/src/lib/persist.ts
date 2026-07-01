@@ -1,43 +1,93 @@
-// Whole-page persistence so a reload (or accidental close) doesn't lose work,
-// including an in-flight job. The access code is stored too — these are
-// low-stakes operator codes, not credentials worth protecting from localStorage.
+// Two independent persistence scopes: session (access code + verified flag +
+// contact details; never auto-cleared) and draft (current event; cleared on
+// start-over). The access code is stored here — these are low-stakes operator
+// codes, not credentials worth protecting from localStorage.
 import type { EventDraft, JobDetail, PreviewResult } from "../models/broadcastModels";
 
-export const STORAGE_KEY = "broadcast:state:v1";
+export const SESSION_KEY = "broadcast:session:v1";
+export const DRAFT_KEY = "broadcast:draft:v1";
 
-export interface PersistBundle {
+// Legacy single-bundle key (pre-split). Read once for migration, never written.
+const LEGACY_KEY = "broadcast:state:v1";
+
+export interface SessionBundle {
   accessCode?: string;
   verified?: boolean;
+  organizer_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+}
+
+export interface DraftBundle {
   draft?: EventDraft;
   preview?: PreviewResult | null;
   selected?: string[];
   job?: JobDetail | null;
   jobId?: string | null;
+  extFillStatus?: Record<string, string>;
+  speedSubmit?: boolean;
 }
 
-export const loadBundle = (): PersistBundle => {
+const read = <T>(key: string): T | null => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PersistBundle) : {};
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
   } catch {
-    return {};
+    return null;
   }
 };
 
-const isJobFinished = (job: JobDetail | null | undefined): boolean =>
-  job != null &&
-  (job.status === "done" || job.status === "failed" || job.status === "canceled");
-
-// Persist while there's unfinished work. Once a job reaches a terminal state,
-// drop the saved state so a reload starts from a clean slate.
-export const saveBundle = (bundle: PersistBundle): void => {
+const write = (key: string, value: unknown): void => {
   try {
-    if (isJobFinished(bundle.job)) {
-      localStorage.removeItem(STORAGE_KEY);
-      return;
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     /* storage full or unavailable — non-fatal */
+  }
+};
+
+// One-time migration: if the new keys are absent but the old fused bundle is
+// present, seed from it so existing operators don't lose their place.
+const legacy = (): (SessionBundle & DraftBundle) | null => read(LEGACY_KEY);
+
+export const loadSession = (): SessionBundle => {
+  const fresh = read<SessionBundle>(SESSION_KEY);
+  if (fresh) return fresh;
+  const old = legacy();
+  if (!old) return {};
+  return {
+    accessCode: old.accessCode,
+    verified: old.verified,
+    organizer_name: old.draft?.organizer_name,
+    contact_email: old.draft?.contact_email,
+    contact_phone: old.draft?.contact_phone,
+  };
+};
+
+export const saveSession = (session: SessionBundle): void => write(SESSION_KEY, session);
+
+export const clearSession = (): void => {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* non-fatal */
+  }
+};
+
+export const loadDraft = (): DraftBundle => {
+  const fresh = read<DraftBundle>(DRAFT_KEY);
+  if (fresh) return fresh;
+  const old = legacy();
+  return old
+    ? { draft: old.draft, preview: old.preview, selected: old.selected, job: old.job, jobId: old.jobId }
+    : {};
+};
+
+export const saveDraft = (draft: DraftBundle): void => write(DRAFT_KEY, draft);
+
+export const clearDraft = (): void => {
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* non-fatal */
   }
 };

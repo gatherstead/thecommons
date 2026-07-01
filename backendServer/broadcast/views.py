@@ -13,6 +13,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from broadcast.adapters import enabled_adapters, get_adapter, registry
+from broadcast.autofill import extract_event_fields
 from broadcast.models import BroadcastSubmission
 from broadcast.permissions import HasBroadcastAccessCode
 from broadcast.routing import eligible_targets
@@ -175,6 +176,50 @@ def job_manual_recipe(request, job_id, site_key):
         return Response({"detail": "target is not awaiting manual review"},
                         status=status.HTTP_409_CONFLICT)
     return Response(manual_recipe(submission, site_key))
+
+
+@ratelimit(key="ip", rate="30/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([HasBroadcastAccessCode])
+def direct_recipe(request):
+    """Return a fill recipe for a site directly from event data — no job required.
+
+    Backs the extension-autofill-first flow where the SPA sends a recipe to the
+    extension for every selected site without creating a BroadcastSubmission.
+    """
+    site_key = request.data.get("site_key", "")
+    adapter = get_adapter(site_key)
+    if adapter is None or not adapter.recipe_fields:
+        raise Http404
+
+    serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
+    if not serializer.is_valid():
+        return Response({"event": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(adapter.recipe(serializer.to_canonical()))
+
+
+@ratelimit(key="ip", rate="5/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([HasBroadcastAccessCode])
+def ai_autofill(request):
+    """Extract EventDraft fields from free text via Gemini and return them for human review.
+
+    No DB writes, no preview, no submit — pure field extraction only.
+    """
+    text = request.data.get("text", "")
+    if not text or not text.strip():
+        return Response({"text": "paste some event text first"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        event = extract_event_fields(text)
+    except Exception:
+        return Response(
+            {"error": "AI autofill is unavailable right now — fill the form manually."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    return Response({"event": event})
 
 
 def mock_form(request):

@@ -91,6 +91,15 @@ export const submitReal = (
     site_keys: siteKeys,
   });
 
+export const aiAutofill = (
+  accessCode: string,
+  text: string,
+): Promise<{ event: EventDraft }> =>
+  post<{ event: EventDraft }>("/broadcast/ai-autofill", {
+    access_code: accessCode,
+    text,
+  });
+
 // Stop a job: the backend skips pending targets and marks it canceled so the
 // worker won't pick up the remaining sites.
 export const cancelJob = (
@@ -98,6 +107,17 @@ export const cancelJob = (
   jobId: string,
 ): Promise<{ job_id: string; status: string; skipped: number }> =>
   post(`/broadcast/jobs/${jobId}/cancel`, { access_code: accessCode });
+
+export const directRecipe = (
+  accessCode: string,
+  event: EventDraft,
+  siteKey: string,
+): Promise<Recipe> =>
+  post<Recipe>("/broadcast/direct-recipe", {
+    access_code: accessCode,
+    event,
+    site_key: siteKey,
+  });
 
 export const getManualRecipe = async (
   accessCode: string,

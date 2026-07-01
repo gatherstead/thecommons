@@ -39,3 +39,5 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 # forms get processed without running the worker by hand. Override with
 # BROADCAST_AUTOSPAWN_WORKER=false to use a manual `run_broadcast_worker`.
 BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "true").lower() == "true"
+
+INSTALLED_APPS = [*INSTALLED_APPS, 'devtools.apps.DevtoolsConfig']

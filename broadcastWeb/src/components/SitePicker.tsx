@@ -1,5 +1,12 @@
 import type { PreviewResult } from "../models/broadcastModels";
 
+export const COMING_SOON = new Set([
+  "fun4raleighkids",
+  "chapelboro",
+  "explore_pittsboro",
+  "shop_pittsboro",
+]);
+
 interface Props {
   preview: PreviewResult;
   selected: Set<string>;
@@ -15,20 +22,30 @@ export default function SitePicker({ preview, selected, onToggle, disabled }: Pr
         calendars show why routing skipped them.
       </p>
       <ul className="site-list">
-        {preview.eligible.map((site) => (
-          <li key={site.site_key}>
-            <input
-              id={`site-${site.site_key}`}
-              type="checkbox"
-              checked={selected.has(site.site_key)}
-              onChange={() => onToggle(site.site_key)}
-              disabled={disabled}
-            />
-            <label className="site-name" htmlFor={`site-${site.site_key}`}>
-              {site.name}
-            </label>
-          </li>
-        ))}
+        {preview.eligible.map((site) => {
+          const comingSoon = COMING_SOON.has(site.site_key);
+          return (
+            <li key={site.site_key} className={comingSoon ? "excluded" : undefined}>
+              <input
+                id={`site-${site.site_key}`}
+                type="checkbox"
+                checked={!comingSoon && selected.has(site.site_key)}
+                onChange={() => !comingSoon && onToggle(site.site_key)}
+                disabled={disabled || comingSoon}
+              />
+              <label
+                className="site-name"
+                htmlFor={`site-${site.site_key}`}
+                style={comingSoon ? { opacity: 0.45 } : undefined}
+              >
+                {site.name}
+              </label>
+              {comingSoon && (
+                <span className="reason">— coming soon</span>
+              )}
+            </li>
+          );
+        })}
         {preview.excluded.map((site) => (
           <li key={site.site_key} className="excluded">
             <input type="checkbox" checked={false} disabled readOnly />

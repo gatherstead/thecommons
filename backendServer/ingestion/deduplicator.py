@@ -46,9 +46,11 @@ def find_duplicate(staged_event: StagedEvent) -> StagedEvent | None:
     return None
 
 
-def dedup_all_pending():
+def dedup_all_pending(source=None):
     """Check all pending staged events for duplicates."""
     pending = StagedEvent.objects.filter(status='pending')
+    if source:
+        pending = pending.filter(raw_event__source=source)
     dupes_found = 0
 
     for staged in pending:

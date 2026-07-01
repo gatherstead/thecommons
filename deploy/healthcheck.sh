@@ -139,7 +139,7 @@ if [ -d "$BACKEND" ]; then
     # Mirror the systemd units: run from the backend dir with .env loaded.
     pushd "$BACKEND" >/dev/null
     if [ -f .env ]; then set -a; . ./.env; set +a; fi
-    app_out="$("$UV_BIN" run python manage.py healthcheck --celery-timeout "$CELERY_TIMEOUT" 2>/dev/null || true)"
+    app_out="$("$UV_BIN" run python manage.py healthcheck --require-prod --celery-timeout "$CELERY_TIMEOUT" 2>/dev/null || true)"
     popd >/dev/null
 else
     report FAIL "app-checks" "backendServer not found at $BACKEND"

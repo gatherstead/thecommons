@@ -1,14 +1,6 @@
-// Two independent persistence scopes so the page reload (or accidental close)
-// keeps your place without the two concerns clobbering each other:
-//
-//   session — your access code + verified flag + operator contact details
-//             (name/email/phone). You stay "signed in" on this device across
-//             events and refreshes; never auto-cleared.
-//   draft   — the event you're working on (form, preview, picks, running job).
-//             Survives refreshes even once the job finishes; cleared only on an
-//             explicit start-over.
-//
-// The access code lives in the session scope: these are low-stakes operator
+// Two independent persistence scopes: session (access code + verified flag +
+// contact details; never auto-cleared) and draft (current event; cleared on
+// start-over). The access code is stored here — these are low-stakes operator
 // codes, not credentials worth protecting from localStorage.
 import type { EventDraft, JobDetail, PreviewResult } from "../models/broadcastModels";
 
@@ -21,7 +13,6 @@ const LEGACY_KEY = "broadcast:state:v1";
 export interface SessionBundle {
   accessCode?: string;
   verified?: boolean;
-  // Operator contact, sticky like the access code — reused across events.
   organizer_name?: string;
   contact_email?: string;
   contact_phone?: string;
@@ -33,9 +24,6 @@ export interface DraftBundle {
   selected?: string[];
   job?: JobDetail | null;
   jobId?: string | null;
-  // Per-destination extension-fill progress (site_key -> status) and whether the
-  // user is in the per-calendar speed-submit checklist. Persisted so a reload
-  // mid-submit still shows which calendars are done vs. outstanding.
   extFillStatus?: Record<string, string>;
   speedSubmit?: boolean;
 }

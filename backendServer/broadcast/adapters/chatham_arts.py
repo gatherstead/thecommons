@@ -24,14 +24,10 @@ from broadcast.routing import Eligibility
 
 _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 entry
 
-# Chatham-County confirmation checkbox (required to submit).
 _CHATHAM_CONFIRM = "#tribe_custom-_ecp_custom_4-PleaseconfirmthatthiseventtakesplaceinChathamCounty-0"
 
-# Mapping from our canonical category slugs to Chatham Arts' AJAX category
-# search terms (tribe_events_cat taxonomy). Eligibility already restricts this
-# calendar to arts/literary events, but we map all known slugs in case the
-# operator submits a broader event here.
-# LIVE VERIFICATION REQUIRED: confirm these terms appear in the site's dropdown.
+# Eligibility already restricts this calendar to arts/literary events, but we map
+# all known slugs in case the operator submits a broader event here.
 _CA_CATEGORY_MAP: dict[str, str] = {
     "arts":        "Arts",
     "literary":    "Literary",
@@ -48,7 +44,6 @@ _CA_CATEGORY_MAP: dict[str, str] = {
 
 
 def _ca_category_terms(ev) -> str:
-    """Comma-joined search terms for ev.categories; empty string if none map."""
     terms = [_CA_CATEGORY_MAP[c] for c in ev.categories if c in _CA_CATEGORY_MAP]
     return ",".join(terms)
 
@@ -90,7 +85,7 @@ class ChathamArtsAdapter(SiteAdapter):
         categories=frozenset({"arts", "literary"}),
     )
     recipe_fields = _PLAIN_FIELDS
-    captcha_hint = ""  # no captcha on this form
+    captcha_hint = ""
     submit_selector = "#post"
 
     def recipe_field_specs(self, ev):
@@ -125,10 +120,7 @@ class ChathamArtsAdapter(SiteAdapter):
                                      lambda ev: ev.event_url, label="Organizer website"))
             specs.append(RecipeField("#organizer-email", "text",
                                      lambda ev: ev.contact_email, label="Organizer email"))
-        # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). Same
-        # Tribe Events plugin as Triangle Weekender; selector is identical. Only
-        # emitted when ev.categories contains known slugs.
-        # LIVE VERIFICATION REQUIRED: confirm search terms hit real options.
+        # Same Tribe Events plugin as Triangle Weekender; selector is identical.
         specs.append(RecipeField(
             "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
             _ca_category_terms, recipe_only=True, label="Event categories",
@@ -177,7 +169,6 @@ class ChathamArtsAdapter(SiteAdapter):
                 ]:
                     _try_fill(page, selector, value)
 
-        # Organizer: same linked-post select2 pattern.
         if ev.organizer_name:
             if _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name) == "created":
                 _try_fill(page, "#organizer-email", ev.contact_email)
@@ -187,7 +178,6 @@ class ChathamArtsAdapter(SiteAdapter):
 
         _dismiss_popups(page)
 
-        # Required: confirm the event takes place in Chatham County.
         _check_box(page, _CHATHAM_CONFIRM)
 
         if ev.image_url:

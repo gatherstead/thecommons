@@ -17,7 +17,6 @@ from broadcast.autofill import _coerce, _strip_fences, extract_event_fields
 
 CODES = {"BROADCAST_ACCESS_CODES": "testop:TESTCODE"}
 
-# Minimal valid field dict that extract_event_fields should return.
 _GOOD_RESPONSE = {
     "title": "Jazz Night at The Plant",
     "description": "Live jazz in a beautiful venue.",
@@ -42,19 +41,12 @@ _GOOD_RESPONSE = {
 
 
 def _make_genai_response(payload: dict):
-    """Return a fake genai response object whose .text is the JSON string."""
-    ns = SimpleNamespace(text=json.dumps(payload))
-    return ns
+    return SimpleNamespace(text=json.dumps(payload))
 
 
 def _make_genai_response_text(text: str):
-    """Return a fake genai response with raw text (e.g. code-fenced)."""
     return SimpleNamespace(text=text)
 
-
-# ---------------------------------------------------------------------------
-# Unit tests for helper functions (no network, no Django views)
-# ---------------------------------------------------------------------------
 
 @tag("fast")
 class StripFencesTest(SimpleTestCase):
@@ -120,14 +112,9 @@ class CoerceTest(SimpleTestCase):
         self.assertEqual(result["start_datetime"], "2026-08-15T19:30")
 
 
-# ---------------------------------------------------------------------------
-# extract_event_fields — mock the genai client
-# ---------------------------------------------------------------------------
-
 @tag("fast")
 class ExtractEventFieldsTest(SimpleTestCase):
     def _mock_client(self, response_payload):
-        """Patch genai.Client so generate_content returns a fake response."""
         fake_response = _make_genai_response(response_payload)
         mock_client_instance = MagicMock()
         mock_client_instance.models.generate_content.return_value = fake_response
@@ -201,10 +188,6 @@ class ExtractEventFieldsTest(SimpleTestCase):
             with self.assertRaises(RuntimeError):
                 extract_event_fields("some event text")
 
-
-# ---------------------------------------------------------------------------
-# View tests — via DRF APIClient (no DB needed: SimpleTestCase)
-# ---------------------------------------------------------------------------
 
 @tag("fast")
 @override_settings(RATELIMIT_ENABLE=False)

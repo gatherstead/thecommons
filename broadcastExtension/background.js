@@ -66,11 +66,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   delete pendingTabs[tabId];
 });
 
-// Internal messages from injected content scripts (not the SPA). Currently
-// handles one operation: fetching an image URL and returning it as a data URL
-// so content.js can build a File and assign it to a file input via DataTransfer.
-// The service worker has "https://*/*" host_permissions so it bypasses the
-// page's CORS policy — event images are arbitrary user-supplied URLs.
+// Internal messages from content scripts (not the SPA). The service worker's
+// host_permissions bypass page CORS — needed for arbitrary event image URLs.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "fetch-image" && msg.url) {
     fetchImageAsDataUrl(msg.url).then(

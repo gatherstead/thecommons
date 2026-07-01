@@ -76,7 +76,6 @@ class RoutingMatrixTest(SimpleTestCase):
     def test_excluded_reasons_are_explanatory(self):
         _, excluded = eligible_targets(make_event("durham", ["music"]), _TIER1)
         reasons = dict(excluded)
-        # explore_pittsboro only covers pittsboro/chatham — Durham is excluded.
         self.assertIn("Covers", reasons["explore_pittsboro"])
         self.assertIn("Pittsboro", reasons["explore_pittsboro"])
         self.assertIn("check one of those localities", reasons["explore_pittsboro"])

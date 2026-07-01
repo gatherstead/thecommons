@@ -23,7 +23,6 @@ const httpError = async (method: string, url: string, response: Response): Promi
     return new Error(`${method} ${url} -> ${response.status} ${response.statusText}${snippet}`);
 };
 
-
 const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
     const dateObj = new Date(backendEvent.date);
 

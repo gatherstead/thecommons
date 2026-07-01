@@ -283,7 +283,6 @@
 
   const STAGES = ["fetch", "standardize", "force_town", "dedup", "safety", "publish"];
 
-  /* badge elements keyed by stage name */
   const stageBadges = {};
 
   /* flag set once 'done' fires so a trailing connection-close error is ignored */
@@ -294,10 +293,9 @@
      standardize ordering. Powers the master/detail event explorer. */
   let eventStore     = {};
   let eventOrder     = [];
-  let extraPublished = [];   // published rows that didn't match any staged event
-  let pinnedKey      = null;  // a clicked row stays selected until clicked again
+  let extraPublished = [];
+  let pinnedKey      = null;
 
-  /* CSRF token — read from the hidden input rendered by {% csrf_token %} */
   function getCsrf() {
     const el = document.querySelector("[name=csrfmiddlewaretoken]");
     return el ? el.value : "";
@@ -530,7 +528,6 @@
 
     function kv(k, vHtml) { rows.push("<div class='kv'><div class='k'>" + k + "</div><div class='v'>" + vHtml + "</div></div>"); }
 
-    /* Town: show Gemini's guess and what it was forced/published to. */
     if (ev.geminiTown != null || ev.town != null) {
       let townHtml = escHtml(ev.geminiTown != null ? ev.geminiTown : "—");
       if (ev.town && ev.town !== ev.geminiTown) {
@@ -556,7 +553,6 @@
       kv("Safety", s);
     }
 
-    /* source_name — the field this tool exists to validate. */
     if (ev.published) {
       const srcEmpty = !ev.source_name || String(ev.source_name).trim() === "";
       kv("Source name", srcEmpty
@@ -649,7 +645,7 @@
     explorer.appendChild(card);
     parent.appendChild(explorer);
 
-    renderDetail(card, null);  // initial empty state
+    renderDetail(card, null);
   }
 
   function renderResults(data, label, eventList) {
@@ -756,7 +752,6 @@
         return;
       }
 
-      /* Attempt to extract structured error payload; fall back to generic message */
       let msg = "Stream connection error or server error.";
       let traceback = null;
       if (e.data) {

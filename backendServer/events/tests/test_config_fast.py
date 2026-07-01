@@ -17,8 +17,6 @@ from events.management.commands.healthcheck import Command, OK, FAIL
 
 @tag('fast')
 class SelectSettingsEnvTests(unittest.TestCase):
-    """The DJANGO_ENV -> settings-module dispatch in backend/settings/__init__.py."""
-
     def test_unset_defaults_to_dev(self):
         self.assertEqual(select_settings_env({}), "dev")
 
@@ -34,8 +32,6 @@ class SelectSettingsEnvTests(unittest.TestCase):
         self.assertEqual(select_settings_env({"DJANGO_ENV": "Dev"}), "dev")
 
     def test_unrecognized_value_fails_loud(self):
-        # The exact footgun: 'production' is NOT 'prod'. It must raise, not
-        # silently fall back to dev (which is what caused the outage class).
         for bad in ("production", "staging", "PRD", "true"):
             with self.assertRaises(ImproperlyConfigured):
                 select_settings_env({"DJANGO_ENV": bad})
@@ -43,8 +39,6 @@ class SelectSettingsEnvTests(unittest.TestCase):
 
 @tag('fast')
 class HealthcheckConfigProbeTests(SimpleTestCase):
-    """`manage.py healthcheck --require-prod`'s settings-sanity probe."""
-
     def _probe(self, require_prod):
         return Command()._check_config(require_prod)
 
@@ -61,7 +55,6 @@ class HealthcheckConfigProbeTests(SimpleTestCase):
 
     @override_settings(DEBUG=False, ALLOWED_HOSTS=["localhost", "127.0.0.1"])
     def test_prod_fails_on_localhost_only_allowed_hosts(self):
-        # DEBUG correctly off, but the host list can't serve the public domain.
         status, _, detail = self._probe(require_prod=True)
         self.assertEqual(status, FAIL)
         self.assertIn("localhost-only", detail)
@@ -73,7 +66,5 @@ class HealthcheckConfigProbeTests(SimpleTestCase):
 
     @override_settings(DEBUG=True, ALLOWED_HOSTS=["localhost", "127.0.0.1"])
     def test_dev_run_never_fails(self):
-        # Same dev-looking settings, but without --require-prod (a laptop run)
-        # this is informational, never a failure.
         status, name, _ = self._probe(require_prod=False)
         self.assertEqual((status, name), (OK, "config"))

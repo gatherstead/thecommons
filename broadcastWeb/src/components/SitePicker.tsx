@@ -1,7 +1,5 @@
 import type { PreviewResult } from "../models/broadcastModels";
 
-// Login-gated sites: require an account login before any form appears.
-// The extension cannot pre-fill these; they are coming soon.
 export const COMING_SOON = new Set([
   "fun4raleighkids",
   "chapelboro",

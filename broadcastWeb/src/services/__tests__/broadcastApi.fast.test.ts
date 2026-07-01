@@ -125,28 +125,7 @@ describe("POST wrappers", () => {
 
 describe("aiAutofill", () => {
   it("POSTs to /broadcast/ai-autofill with access_code and text, returns the event", async () => {
-    const eventPayload: EventDraft = {
-      title: "Test Fest",
-      description: "A festival",
-      start_datetime: "2026-10-17T16:00",
-      end_datetime: "2026-10-17T23:00",
-      all_day: false,
-      venue_name: "The Venue",
-      address_line1: "1 Main St",
-      state: "NC",
-      zip: "27701",
-      locality: ["durham"],
-      categories: ["festival"],
-      event_url: "",
-      ticket_url: "",
-      price: "",
-      is_free: false,
-      image_url: "",
-      organizer_name: "",
-      contact_email: "",
-      contact_phone: "",
-    };
-    fetchMock.mockResolvedValue(jsonResponse({ event: eventPayload }));
+    fetchMock.mockResolvedValue(jsonResponse({ event: EVENT }));
 
     const result = await aiAutofill("CODE", "paste event text here");
 
@@ -158,7 +137,7 @@ describe("aiAutofill", () => {
       access_code: "CODE",
       text: "paste event text here",
     });
-    expect(result).toEqual({ event: eventPayload });
+    expect(result).toEqual({ event: EVENT });
   });
 
   it("maps 400 (blank text) to an error", async () => {

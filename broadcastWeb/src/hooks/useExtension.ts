@@ -15,8 +15,6 @@ const EXTENSION_IDS: string[] = (
   .map((s) => s.trim())
   .filter(Boolean);
 
-// Chrome Web Store install link for the published "The Commons — Broadcast"
-// listing (user-specific ?authuser/&hl params stripped).
 export const WEB_STORE_URL =
   "https://chromewebstore.google.com/detail/the-commons-%E2%80%94-broadcast/jidmhdmlbjfnblbheglmodhpcjhafjmi";
 
@@ -53,8 +51,6 @@ const POLL_ATTEMPTS = 60;
 
 export function useExtension(): ExtensionState {
   const [installed, setInstalled] = useState(false);
-  // The id that actually answered a ping — the one sendFill should target when
-  // several are configured. undefined until something responds.
   const [resolvedId, setResolvedId] = useState<string | undefined>(undefined);
   const installedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -62,7 +58,6 @@ export function useExtension(): ExtensionState {
   const ping = useCallback((): void => {
     const runtime = getRuntime();
     if (!runtime || EXTENSION_IDS.length === 0) return;
-    // Ping every configured id; the first to answer wins.
     for (const id of EXTENSION_IDS) {
       try {
         runtime.sendMessage(id, { type: "ping" }, (response) => {

@@ -19,7 +19,6 @@ from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import TRIANGLE, Eligibility
 
-# Static submitter defaults — position and heard_about are not user-entered.
 _POSITION = "Editor"
 _HEARD_ABOUT = "Word of mouth"
 

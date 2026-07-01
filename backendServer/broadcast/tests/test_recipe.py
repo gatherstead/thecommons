@@ -100,8 +100,6 @@ class ConditionalFieldsTest(SimpleTestCase):
         self.assertTrue(terms["required"])
 
     def test_weekender_category_field_emitted_when_categories_present(self):
-        # select2_multi category field must appear when ev.categories has slugs
-        # and carry the comma-joined search terms.
         recipe = get_adapter("triangle_weekender").recipe(
             _event(categories=["music", "arts", "festival"])
         )

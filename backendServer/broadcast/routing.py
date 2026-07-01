@@ -20,7 +20,6 @@ CATEGORIES = frozenset({
 
 TRIANGLE = LOCALITIES  # region-wide sites accept every Triangle locality
 
-# Human-readable labels for locality slugs and category slugs.
 # Deliberately local — do NOT import from events/.
 _LOCALITY_LABELS: dict[str, str] = {
     "pittsboro":   "Pittsboro",
@@ -50,7 +49,6 @@ _CATEGORY_LABELS: dict[str, str] = {
 
 
 def _join_labels(labels: list[str]) -> str:
-    """Join a list of labels with commas and an ampersand before the last."""
     if not labels:
         return ""
     if len(labels) == 1:

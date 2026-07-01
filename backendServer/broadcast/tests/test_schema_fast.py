@@ -34,8 +34,6 @@ class ToLocalTests(unittest.TestCase):
 
 @tag('fast')
 class CanonicalEventSerializerTzTests(unittest.TestCase):
-    """Verify that to_canonical() converts aware UTC datetimes to Eastern time."""
-
     _VALID_BASE = {
         "title": "Summer Test Event",
         "description": "A test event description.",

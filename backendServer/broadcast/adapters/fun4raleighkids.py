@@ -60,14 +60,6 @@ class Fun4RaleighKidsAdapter(SiteAdapter):
     # recipe_fields intentionally absent: no public form → check_recipes skips.
 
     def fill_and_submit(self, page, ev, ctx):
-        """Navigate to the calendar and detect the Joomla login wall.
-
-        The site's event-submission form is gated behind a Joomla user account.
-        We cannot fill or submit it without real credentials, so we always
-        return needs_manual after documenting what we found.  A human reviewer
-        should log into fun4raleighkids.com, navigate to Events → Add Event,
-        and submit manually.
-        """
         page.goto(self.submission_url, timeout=ctx.timeout_ms)
         page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         h.dismiss_consent(page)

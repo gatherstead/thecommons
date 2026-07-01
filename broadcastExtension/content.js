@@ -29,10 +29,8 @@
 
   async function runFill(recipe) {
     const fields = recipe.fields || [];
-    // Wait for the form to actually render before filling. Some forms (e.g.
-    // Visit Raleigh) load the form markup a beat after the page "completes", so
-    // an adapter can name a late-rendering `ready_selector`; otherwise we fall
-    // back to the first field. Generous timeout for slow third-party forms.
+    // Some forms render after page "complete"; adapters can specify a
+    // ready_selector, otherwise we fall back to the first field.
     const readySel = recipe.ready_selector || (fields[0] && fields[0].selector);
     if (readySel) {
       await waitFor(() => document.querySelector(readySel), 15000);
@@ -86,13 +84,13 @@
     date: fillInput,
     time: fillInput,
     select: fillInput,
-    froala: fillFroala,   // Froala/micronet rich-text editors (iframe-mode)
+    froala: fillFroala,
     radio: checkInput,
     checkbox: checkInput,
-    file: fillFile,       // upgraded from fileHint — auto-uploads via background worker
+    file: fillFile,
     select2: fillSelect2,
-    select2_multi: fillSelect2Multi, // Tribe Events AJAX multi-taxonomy dropdowns
-    react_select: fillReactSelect,   // react-select typeahead multiselect (ABC11 category)
+    select2_multi: fillSelect2Multi,
+    react_select: fillReactSelect,
     terms: acceptTerms,
     manual_widget: scrollHint,
   };
@@ -104,13 +102,8 @@
     setNativeValue(el, field.value);
   }
 
-  // Fill a Froala / micronet-rich-text-editor. We can't reach the page's Froala
-  // JS API from the isolated content-script world, but the editable lives in a
-  // same-origin <iframe class="fr-iframe"> we CAN reach through the DOM: set the
-  // iframe body's HTML, then fire input/keyup/blur so Froala's own listeners
-  // sync the value to the underlying ng-model (vm.model.*). Handles both
-  // div-initialized editors (the id sits on the .fr-box) and textarea-
-  // initialized editors (hidden <textarea> whose .fr-box is a sibling).
+  // Froala's JS API is unreachable from the content-script world; write directly
+  // to the iframe body and fire synthetic events so Froala syncs its ng-model.
   function fillFroala(field) {
     if (!field.value) return;
     const box = findFroalaBox(field.selector);
@@ -124,15 +117,11 @@
         body.dispatchEvent(new Event(type, { bubbles: true }));
       }
     }
-    // Belt-and-suspenders: if the original element is a <textarea>, set its
-    // value too (some configs read the source element on submit).
+    // Some Froala configs read the source <textarea> on submit.
     const orig = document.querySelector(field.selector);
     if (orig && orig.tagName === "TEXTAREA") setNativeValue(orig, field.value);
   }
 
-  // Resolve the .fr-box for a Froala field selector. The selector may point at
-  // the .fr-box directly (div-initialized) or at a hidden source element whose
-  // .fr-box Froala inserted as a following sibling (textarea-initialized).
   function findFroalaBox(selector) {
     const el = document.querySelector(selector);
     if (!el) return null;
@@ -161,9 +150,8 @@
     }
   }
 
-  // Auto-upload image via the background service worker (which has broad
-  // host_permissions and bypasses page CORS). Falls back to the red-outline
-  // hint if anything fails so the human can upload manually.
+  // Fetch image through the background worker (CORS bypass) and assign via
+  // DataTransfer. Falls back to a visual hint on error.
   async function fillFile(field) {
     if (!field.value) return;
     const el = document.querySelector(field.selector);
@@ -178,12 +166,10 @@
         throw new Error(resp ? resp.error : "no response from background");
       }
 
-      // Derive MIME type and filename from the data URL and the original URL.
       const mime = resp.dataUrl.split(";")[0].replace("data:", "") || "image/jpeg";
       const urlPath = field.value.split("?")[0];
       const name = urlPath.split("/").pop() || `event-image.${mime.split("/")[1] || "jpg"}`;
 
-      // Decode base64 data URL → ArrayBuffer → File.
       const b64 = resp.dataUrl.split(",")[1];
       const byteStr = atob(b64);
       const ab = new ArrayBuffer(byteStr.length);
@@ -191,7 +177,6 @@
       for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
       const file = new File([ab], name, { type: mime });
 
-      // Assign via DataTransfer — works for standard <input type="file">.
       const dt = new DataTransfer();
       dt.items.add(file);
       el.files = dt.files;
@@ -202,13 +187,11 @@
       console.warn("Commons Broadcast: image auto-upload failed, falling back to hint:", e);
     }
 
-    // Fallback: red-outline the file input + warn the human to add it manually.
     fileHintFallback(el);
     showImageErrorBanner();
   }
 
   function fileHintFallback(el) {
-    // el is the resolved DOM element (already found by fillFile).
     if (!el) return;
     el.scrollIntoView({ block: "center" });
     outline(el, "#c0392b");
@@ -263,19 +246,8 @@
     if (chosen) chosen.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   }
 
-  // Driver for Tribe Events AJAX multi-taxonomy select2 dropdowns:
-  //   - Categories: select[name='tax_input[tribe_events_cat][]']
-  //   - Tags:       select[name='tax_input[post_tag][]']
-  //
-  // field.value is a comma-separated list of search terms produced by the
-  // adapter (e.g. "Music,Arts,Festival"). For each term we open the inline
-  // search, wait for the AJAX dropdown, and click the best match.
-  // Unmatched terms are skipped silently — we never block the fill loop.
-  //
-  // Assumption: the hidden <select> element is immediately followed by a
-  // <span class="select2-container"> as observed in the captured form HTML.
-  // LIVE VERIFICATION REQUIRED: confirm AJAX search terms actually appear in
-  // these sites' dropdowns; see adapter category maps for term choices.
+  // Multi-taxonomy select2 driver (Tribe Events categories/tags). field.value is
+  // a comma-separated list; unmatched terms are skipped silently.
   async function fillSelect2Multi(field) {
     const terms = (field.value || "")
       .split(",")
@@ -291,21 +263,17 @@
 
     for (const term of terms) {
       try {
-        // Multi-select2 keeps an inline search input always visible.
         const searchInput = container.querySelector(".select2-search__field");
         if (!searchInput) continue;
 
-        // Click to activate, then type the search term.
         searchInput.click();
         await sleep(100);
         setNativeValue(searchInput, term);
         searchInput.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
 
-        // Wait for AJAX to return and render options.
         await sleep(1200);
 
-        // The dropdown is body-appended — find the best match among visible
-        // options, skipping loading/disabled/status items.
+        // The dropdown is body-appended.
         const options = [
           ...document.querySelectorAll(
             ".select2-dropdown li.select2-results__option:not(.select2-results__option--disabled)"
@@ -325,7 +293,6 @@
           match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
           await sleep(300); // let select2 register the selection
         } else {
-          // No match — close the open dropdown and reset the search field.
           document.dispatchEvent(
             new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
           );
@@ -338,10 +305,8 @@
     }
   }
 
-  // Driver for react-select typeahead multiselects (e.g. ABC11 Category, a
-  // react-select v5 combobox). field.value is a comma-separated list of search
-  // terms. For each: type into the combobox input, wait for the menu to filter,
-  // then click the first available option. Unmatched terms are skipped silently.
+  // react-select typeahead driver (ABC11 Category). field.value is a comma-
+  // separated list; unmatched terms are skipped silently.
   async function fillReactSelect(field) {
     const terms = (field.value || "")
       .split(",")
@@ -369,13 +334,12 @@
           options[0];
 
         if (first) {
-          // react-select selects on mousedown; also click for safety.
+          // react-select selects on mousedown.
           first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
           first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
           first.click();
           await sleep(300);
         }
-        // Clear the input before the next term.
         setNativeValue(input, "");
         await sleep(150);
       } catch (_) {
@@ -449,8 +413,6 @@
     document.documentElement.appendChild(bar);
   }
 
-  // Shown when the image couldn't be auto-uploaded (CORS, fetch error, or a
-  // non-standard upload widget). The file input is also outlined in red.
   function showImageErrorBanner() {
     if (document.getElementById("commons-broadcast-image-error")) return;
     const bar = document.createElement("div");

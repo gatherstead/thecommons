@@ -139,8 +139,6 @@ if [ -d "$BACKEND" ]; then
     # Mirror the systemd units: run from the backend dir with .env loaded.
     pushd "$BACKEND" >/dev/null
     if [ -f .env ]; then set -a; . ./.env; set +a; fi
-    # --require-prod: this script only runs on the VM, so assert production-safe
-    # settings (DEBUG off, public ALLOWED_HOSTS) and fail loud if dev.py leaked in.
     app_out="$("$UV_BIN" run python manage.py healthcheck --require-prod --celery-timeout "$CELERY_TIMEOUT" 2>/dev/null || true)"
     popd >/dev/null
 else

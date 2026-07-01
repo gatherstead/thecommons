@@ -36,10 +36,6 @@ def _event_dict(e):
     }
 
 
-def _slugify(s):
-    return slugify(s)
-
-
 def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True, limit=None):
     ingestion_logger = logging.getLogger('ingestion')
     handler = QueueLoggingHandler(q, threading.get_ident())
@@ -74,7 +70,6 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
                 fetch_ics_feed(source)
 
                 if limit is not None:
-                    # Cap: keep only the first `limit` RawEvents for this source
                     keep_ids = list(
                         RawEvent.objects.filter(source=source).values_list('id', flat=True)[:limit]
                     )
@@ -117,7 +112,7 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
                 # ── FORCE_TOWN ────────────────────────────────────────────────
                 q.put(("stage", {"stage": "force_town", "status": "start"}))
                 for staged in StagedEvent.objects.filter(raw_event__source=source):
-                    if _slugify(staged.town) != town.slug:
+                    if slugify(staged.town) != town.slug:
                         q.put(("warning", {
                             "code": "town_mismatch",
                             "message": f"Gemini guessed town '{staged.town}' but you forced '{town.name}'",
@@ -171,8 +166,7 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
                     ).distinct()
                 ]
 
-                pub_records = published  # same shape as _event_dict output
-                q.put(("stage_data", {"stage": "publish", "records": pub_records}))
+                q.put(("stage_data", {"stage": "publish", "records": published}))
                 q.put(("stage", {
                     "stage": "publish",
                     "status": "end",

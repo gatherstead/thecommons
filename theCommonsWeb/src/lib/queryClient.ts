@@ -4,7 +4,7 @@ function makeQueryClient() {
     return new QueryClient({
         defaultOptions: {
             queries: {
-                staleTime: 60 * 60 * 1000, // 1 hour — matches the daily 04:00 ET ingestion cadence
+                staleTime: 60 * 60 * 1000,
                 gcTime: Infinity,
                 refetchOnWindowFocus: true,
                 refetchOnReconnect: false,

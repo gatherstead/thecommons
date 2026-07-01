@@ -1,10 +1,5 @@
 # Plan: Dev-only Ingestion Playground (`devtools/`)
 
-> Hand-off doc for a fresh Claude Code instance implementing with **parallel developer subagents** (claude sonnet 4.6 medium effort).
-> Workstreams in §4 are designed so no two agents edit the same file. Contracts in §2 and §6 are frozen — implement against them.
-
----
-
 ## 1. Context — why we're building this
 
 The Commons ingests community events from ICS calendar feeds through a 6-stage pipeline (poll → standardize → dedup → safety-score → auto-publish). Three problems motivate this tool:

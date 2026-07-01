@@ -17,15 +17,7 @@ logger = logging.getLogger(__name__)
 _MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 _MAX_RETRIES = 3
 
-# Ordered list of all EventDraft keys the autofill must return.
-_ALL_KEYS = [
-    "title", "description", "start_datetime", "end_datetime", "all_day",
-    "venue_name", "address_line1", "state", "zip", "locality", "categories",
-    "event_url", "ticket_url", "price", "is_free", "image_url",
-    "organizer_name", "contact_email", "contact_phone",
-]
-
-_DEFAULTS: dict = {
+_DEFAULTS = {
     "title": "",
     "description": "",
     "start_datetime": "",
@@ -97,24 +89,19 @@ def _build_prompt(text: str) -> str:
 
 
 def _strip_fences(raw: str) -> str:
-    """Remove leading/trailing markdown code fences if present."""
     raw = raw.strip()
     if raw.startswith("```"):
-        # Drop the opening fence line
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-        # Drop the trailing fence
         raw = raw.rsplit("```", 1)[0]
     return raw.strip()
 
 
 def _coerce(data: dict) -> dict:
-    """Normalise types and ensure every key is present with a sane default."""
-    result = dict(_DEFAULTS)  # start from clean defaults
+    result = dict(_DEFAULTS)
 
     result["title"] = str(data.get("title") or "")
     result["description"] = str(data.get("description") or "")
 
-    # Datetime strings: accept only non-empty strings; reject anything else.
     for key in ("start_datetime", "end_datetime"):
         val = data.get(key)
         result[key] = str(val) if isinstance(val, str) and val.strip() else ""
@@ -125,7 +112,6 @@ def _coerce(data: dict) -> dict:
     result["state"] = str(data.get("state") or "NC")[:2] or "NC"
     result["zip"] = str(data.get("zip") or "")
 
-    # Vocabulary-validated arrays — drop any slug not in the allowed sets.
     raw_locality = data.get("locality") or []
     result["locality"] = [s for s in raw_locality if s in LOCALITIES]
 
@@ -163,10 +149,10 @@ def extract_event_fields(text: str) -> dict:
                     model=model,
                     contents=prompt,
                 )
-                break  # success — exit retry loop
+                break
             except Exception as exc:
                 if "503" in str(exc) or "UNAVAILABLE" in str(exc):
-                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    wait = 2 ** attempt
                     logger.warning(
                         "[autofill][%s] 503 on attempt %d/%d, retrying in %ds…",
                         model, attempt + 1, _MAX_RETRIES, wait,

@@ -28,7 +28,6 @@ _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
 # Mapping from our canonical category slugs (routing.CATEGORIES) to the search
 # terms the Triangle Weekender's AJAX category dropdown understands. The
 # extension searches each term; unmatched terms are skipped silently.
-# LIVE VERIFICATION REQUIRED: confirm these terms appear in the site's dropdown.
 _WK_CATEGORY_MAP: dict[str, str] = {
     "music":       "Music",
     "arts":        "Arts",
@@ -46,7 +45,6 @@ _WK_CATEGORY_MAP: dict[str, str] = {
 # Same search terms for the post_tag AJAX dropdown. Tags are free-form so the
 # site may have exactly these as tags, or may not — the extension skips
 # unmatched terms.
-# LIVE VERIFICATION REQUIRED: confirm these tag terms exist on the site.
 _WK_TAG_MAP: dict[str, str] = {
     "music":       "Music",
     "arts":        "Arts",
@@ -182,13 +180,11 @@ class TriangleWeekenderAdapter(SiteAdapter):
         # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). The
         # selector targets the hidden <select> whose next sibling is the visible
         # select2 container. Only emitted when ev.categories contains known slugs.
-        # LIVE VERIFICATION REQUIRED: confirm search terms hit real options.
         specs.append(RecipeField(
             "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
             _wk_category_terms, recipe_only=True, label="Event categories",
             hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
         # Tags — same AJAX select2 multi pattern (post_tag taxonomy).
-        # LIVE VERIFICATION REQUIRED: confirm tag terms exist on the site.
         specs.append(RecipeField(
             "select[name='tax_input[post_tag][]']", "select2_multi",
             _wk_tag_terms, recipe_only=True, label="Event tags",

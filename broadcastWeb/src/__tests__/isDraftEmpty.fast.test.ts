@@ -1,6 +1,3 @@
-// Fast-tier unit tests for the isDraftEmpty helper exported from App.tsx.
-// No DOM required — pure logic.
-
 import { describe, expect, it } from "vitest";
 
 import { isDraftEmpty } from "../App";

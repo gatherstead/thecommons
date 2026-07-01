@@ -61,11 +61,6 @@ const EMPTY_DRAFT: EventDraft = {
   contact_phone: "",
 };
 
-// Returns true when the draft is functionally pristine — no *event* content the
-// user has entered yet. State "NC" is the default and counts as empty; any other
-// state value means the user (or AI) has touched it. Operator contact details
-// (name/email/phone) are session-sticky, not event content, so they're excluded
-// here — a saved contact must not block AI Autofill on an otherwise blank form.
 export const isDraftEmpty = (draft: EventDraft): boolean =>
   draft.title.trim() === "" &&
   draft.description.trim() === "" &&
@@ -84,8 +79,6 @@ export const isDraftEmpty = (draft: EventDraft): boolean =>
   !draft.is_free &&
   (draft.image_url === undefined || draft.image_url.trim() === "");
 
-// Returns friendly labels for blank optional fields. Mirrors the empties logic
-// in isDraftEmpty for the optional subset of fields.
 export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   const missing: string[] = [];
   if (!draft.end_datetime || draft.end_datetime === "") missing.push("Ends");
@@ -104,7 +97,6 @@ const POLL_MS = 3000;
 const SESSION = loadSession();
 const DRAFT = loadDraft();
 
-// Session-sticky operator contact: reused across events, survives start-over.
 const STICKY_CONTACT = {
   organizer_name: SESSION.organizer_name ?? "",
   contact_email: SESSION.contact_email ?? "",
@@ -132,11 +124,6 @@ type ExtFillStatus =
   | "submitted"
   | "unavailable";
 
-// Restore per-destination fill status from a persisted draft. An in-flight
-// "filling" (or other transient) status is stale after a reload — no fill is
-// actually running — so downgrade those to "ready" (actionable again). Terminal
-// results ("submitted"/"unavailable") are kept so you can see what you already
-// did vs. what's still outstanding.
 const restoreFillStatus = (
   saved: Record<string, string> | undefined
 ): Record<string, ExtFillStatus> => {
@@ -173,8 +160,6 @@ export default function App() {
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
   const locked = Boolean(preview);
 
-  // Session: you stay "signed in" with your access code across events/refreshes,
-  // and your contact details stick the same way (reused for every event).
   useEffect(() => {
     saveSession({
       accessCode,
@@ -185,8 +170,6 @@ export default function App() {
     });
   }, [accessCode, verified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
 
-  // Draft: the event you're working on, auto-saved until an explicit start-over
-  // (resetCore clears it). Survives refreshes even once the job finishes.
   useEffect(() => {
     saveDraft({
       draft, preview, selected: [...selected], job, jobId: jobIdRef.current,
@@ -275,8 +258,6 @@ export default function App() {
     }
   };
 
-  // Fills a single calendar via the extension. Called when the user clicks a
-  // calendar row in the per-calendar speed-submit checklist.
   const fillOne = async (siteKey: string) => {
     if (!extensionId) {
       setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
@@ -292,9 +273,6 @@ export default function App() {
     }
   };
 
-  // Core reset: clears all form/job state (and the saved draft) but keeps the
-  // verified access code and sticky contact details — you stay signed in and
-  // your contact carries over to the next event.
   const resetCore = () => {
     clearDraft();
     jobIdRef.current = null;
@@ -316,7 +294,6 @@ export default function App() {
   // Reset everything for a fresh event, but keep the (verified) access code.
   const startOver = resetCore;
 
-  // Top-of-page reset button handler (production-visible).
   const resetForm = resetCore;
 
   const handleAiAutofill = async () => {
@@ -352,7 +329,6 @@ export default function App() {
     draft.locality.length > 0 &&
     draft.categories.length > 0;
 
-  // Derived values used in the Destinations section
   const unfilled = unfilledOptionalFields(draft);
   const submittedCount = Object.values(extFillStatus).filter((s) => s === "submitted").length;
   const nameByKey: Record<string, string> = preview
@@ -557,7 +533,6 @@ export default function App() {
         <section className="section">
           <h2>Destinations</h2>
 
-          {/* Optional unfilled fields — hidden once the user enters speed-submit mode */}
           {!speedSubmit && unfilled.length > 0 && (
             <p className="optional-unfilled">
               <em>Not provided: {unfilled.join(", ")}</em>
@@ -565,7 +540,6 @@ export default function App() {
           )}
 
           {speedSubmit ? (
-            /* Per-calendar submit checklist: one clickable row per selected site */
             <ul className="site-list">
               {[...selected].map((siteKey) => {
                 const siteName = nameByKey[siteKey] ?? siteKey;

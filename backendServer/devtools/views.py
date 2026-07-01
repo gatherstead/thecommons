@@ -18,7 +18,7 @@ from ingestion.deduplicator import dedup_all_pending
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
 
-from .pipeline_runner import _event_dict, _slugify, run_pipeline_into_queue
+from .pipeline_runner import _event_dict, run_pipeline_into_queue
 from .sse import sse_frame
 
 
@@ -26,15 +26,8 @@ from .sse import sse_frame
 
 _BLOCKED_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254'}
 
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network('10.0.0.0/8'),
-    ipaddress.ip_network('172.16.0.0/12'),
-    ipaddress.ip_network('192.168.0.0/16'),
-]
-
 
 def _validate_url(url):
-    """Raise ValueError if the URL is unsafe (SSRF guard)."""
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https'):
         raise ValueError(f"URL scheme must be http or https, got '{parsed.scheme}'")
@@ -148,10 +141,7 @@ def save_and_publish(request):
             fetch_ics_feed(source)
             standardize_all_unprocessed(source=source)
 
-            # Force town on all staged events for this source
             for staged in StagedEvent.objects.filter(raw_event__source=source):
-                if _slugify(staged.town) != town.slug:
-                    pass  # mismatch noted but we force anyway
                 staged.town = town.name
                 staged.save(update_fields=['town'])
 

@@ -54,7 +54,6 @@ def _contact(ev) -> str:
 
 
 def _price(ev) -> str:
-    """Fees / Admission text for #pricingDescription (a Froala editor)."""
     return "Free" if ev.is_free else (ev.price or "")
 
 

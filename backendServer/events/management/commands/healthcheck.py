@@ -77,20 +77,14 @@ class Command(BaseCommand):
     # ── individual probes ────────────────────────────────────────────────────
 
     def _check_config(self, require_prod: bool) -> tuple[str, str, str]:
-        """Surface which settings module is live, and (with --require-prod) fail
-        if it's the dev module leaking into production.
-
-        The June 2026 outage was exactly this: DJANGO_ENV unset -> dev.py ->
-        DEBUG=True and localhost-only ALLOWED_HOSTS -> every request to
-        api.thecommons.town returned DisallowedHost (400). Both signals are
-        checked here so the deploy health check turns that into a loud FAIL.
-        """
+        # June 2026 outage: DJANGO_ENV unset -> dev.py -> DEBUG=True and
+        # localhost-only ALLOWED_HOSTS -> every request to api.thecommons.town
+        # returned DisallowedHost (400). Both signals caught here under --require-prod.
         env = os.environ.get("DJANGO_ENV") or "(unset)"
         hosts = [h for h in settings.ALLOWED_HOSTS if h]
         summary = f"DJANGO_ENV={env}, DEBUG={settings.DEBUG}, ALLOWED_HOSTS={hosts or '[]'}"
 
         if not require_prod:
-            # Local/dev run — report for visibility, never fail.
             return (OK, "config", summary)
 
         problems = []

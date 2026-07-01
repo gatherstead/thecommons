@@ -76,7 +76,6 @@ def _map_categories(ev) -> list[str]:
 # Fields driven imperatively (categories select-multiple, image file upload) are
 # recipe_only so apply_specs skips them on the server path.
 _RECIPE_FIELDS = [
-    # --- Contact Info (submitter identity — from ev.organizer_name / contact_email / contact_phone) ---
     RecipeField("#postname", "text", lambda ev: ev.organizer_name,
                 required=True, label="Submitter Name"),
     RecipeField("#postemail", "text", lambda ev: ev.contact_email,
@@ -84,7 +83,6 @@ _RECIPE_FIELDS = [
     RecipeField("#postphone", "text", lambda ev: ev.contact_phone,
                 label="Submitter Phone"),
 
-    # --- Event core ---
     RecipeField("#title", "text", lambda ev: ev.title,
                 required=True, label="Event Title"),
     RecipeField("#description", "textarea", lambda ev: ev.description,
@@ -93,7 +91,6 @@ _RECIPE_FIELDS = [
                 required=True, label="Start Date",
                 hint="plain text field — enter mm/dd/yyyy"),
 
-    # --- Location (free-text venue name; address fields) ---
     RecipeField("#location", "text", lambda ev: ev.venue_name,
                 label="Venue / Location"),
     RecipeField("#addr1", "text", lambda ev: ev.address_line1,
@@ -103,20 +100,17 @@ _RECIPE_FIELDS = [
     RecipeField("#zip", "text", lambda ev: ev.zip,
                 label="Zip"),
 
-    # --- Contact for the event itself ---
     RecipeField("#phone", "text", lambda ev: ev.contact_phone,
                 label="Event Phone"),
     RecipeField("#email", "text", lambda ev: ev.contact_email,
                 label="Event Email"),
 
-    # --- URLs / admission ---
     RecipeField("#linkurl", "text", lambda ev: ev.event_url,
                 label="Event Website"),
     RecipeField("#admission", "text",
                 lambda ev: "Free" if ev.is_free else ev.price,
                 label="Admission"),
 
-    # --- Category (select-multiple — driven imperatively; recipe_only) ---
     RecipeField("#categories", "select", lambda ev: ", ".join(_map_categories(ev)),
                 recipe_only=True, label="Event Category",
                 hint="select-multiple; pick matching options from the list"),
@@ -124,18 +118,13 @@ _RECIPE_FIELDS = [
                 recipe_only=True, label="Primary Category",
                 hint="select the single best-matching primary category"),
 
-    # --- Image (file upload — recipe_only) ---
     RecipeField("#mediafile", "file", lambda ev: ev.image_url,
                 recipe_only=True, label="Upload Image",
                 hint="download image from event_url and upload manually"),
 ]
 
-# Time fields are added conditionally in recipe_field_specs().
-
 
 class VisitRaleighAdapter(SiteAdapter):
-    """Visit Raleigh public event submission form (www.visitraleigh.com)."""
-
     key = "visit_raleigh"
     name = "Visit Raleigh"
     submission_url = "https://www.visitraleigh.com/events/submit-an-event/"
@@ -177,7 +166,6 @@ class VisitRaleighAdapter(SiteAdapter):
         page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         h.dismiss_consent(page)
 
-        # Guard: login wall (password input visible).
         if self._login_wall(page):
             return TargetResult(
                 status="needs_manual",
@@ -185,7 +173,6 @@ class VisitRaleighAdapter(SiteAdapter):
                 screenshot_path=h.take_screenshot(page, ctx, self.key),
             )
 
-        # Guard: captcha before we fill anything.
         if h.has_captcha(page):
             return TargetResult(
                 status="needs_manual",
@@ -193,7 +180,6 @@ class VisitRaleighAdapter(SiteAdapter):
                 screenshot_path=h.take_screenshot(page, ctx, self.key),
             )
 
-        # Fill all FILLABLE_TYPES fields via the shared loop.
         specs = self.recipe_field_specs(ev)
         missing = h.apply_specs(page, specs, ev, ctx.timeout_ms)
         if missing:
@@ -203,13 +189,11 @@ class VisitRaleighAdapter(SiteAdapter):
                 screenshot_path=h.take_screenshot(page, ctx, self.key),
             )
 
-        # Drive the category selects imperatively (select-multiple + select-one).
         cats = _map_categories(ev)
         if cats:
             _select_categories(page, "#categories", cats, ctx.timeout_ms)
             _select_option(page, "#primarycatId", cats[0], ctx.timeout_ms)
 
-        # Image: download and set on the file input.
         if ev.image_url:
             local = h.download_image(ev.image_url, ctx.download_dir)
             if local:
@@ -220,7 +204,6 @@ class VisitRaleighAdapter(SiteAdapter):
                 except Exception:
                     pass
 
-        # Guard: captcha that appeared after JS interaction.
         if h.has_captcha(page):
             return TargetResult(
                 status="needs_manual",

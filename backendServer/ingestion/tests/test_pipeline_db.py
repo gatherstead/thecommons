@@ -1,11 +1,12 @@
 from unittest import mock
 
 from celery.exceptions import Retry
-from django.test import TestCase, override_settings
+from django.test import TestCase, override_settings, tag
 
 from ingestion.tasks import run_ingestion_pipeline
 
 
+@tag('db')
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class RunIngestionPipelineTests(TestCase):
     def test_runs_all_steps_once(self):

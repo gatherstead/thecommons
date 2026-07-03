@@ -99,7 +99,6 @@ Run backend + theCommonsWeb together for end-to-end auth (Django validates JWTs 
 - **Google sign-in is disabled** — commented out in `auth.ts`, `AuthFlow.tsx`, `google-popup/`. Revisit later.
 - **Never commit `.env`** — update `.env.example` instead.
 - **Newspaper aesthetic** — serif fonts, cream/ink, column rules. No gradients, shadows, or pill buttons. See [CODING_STYLE.md](CODING_STYLE.md).
-- **Legacy dead files** — `backendServer/vercel.json`, `build.sh`, `main.py` are leftover Vercel artifacts. Ignore them.
 
 ## Database Ownership
 

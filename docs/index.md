@@ -7,9 +7,11 @@ Deep-dive guides beyond the root-level docs. Each file is a focused reference on
 | [broadcast.md](broadcast.md) | **Source of truth** for the broadcast subsystem: routing, adapters, worker, access codes, manual-review handoff, env, commands | Working on `broadcast/`, `broadcastWeb/`, or the extension |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | End-to-end walkthrough of the poll → standardize → stage → publish flow | Working on `ingestion/` or the cron pipeline |
 | [safety-scoring.md](safety-scoring.md) | How `safety_scorer.py` works and threshold tuning | Adjusting safety scoring or ingestion quality |
+| [devtools-ingestion-playground.md](devtools-ingestion-playground.md) | Plan for the dev-only ingestion playground (`devtools/`): replaying feeds through the poll → publish pipeline locally | Building or debugging ingestion tooling |
 | [admin-backend.md](admin-backend.md) | Guide to the django-unfold admin UI and review workflows | Modifying admin registration or review flows |
 | [redis-celery-handoff.md](redis-celery-handoff.md) | Redis + Celery setup: broker/cache, worker + beat, task conventions | Adding async tasks, scheduled jobs, or touching the worker |
 | [dev-db-isolation.md](dev-db-isolation.md) | Neon dev-branch setup — isolating local dev from the prod DB | Setting up a dev environment or running migrations |
+| [review-playbook.md](review-playbook.md) | Reusable multi-agent repo review: prod-wiring, tests, backend architecture, frontend/styling, docs — fan-out subagents → triaged findings + Apply Queue | Running a full-repo review (`/repo-review`) |
 
 ## Root-level docs
 

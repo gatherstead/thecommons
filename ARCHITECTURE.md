@@ -289,7 +289,7 @@ Both `theCommonsWeb/` and `broadcastWeb/` use **Vitest** with two projects: `fas
 Single `CI` workflow on push/PR to `main`. Four jobs: `backend` (Postgres 16 service, uv/Python 3.13, runs `--tag=fast` then `--tag=db`), `frontend-commons` and `frontend-broadcast` (pnpm 11.1.1, Node 22, `pnpm build` + `test:fast` + `test:db`), and a gated `deploy` job (push-to-`main` only) that SSHes into the Oracle VM and restarts services. See [DEPLOY.md](DEPLOY.md) for the deploy half.
 
 **Known gaps (as of this writing):**
-- ~11 backend test files carry no `@tag` (most of `broadcast/tests/`, plus `ingestion/tests/test_pipeline.py`), so neither `--tag=fast` nor `--tag=db` runs them — they **never execute in CI** (only a bare local `manage.py test` runs them).
+- (Resolved) Untagged backend test files that never ran in CI: `broadcast/tests/` and `ingestion/tests/test_pipeline.py` (now `test_pipeline_db.py`) all carry `@tag('fast')`/`@tag('db')` and run in CI.
 - No lint step in CI; `theCommonsWeb/eslint.config.js` is fully commented out; there's no ruff/mypy/prettier.
 - pnpm (11.1.1) and Node (22) are pinned **only in CI**, not via `packageManager`/`.nvmrc`/`engines`.
 
@@ -299,4 +299,4 @@ Single `CI` workflow on push/PR to `main`. Four jobs: `backend` (Postgres 16 ser
 
 DEPLOY.md is the source of truth — this is a summary. Production is a **single Oracle Cloud VM** (Ubuntu 24.04, ARM64, 6 GB) behind **nginx** with **Cloudflare** DNS/TLS (Full strict). Postgres is managed on **Neon** (external). systemd services: `gunicorn` (Django via unix socket), `nextjs` (Next.js :3000), `redis-server`, `celery` (worker), `celerybeat` (scheduler), `broadcast-worker` (Playwright). nginx maps `thecommons.town`→Next.js, `api.thecommons.town`→gunicorn, `broadcast.thecommons.town`→the static broadcast SPA.
 
-Deploys are automatic: every push to `main` runs CI, and on success the gated `deploy` job SSHes in to `git pull` → `uv sync` → `migrate` (unguarded) → `collectstatic` → build both frontends → restart the five services. Python uses `uv` (never pip); frontends use `pnpm` (never npm). Full one-time setup, env vars, nginx/systemd files, firewall gotchas, and troubleshooting are in [DEPLOY.md](DEPLOY.md).
+Deploys are automatic: every push to `main` runs CI, and on success the gated `deploy` job SSHes in to `git pull` → `uv sync` → guarded `migrate` (skips when nothing is pending; a pre-migrate `pg_dump` backup precedes any apply) → `collectstatic` → build both frontends → restart the five services, then a post-deploy smoke test (three domains, `/events/`, auth probes, broadcast rate-limit regression). Python uses `uv` (never pip); frontends use `pnpm` (never npm). Full one-time setup, env vars, nginx/systemd files, firewall gotchas, and troubleshooting are in [DEPLOY.md](DEPLOY.md).

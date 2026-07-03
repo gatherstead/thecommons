@@ -16,6 +16,7 @@ thecommons/
 ├── theCommonsWeb/      # Next.js 16 (App Router) + React 19 + Better Auth (main site)
 ├── broadcastWeb/       # Vite + React operator SPA for broadcast
 ├── broadcastExtension/ # Chrome MV3 extension (manual broadcast review, dormant)
+├── deploy/             # systemd units (celery/celerybeat/broadcast-worker), healthcheck.sh (manual), nginx snippet
 └── docs/               # Deep-dive guides
 ```
 
@@ -56,8 +57,6 @@ theCommonsWeb/src/  # app/ (App Router) · components/ · hooks/ · lib/ (Better
 broadcastWeb/src/   # App.tsx · components/ · hooks/useExtension · services/broadcastApi · lib/persist · models/
 docs/               # broadcast, ingestion-pipeline, safety-scoring, admin-backend, redis-celery-handoff, dev-db-isolation
 ```
-
-> **Legacy dead files (ignore):** `backendServer/vercel.json`, `build.sh`, `main.py` (leftover from a previous Vercel deploy).
 
 ---
 
@@ -211,7 +210,7 @@ Models: `BroadcastSubmission` / `BroadcastTarget`. 10 Tier-1 adapters + mock (`a
 - **Backend:** `DJANGO_SETTINGS_MODULE=backend.settings.test` (Postgres, never SQLite); `NeonAuthTestRunner` builds the `neon_auth` schema. Tiers via `@tag`: `fast` (no-DB, `*_fast.py`) / `db` (`*_db.py`). `test.py` strips `-pooler` for Neon's direct endpoint. Run `uv run python manage.py test [--tag=fast|--tag=db]`.
 - **Frontend:** Vitest, projects `fast` (node) / `db` (jsdom). `pnpm test:fast|test:db`; `pnpm build` is the type-check gate.
 - **CI** (`.github/workflows/ci.yml`): push/PR to `main`; jobs `backend` (Postgres 16, uv/Py 3.13, fast then db), `frontend-commons`, `frontend-broadcast` (pnpm 11.1.1, Node 22, build + tests), gated `deploy` (push-to-main only → SSH to Oracle VM).
-- **Known gaps:** many `broadcast/tests/` files + `ingestion/tests/test_pipeline.py` carry no `@tag` → never run in CI; no lint step (eslint config commented out; no ruff/mypy/prettier); pnpm/Node pinned only in CI.
+- **Known gaps:** no lint step (eslint config commented out; no ruff/mypy/prettier); pnpm/Node pinned only in CI. (Untagged-test gap closed: `broadcast/tests/` and `ingestion/tests/test_pipeline_db.py` — formerly `test_pipeline.py` — now all carry `@tag` and run in CI.)
 
 ---
 
@@ -223,7 +222,7 @@ Models: `BroadcastSubmission` / `BroadcastTarget`. 10 Tier-1 adapters + mock (`a
 - **DNS/TLS:** Cloudflare proxied, Full (strict); origin cert covers `*.thecommons.town`.
 - **Domains:** `thecommons.town` → Next.js (:3000); `api.thecommons.town` → gunicorn socket; `broadcast.thecommons.town` → static broadcast SPA.
 - **systemd services:** `gunicorn`, `nextjs`, `redis-server`, `celery`, `celerybeat`, `broadcast-worker`. DB is managed Postgres on Neon (external).
-- **CI/CD:** every push to `main` runs CI; on success the gated `deploy` job SSHes in → `git pull` → `uv sync` → `migrate` (unguarded) → `collectstatic` → build both frontends → restart the five services. Scheduled jobs are `django-celery-beat` (DB-backed), not OS cron.
+- **CI/CD:** every push to `main` runs CI; on success the gated `deploy` job SSHes in → `git pull` → `uv sync` → guarded `migrate` (skipped when nothing pending; otherwise a `pg_dump` to `/home/ubuntu/backups/`, 5 kept, precedes it) → `collectstatic` → build both frontends → restart the five services → post-deploy smoke (three domains, `/events/`, auth probes on `/auth/me` + the API-key path — 500 fails the deploy — and a broadcast rate-limit regression check). Scheduled jobs are `django-celery-beat` (DB-backed), not OS cron.
 
 ---
 
@@ -306,7 +305,6 @@ cd broadcastWeb && pnpm install && pnpm dev
 - **Google sign-in disabled** — revisit later.
 - **Never commit `.env`** — update `.env.example`.
 - **Newspaper aesthetic** — serif, cream/ink, column rules; no gradients/shadows/pills.
-- **Legacy Vercel files** (`vercel.json`, `build.sh`, `main.py`) are dead.
 - **If a doc contradicts the code, trust the code** and flag the drift.
 
 ---

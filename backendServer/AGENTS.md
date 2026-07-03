@@ -43,7 +43,6 @@ backendServer/
 │   └── management/commands/       #   run_broadcast_worker, broadcast_dry_run, capture_broadcast_form,
 │                                  #     check_recipes, scaffold_adapter
 ├── templates/                     # admin docs pages (docs/) + email digests (email/)
-├── vercel.json, build.sh, main.py # LEGACY dead files — ignore
 └── pyproject.toml / uv.lock
 ```
 
@@ -97,7 +96,7 @@ DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=
 DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=db   # DB
 ```
 
-> Note: all `broadcast/tests/` files are now tagged `fast`/`db` and run in CI (a prior gap where 10 of 12 files carried no `@tag` — including the rate-limit tests — let two prod-only bugs ship undetected). `ingestion/tests/test_pipeline.py` still carries no `@tag`, so it runs only under a bare `manage.py test` — **not** in CI.
+> Note: all `broadcast/tests/` files are now tagged `fast`/`db` and run in CI (a prior gap where 10 of 12 files carried no `@tag` — including the rate-limit tests — let two prod-only bugs ship undetected). `ingestion/tests/test_pipeline_db.py` (formerly untagged `test_pipeline.py`) is now tagged `db` and runs in CI.
 
 ## Quick Start
 

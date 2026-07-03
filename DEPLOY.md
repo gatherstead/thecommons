@@ -274,12 +274,19 @@ The `deploy` job runs only on **push to `main`**, after `backend`,
 
 Once Part 1 is done, **every push to `main`** runs CI (`.github/workflows/ci.yml`)
 and, after all three test jobs pass, a gated `deploy` job SSHes into the VM and runs
-the full sequence: `git pull` → `uv sync` → `migrate` → `collectstatic` → both
-frontend `pnpm install`/`build` → restart `gunicorn nextjs celery celerybeat
-broadcast-worker`. A failing test on `main` blocks the deploy.
+the full sequence: `git pull` → `uv sync` → guarded `migrate` (below) → `collectstatic`
+→ both frontend `pnpm install`/`build` → restart `gunicorn nextjs celery celerybeat
+broadcast-worker`, then a post-deploy smoke test: all three domains, `/events/`,
+auth probes (`/auth/me` with no/garbage token must 401/403 — never 500 — and the
+API-key path must accept the real key), and a broadcast rate-limit regression check.
+A failing test on `main` blocks the deploy.
 
-> ⚠️ The workflow runs `migrate` **unguarded** — a destructive migration applies
-> automatically. There's no "review migrations first" gate yet.
+> **Guarded migrate:** the deploy runs `migrate --check` first and skips `migrate`
+> entirely when nothing is pending. When migrations *are* pending it logs the plan,
+> takes a `pg_dump` to `/home/ubuntu/backups/pre-migrate-<timestamp>.sql.gz` (keeps
+> the 5 newest), and only then applies. It **fails the deploy** if `pg_dump` is
+> missing — one-time VM prep: `sudo apt install -y postgresql-client`. The dump is
+> belt-and-suspenders; Neon PITR/branching is the real restore mechanism.
 
 ### Manual fallback (CI down, or a hand hotfix)
 

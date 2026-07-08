@@ -1,4 +1,4 @@
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from django.db import connection
 
 
@@ -13,7 +13,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from events.models import BetterAuthUser, NewsletterSubscriber, UserProfile, BusinessProfile
+        from events.models import BetterAuthUser, BusinessProfile, NewsletterSubscriber, UserProfile
 
         email = options["email"].strip().lower()
 

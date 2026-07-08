@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
+from events.views import business_detail, businesses, me, my_business, subscribe
 from ingestion.views import (
     admin_docs,
     cron_ingest,
@@ -17,7 +18,6 @@ from ingestion.views import (
     publish_approved_admin,
     publish_approved_events,
 )
-from events.views import subscribe, me, businesses, business_detail, my_business
 
 urlpatterns = [
     path("events/", include("events.urls")),

@@ -8,7 +8,7 @@ only the network fetch of the signing key.
 
 import contextlib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
@@ -44,7 +44,7 @@ class AuthBridgeTests(TestCase):
 
     def _token_for(self, sub):
         return jwt.encode(
-            {"sub": str(sub), "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+            {"sub": str(sub), "exp": datetime.now(UTC) + timedelta(hours=1)},
             self.private_key,
             algorithm="RS256",
         )
@@ -62,7 +62,7 @@ class AuthBridgeTests(TestCase):
             yield
 
     def _add_credential(self, user):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         BetterAuthAccount.objects.create(
             id=uuid.uuid4().hex,
             account_id=uuid.uuid4().hex,

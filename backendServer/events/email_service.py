@@ -1,11 +1,11 @@
-import os
 import logging
+import os
 from datetime import timedelta
-from django.utils import timezone
-from django.template.loader import render_to_string
 
 import brevo_python
 from brevo_python.rest import ApiException
+from django.template.loader import render_to_string
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def _build_recipients(frequency: str) -> list[dict]:
     NewsletterSubscriber rows when both share an email address. UserProfile
     subscribers get tag-filtered content; anonymous subscribers get everything.
     """
-    from .models import UserProfile, NewsletterSubscriber
+    from .models import NewsletterSubscriber, UserProfile
 
     pref_map = {"WEEKLY": "WEEKLY", "MONTHLY": "MONTHLY"}
     db_pref = pref_map[frequency]

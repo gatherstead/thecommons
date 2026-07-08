@@ -1,7 +1,7 @@
 """runner.run_submission state-machine tests with _run_target stubbed, so no
 Playwright/browser launches (that heavy path lives in test_mock_adapter.py)."""
 
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
 from unittest import mock
 
 from django.test import TestCase, tag
@@ -16,7 +16,7 @@ def make_submission(site_keys, status="running", dry_run=False):
         client_label="test",
         title="T",
         description="D",
-        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
+        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=UTC),
         venue_name="V",
         address_line1="1 Main St",
         city="Pittsboro",

@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from django.test import TestCase, tag
 
 from ingestion.deduplicator import dedup_all_pending, find_duplicate
 from ingestion.models import StagedEvent
 
-START = datetime(2099, 6, 1, 18, 0, tzinfo=timezone.utc)
+START = datetime(2099, 6, 1, 18, 0, tzinfo=UTC)
 
 
 @tag("db")

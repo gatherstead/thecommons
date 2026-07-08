@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from django.test import TestCase, tag
 
@@ -6,7 +6,7 @@ from events.models import Event, Town
 from ingestion.models import StagedEvent
 from ingestion.services import publish_all_approved
 
-START = datetime(2099, 6, 1, 18, 0, tzinfo=timezone.utc)
+START = datetime(2099, 6, 1, 18, 0, tzinfo=UTC)
 
 
 @tag("db")

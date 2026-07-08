@@ -1,4 +1,4 @@
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
 
 from django.test import TestCase, tag
 
@@ -11,7 +11,7 @@ def make_submission(status="queued"):
         client_label="test",
         title="T",
         description="D",
-        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
+        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=UTC),
         venue_name="V",
         address_line1="1 Main St",
         city="Pittsboro",

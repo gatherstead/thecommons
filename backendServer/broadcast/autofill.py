@@ -7,9 +7,8 @@ import json
 import logging
 import time
 
-from google import genai
-
 from django.conf import settings
+from google import genai
 
 from broadcast.routing import CATEGORIES, LOCALITIES
 

@@ -6,7 +6,7 @@ Skipped automatically when the Playwright browser is not installed.
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
 
 from django.test import TestCase, override_settings, tag
 
@@ -34,8 +34,8 @@ def make_event():
     return CanonicalEvent(
         title="International Dance Night @ The Plant",
         description="Live international music and social dancing.",
-        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
-        end_datetime=datetime(2026, 7, 10, 22, 0, tzinfo=dt_timezone.utc),
+        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=UTC),
+        end_datetime=datetime(2026, 7, 10, 22, 0, tzinfo=UTC),
         venue_name="The Plant",
         address_line1="220 Lorax Ln",
         city="Pittsboro",
@@ -103,7 +103,7 @@ class WorkerPipelineTest(TestCase):
                 client_label="test",
                 title="T",
                 description="D",
-                start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
+                start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=UTC),
                 venue_name="V",
                 address_line1="1 Main St",
                 city="Pittsboro",

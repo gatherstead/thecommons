@@ -1,7 +1,7 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
 
-from .models import Tag, Town, UserProfile, Event, NewsletterSubscriber, BusinessProfile
+from .models import BusinessProfile, Event, NewsletterSubscriber, Tag, Town, UserProfile
 
 
 @admin.register(Tag)

@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
 from django.test import TestCase, tag
@@ -32,7 +32,7 @@ class DirectIngestTests(TestCase):
             raw_title="Raw Concert",
             raw_description="A show",
             raw_location="Cat's Cradle, Carrboro, NC",
-            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=timezone.utc),
+            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # avoids fetch_page_text network call
             source_uid="direct-uid-1",
         )

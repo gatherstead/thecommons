@@ -5,15 +5,15 @@ from datetime import date
 from celery import shared_task
 from django.core.management import call_command
 
-from ingestion.importers.ics_importer import poll_all_ics_sources
-from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
+from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import (
     auto_publish_safe_events,
     ingest_direct_submission,
     publish_all_approved,
 )
+from ingestion.standardizer import standardize_all_unprocessed
 
 logger = logging.getLogger(__name__)
 

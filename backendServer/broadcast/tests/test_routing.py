@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from django.test import SimpleTestCase, tag
 
@@ -13,7 +13,7 @@ def make_event(locality, categories):
     return CanonicalEvent(
         title="t",
         description="d",
-        start_datetime=datetime(2026, 7, 1, 19, 0, tzinfo=timezone.utc),
+        start_datetime=datetime(2026, 7, 1, 19, 0, tzinfo=UTC),
         venue_name="v",
         address_line1="1 Main St",
         zip="27312",

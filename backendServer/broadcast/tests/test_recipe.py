@@ -1,6 +1,6 @@
 """Recipe shape + conditional-field tests. No DB — pure adapter logic."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from django.test import SimpleTestCase, tag
@@ -197,20 +197,20 @@ def _submission(start_utc, end_utc=None, all_day=False):
 class TimezoneTest(SimpleTestCase):
     def test_utc_storage_formats_as_eastern_wall_clock(self):
         # 4pm Eastern (EDT) is stored as 20:00 UTC; it must render as 4:00 PM.
-        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=UTC))
         ev = event_from_submission(sub)
         self.assertEqual(h.format_time(ev.start_datetime), "4:00 PM")
 
     def test_eastern_conversion_can_shift_the_date(self):
         # 11pm Eastern on the 10th is 03:00 UTC on the 11th — the date must
         # follow the local day, not the UTC day.
-        sub = _submission(datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 11, 3, 0, tzinfo=UTC))
         ev = event_from_submission(sub)
         self.assertEqual(h.format_date(ev.start_datetime), "07/10/2026")
         self.assertEqual(h.format_time(ev.start_datetime), "11:00 PM")
 
     def test_recipe_time_value_is_local(self):
-        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=UTC))
         recipe = get_adapter("triangle_on_the_cheap").recipe(event_from_submission(sub))
         start = next(f for f in recipe["fields"] if f["selector"] == "#input_5_10")
         self.assertEqual(start["value"], "4:00 PM")

@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Event, Tag, Town, Category, BusinessProfile
+
+from .models import BusinessProfile, Category, Event, Tag, Town
 
 
 class EventSerializer(serializers.ModelSerializer):

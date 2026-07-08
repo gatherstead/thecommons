@@ -11,16 +11,15 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_protect
 
 from events.models import Event, Town
+from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
 from ingestion.models import EventSource, StagedEvent
-from ingestion.standardizer import standardize_all_unprocessed
-from ingestion.deduplicator import dedup_all_pending
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
+from ingestion.standardizer import standardize_all_unprocessed
 
 from .pipeline_runner import _event_dict, run_pipeline_into_queue
 from .sse import sse_frame
-
 
 # ── SSRF guard ────────────────────────────────────────────────────────────────
 

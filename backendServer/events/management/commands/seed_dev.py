@@ -6,7 +6,6 @@ from django.utils import timezone
 
 from events.models import Category, Event, Tag, Town
 
-
 TOWNS = [
     ("carrboro", "Carrboro"),
     ("chapel-hill", "Chapel Hill"),

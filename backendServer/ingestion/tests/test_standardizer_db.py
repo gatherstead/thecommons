@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
 from django.test import TestCase, tag
@@ -19,7 +19,7 @@ class StandardizerTests(TestCase):
             raw_title="raw concert",
             raw_description="a show",
             raw_location="somewhere",
-            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=timezone.utc),
+            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # empty avoids fetch_page_text making a network call
             source_uid="uid-1",
         )

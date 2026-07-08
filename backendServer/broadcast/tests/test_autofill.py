@@ -10,8 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase, TestCase, override_settings
-from django.test import tag
+from django.test import SimpleTestCase, TestCase, override_settings, tag
 from rest_framework.test import APIClient
 
 from broadcast.access import hash_code

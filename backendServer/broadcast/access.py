@@ -9,10 +9,10 @@ import hashlib
 import hmac
 from dataclasses import dataclass, field
 
-from backend.jwt_auth import verify_better_auth_jwt
-from broadcast.models import AccessCode, BroadcastAccess
 from django.utils import timezone
 
+from backend.jwt_auth import verify_better_auth_jwt
+from broadcast.models import AccessCode, BroadcastAccess
 
 # ---------------------------------------------------------------------------
 # DB-backed access layer
@@ -34,7 +34,7 @@ def hash_code(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def resolve_access(request, draft_id: str | None = None) -> AccessResult:
+def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noqa: C901  # tiered auth resolution; complexity is inherent
     """Resolve tiered access from a request.
 
     Resolution order:

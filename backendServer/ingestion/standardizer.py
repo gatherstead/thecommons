@@ -5,9 +5,8 @@ import time
 
 import requests
 from bs4 import BeautifulSoup
-from google import genai
-
 from django.conf import settings
+from google import genai
 
 from ingestion.models import RawEvent, StagedEvent
 
@@ -92,7 +91,7 @@ def fetch_page_text(url: str, max_chars: int = 6000) -> str:
         return ""
 
 
-def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:
+def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:  # noqa: C901  # LLM standardization with fallbacks; complexity is inherent
     """
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """

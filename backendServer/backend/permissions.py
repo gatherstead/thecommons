@@ -38,7 +38,7 @@ class BearerTokenAuthentication(BaseAuthentication):
         try:
             user = BetterAuthUser.objects.get(id=user_id)
         except BetterAuthUser.DoesNotExist:
-            raise AuthenticationFailed("Unknown user")
+            raise AuthenticationFailed("Unknown user") from None
 
         return (user, claims)
 

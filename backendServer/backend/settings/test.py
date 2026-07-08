@@ -1,6 +1,6 @@
 import os
 
-from .dev import *
+from .dev import *  # noqa: F403  # Django settings override files use star imports by convention
 
 # Inherits dev.py's DATABASE_URL -> Postgres parsing. Django auto-creates a
 # throwaway test_<dbname> on that server, so the suite never touches dev data.
@@ -10,7 +10,7 @@ from .dev import *
 # drop fails at teardown with "database is being accessed by other users". The
 # direct endpoint is the pooler host minus the "-pooler" suffix; rewrite to it
 # so the throwaway test_<dbname> can be created and dropped cleanly.
-DATABASES["default"]["HOST"] = DATABASES["default"]["HOST"].replace("-pooler", "")
+DATABASES["default"]["HOST"] = DATABASES["default"]["HOST"].replace("-pooler", "")  # noqa: F405  # star import is intentional
 
 # Central neon_auth handling: the managed=False BetterAuth mirrors aren't built
 # by the normal test-DB setup, so a custom runner creates the schema + table.

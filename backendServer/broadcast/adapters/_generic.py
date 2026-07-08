@@ -60,7 +60,7 @@ def _try_fill(page, spec: FieldSpec, value: str, timeout_ms: int) -> bool:
             return False
 
 
-def standard_fill_and_submit(
+def standard_fill_and_submit(  # noqa: C901  # generic form fill; complexity is inherent to field-by-field dispatch
     adapter,
     page,
     ev: CanonicalEvent,

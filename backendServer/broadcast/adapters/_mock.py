@@ -32,7 +32,7 @@ class MockSiteAdapter(SiteAdapter):
     requires_auth = False
     eligibility = Eligibility(localities=frozenset(), categories=frozenset())
 
-    def fill_and_submit(self, page, ev, ctx: RunContext) -> TargetResult:
+    def fill_and_submit(self, page, ev, ctx: RunContext) -> TargetResult:  # noqa: C901  # Playwright form fill; complexity is inherent
         page.goto(self.submission_url, timeout=ctx.timeout_ms)
 
         page.get_by_label("Event Title").fill(ev.title)

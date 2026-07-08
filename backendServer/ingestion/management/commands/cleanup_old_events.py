@@ -14,13 +14,15 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         now = timezone.now()
 
-        # 1. Delete past staged events — but keep approved ones not yet published to the Events table
+        # 1. Delete past staged events — but keep approved ones
+        #    not yet published to the Events table
         staged_qs = StagedEvent.objects.filter(start_datetime__lt=now).exclude(
             status="approved", published_event__isnull=True
         )
         staged_deleted, _ = staged_qs.delete()
 
-        # 2. Delete past raw events — but keep those still backing an approved+unpublished staged event
+        # 2. Delete past raw events — but keep those still backing
+        #    an approved+unpublished staged event
         raw_qs = RawEvent.objects.filter(raw_start__lt=now).exclude(
             staged__status="approved", staged__published_event__isnull=True
         )

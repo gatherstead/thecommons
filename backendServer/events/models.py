@@ -1,4 +1,5 @@
 import uuid
+
 from django.db import models
 
 
@@ -39,7 +40,7 @@ class BetterAuthUser(models.Model):
     name = models.TextField()
     email = models.EmailField(unique=True)
     email_verified = models.BooleanField(db_column="emailVerified", default=False)
-    image = models.TextField(null=True, blank=True)
+    image = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema; column is nullable
     created_at = models.DateTimeField(db_column="createdAt")
     updated_at = models.DateTimeField(db_column="updatedAt")
     user_type = models.CharField(max_length=20, default="LOCAL")
@@ -62,13 +63,16 @@ class BetterAuthSession(models.Model):
     token = models.TextField(unique=True)
     created_at = models.DateTimeField(db_column="createdAt")
     updated_at = models.DateTimeField(db_column="updatedAt")
-    ip_address = models.TextField(db_column="ipAddress", null=True, blank=True)
-    user_agent = models.TextField(db_column="userAgent", null=True, blank=True)
+    ip_address = models.TextField(db_column="ipAddress", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    user_agent = models.TextField(db_column="userAgent", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
     user_id = models.TextField(db_column="userId")
 
     class Meta:
         managed = False
         db_table = 'neon_auth"."session'
+
+    def __str__(self):
+        return f"Session({self.user_id})"
 
 
 class BetterAuthAccount(models.Model):
@@ -76,23 +80,26 @@ class BetterAuthAccount(models.Model):
     account_id = models.TextField(db_column="accountId")
     provider_id = models.TextField(db_column="providerId")
     user_id = models.TextField(db_column="userId")
-    access_token = models.TextField(db_column="accessToken", null=True, blank=True)
-    refresh_token = models.TextField(db_column="refreshToken", null=True, blank=True)
-    id_token = models.TextField(db_column="idToken", null=True, blank=True)
+    access_token = models.TextField(db_column="accessToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    refresh_token = models.TextField(db_column="refreshToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    id_token = models.TextField(db_column="idToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
     access_token_expires_at = models.DateTimeField(
         db_column="accessTokenExpiresAt", null=True, blank=True
     )
     refresh_token_expires_at = models.DateTimeField(
         db_column="refreshTokenExpiresAt", null=True, blank=True
     )
-    scope = models.TextField(null=True, blank=True)
-    password = models.TextField(null=True, blank=True)
+    scope = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    password = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
     created_at = models.DateTimeField(db_column="createdAt")
     updated_at = models.DateTimeField(db_column="updatedAt")
 
     class Meta:
         managed = False
         db_table = 'neon_auth"."account'
+
+    def __str__(self):
+        return f"Account({self.provider_id}/{self.user_id})"
 
 
 class BetterAuthVerification(models.Model):
@@ -107,6 +114,9 @@ class BetterAuthVerification(models.Model):
         managed = False
         db_table = 'neon_auth"."verification'
 
+    def __str__(self):
+        return f"Verification({self.identifier})"
+
 
 class BetterAuthJwks(models.Model):
     id = models.TextField(primary_key=True)
@@ -117,6 +127,9 @@ class BetterAuthJwks(models.Model):
     class Meta:
         managed = False
         db_table = 'neon_auth"."jwks'
+
+    def __str__(self):
+        return f"Jwks({self.id})"
 
 
 class UserProfile(models.Model):

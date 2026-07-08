@@ -1,7 +1,8 @@
 """DB-tier tests for broadcast management commands.
 
 Run with:
-    DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test broadcast.tests.test_commands_db
+    DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test \
+        broadcast.tests.test_commands_db
 """
 
 from io import StringIO
@@ -9,10 +10,9 @@ from io import StringIO
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import RequestFactory, TestCase, tag
-from django.utils import timezone
 
 from broadcast.access import hash_code, resolve_access
-from broadcast.models import AccessCode, AccessCodeUse, BroadcastAccess
+from broadcast.models import AccessCode, BroadcastAccess
 
 
 def _call(cmd, *args, **kwargs):

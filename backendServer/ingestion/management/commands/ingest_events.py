@@ -4,11 +4,11 @@ from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
 
-from ingestion.importers.ics_importer import poll_all_ics_sources
-from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
+from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
+from ingestion.standardizer import standardize_all_unprocessed
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class Command(BaseCommand):
             try:
                 n_str, m_str = shard_arg.split("/")
                 n, m = int(n_str), int(m_str)
-            except ValueError:
-                raise CommandError(f"--shard must look like N/M (got {shard_arg!r})")
+            except ValueError as err:
+                raise CommandError(f"--shard must look like N/M (got {shard_arg!r})") from err
             if m <= 0 or n < 0 or n >= m:
                 raise CommandError(f"--shard N/M requires 0 <= N < M and M > 0 (got {n}/{m})")
             return (n, m)
@@ -60,8 +60,10 @@ class Command(BaseCommand):
         if m_env:
             try:
                 m = int(m_env)
-            except ValueError:
-                raise CommandError(f"INGEST_SHARD_COUNT must be an integer (got {m_env!r})")
+            except ValueError as err:
+                raise CommandError(
+                    f"INGEST_SHARD_COUNT must be an integer (got {m_env!r})"
+                ) from err
             if m <= 1:
                 return None  # 1 (or less) disables sharding — poll everything.
             n = date.today().timetuple().tm_yday % m
@@ -69,7 +71,7 @@ class Command(BaseCommand):
 
         return None
 
-    def handle(self, *args, **options):
+    def handle(self, *args, **options):  # noqa: C901  # pipeline orchestration; complexity is inherent to multi-step process
         self.stdout.write("Starting event ingestion pipeline...\n")
 
         # Step 0: Clean up past events

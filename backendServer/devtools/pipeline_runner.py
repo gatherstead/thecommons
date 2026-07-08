@@ -1,5 +1,4 @@
 import logging
-import queue
 import threading
 import traceback
 from urllib.parse import urlparse
@@ -8,12 +7,12 @@ from django.db import connection, transaction
 from django.utils.text import slugify
 
 from events.models import Event, Town
+from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
 from ingestion.models import EventSource, RawEvent, StagedEvent
-from ingestion.standardizer import standardize_all_unprocessed
-from ingestion.deduplicator import dedup_all_pending
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
+from ingestion.standardizer import standardize_all_unprocessed
 
 from .sse import QueueLoggingHandler
 
@@ -137,7 +136,10 @@ def run_pipeline_into_queue(
                                 "warning",
                                 {
                                     "code": "town_mismatch",
-                                    "message": f"Gemini guessed town '{staged.town}' but you forced '{town.name}'",
+                                    "message": (
+                                        f"Gemini guessed town '{staged.town}'"
+                                        f" but you forced '{town.name}'"
+                                    ),
                                     "detail": {
                                         "staged_title": staged.title,
                                         "gemini_town": staged.town,

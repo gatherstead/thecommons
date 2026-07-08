@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import re
-from datetime import datetime, date
+from datetime import date, datetime
 
 import requests
 from django.utils import timezone
@@ -12,7 +12,7 @@ from ingestion.models import EventSource, RawEvent
 logger = logging.getLogger(__name__)
 
 
-def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
+def fetch_ics_feed(source: EventSource) -> list[RawEvent]:  # noqa: C901  # ICS parsing; complexity is inherent to datetime handling
     """
     Fetch an ICS feed URL, parse events, and save as RawEvent records.
     Returns list of newly created RawEvents.

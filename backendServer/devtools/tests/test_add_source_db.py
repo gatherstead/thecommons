@@ -56,7 +56,7 @@ class AddSourceViewTests(TestCase):
     @override_settings(DEBUG=True)
     @mock.patch("devtools.views._validate_url")
     def test_idempotent_same_url_no_duplicate(self, mock_validate):
-        """Posting the same URL twice returns created=False on the second call and leaves one row."""
+        """Same URL posted twice: created=False on second call and leaves one row."""
         url = "https://example.com/events.ics"
         add_source(self._request({"ics_url": url, "source_name": "Cal", "prompt_suffix": ""}))
 

@@ -1,26 +1,29 @@
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.pagination import PageNumberPagination
+from datetime import timedelta
+
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from datetime import timedelta
-from .models import (
-    Event,
-    Town,
-    Category,
-    UserProfile,
-    NewsletterSubscriber,
-    BetterAuthAccount,
-    BusinessProfile,
-)
-from .serializers import EventSerializer, BusinessProfileSerializer
-from . import cache as events_cache
+from rest_framework import status
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
 from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUser
 from ingestion.models import StagedEvent
+
+from . import cache as events_cache
+from .models import (
+    BetterAuthAccount,
+    BusinessProfile,
+    Category,
+    Event,
+    NewsletterSubscriber,
+    Town,
+    UserProfile,
+)
+from .serializers import BusinessProfileSerializer, EventSerializer
 
 PAGE_SIZE = 30
 
@@ -63,7 +66,7 @@ def getCategories(request):
 
 
 @api_view(["GET"])
-def getAll(request):
+def getAll(request):  # noqa: C901  # query-param filtering; complexity is inherent
     """
     List published events (paginated, page_size=30).
 
@@ -151,7 +154,7 @@ def getOne(request, event_id):
 @api_view(["GET", "PATCH", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
-def manageStagedEvent(request, event_id):
+def manageStagedEvent(request, event_id):  # noqa: C901  # multi-method CRUD view; complexity is inherent
     staged = get_object_or_404(StagedEvent, id=event_id, submitted_by=request.user)
 
     if request.method == "DELETE":
@@ -422,7 +425,7 @@ def getMyProfile(request):
 @api_view(["GET", "PATCH"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
-def me(request):
+def me(request):  # noqa: C901  # multi-field profile PATCH; complexity is inherent
     profile = (
         UserProfile.objects.filter(user_id=request.user.id)
         .select_related("user")

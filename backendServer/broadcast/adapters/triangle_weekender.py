@@ -300,7 +300,7 @@ class TriangleWeekenderAdapter(SiteAdapter):
         )
         return specs
 
-    def fill_and_submit(self, page, ev, ctx):
+    def fill_and_submit(self, page, ev, ctx):  # noqa: C901  # Playwright form fill; complexity is inherent
         page.goto(self.submission_url, timeout=ctx.timeout_ms)
         page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         h.dismiss_consent(page)

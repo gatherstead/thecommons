@@ -29,7 +29,7 @@ class Command(BaseCommand):
             try:
                 code = AccessCode.objects.get(pk=int(value))
             except AccessCode.DoesNotExist:
-                raise CommandError(f"No access code with id={value}.")
+                raise CommandError(f"No access code with id={value}.") from None
         else:
             # Match by exact label.
             matches = AccessCode.objects.filter(label=value)

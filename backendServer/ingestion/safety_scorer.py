@@ -3,9 +3,8 @@ import logging
 import os
 import time
 
-from google import genai
-
 from django.conf import settings
+from google import genai
 
 from ingestion.models import StagedEvent
 
@@ -60,7 +59,8 @@ def score_event(staged: StagedEvent, prompt_suffix: str = "") -> tuple[float, st
                 if "503" in str(e) or "UNAVAILABLE" in str(e):
                     wait = 2**attempt
                     logger.warning(
-                        f"[{model}] 503 on attempt {attempt + 1}/{max_retries}, retrying in {wait}s..."
+                        f"[{model}] 503 on attempt {attempt + 1}/{max_retries},"
+                        f" retrying in {wait}s..."
                     )
                     time.sleep(wait)
                 else:

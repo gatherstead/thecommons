@@ -8,7 +8,7 @@ from events.email_service import send_email
 
 
 class Command(BaseCommand):
-    help = "Render the weekly digest template with 5 upcoming events and send it to one address (for testing template + delivery)."
+    help = "Render the weekly digest and send it to one address (tests template + delivery)."
 
     def add_arguments(self, parser):
         parser.add_argument(

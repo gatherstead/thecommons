@@ -2,7 +2,7 @@ import logging
 
 from django.db import transaction
 
-from events.models import BetterAuthUser, Event, Tag, Town, Category
+from events.models import BetterAuthUser, Category, Event, Tag, Town
 from ingestion.deduplicator import find_duplicate
 from ingestion.models import RawEvent, StagedEvent
 from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD, score_event
@@ -11,7 +11,7 @@ from ingestion.standardizer import standardize_event
 logger = logging.getLogger(__name__)
 
 
-def publish_all_approved(source=None, force_town=None):
+def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inherent pipeline complexity
     """
     Atomically moves all approved StagedEvents into the Events table,
     then deletes them from the staged table.
@@ -47,7 +47,8 @@ def publish_all_approved(source=None, force_town=None):
                     town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
                     if town_obj is None:
                         logger.warning(
-                            "Dropping staged event '%s' — no Town matches slug '%s' (gemini town=%r)",
+                            "Dropping staged event '%s' — no Town matches slug '%s'"
+                            " (gemini town=%r)",
                             staged.title,
                             town_slug,
                             staged.town,

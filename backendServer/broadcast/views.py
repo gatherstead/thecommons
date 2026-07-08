@@ -95,7 +95,7 @@ def job_detail(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     return Response(job_payload(submission))
 
 
@@ -106,7 +106,7 @@ def job_retry(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
         return Response(
@@ -124,7 +124,7 @@ def job_submit_real(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
         return Response(
@@ -142,7 +142,7 @@ def job_cancel(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     skipped = cancel_submission(submission)
     return Response(
         {
@@ -162,7 +162,7 @@ def job_screenshot(request, job_id, site_key):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     target = submission.targets.filter(site_key=site_key).first()
     if not target or not target.screenshot_path:
         raise Http404
@@ -188,7 +188,7 @@ def job_manual_recipe(request, job_id, site_key):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     target = submission.targets.filter(site_key=site_key).first()
     if not target:
         raise Http404

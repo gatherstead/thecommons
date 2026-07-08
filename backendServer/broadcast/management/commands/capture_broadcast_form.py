@@ -63,7 +63,7 @@ class Command(BaseCommand):
             help="extra seconds to wait before dumping (lets timed popups appear)",
         )
 
-    def handle(self, *args, **options):
+    def handle(self, *args, **options):  # noqa: C901  # command dispatch; complexity is inherent
         key = options["site_key"]
         site = SITES.get(key)
         if site is None:

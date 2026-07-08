@@ -1,6 +1,7 @@
 import os
-from urllib.parse import urlparse, parse_qsl
-from .base import *
+from urllib.parse import parse_qsl, urlparse
+
+from .base import *  # noqa: F403  # Django settings override files use star imports by convention
 
 DEBUG = False
 

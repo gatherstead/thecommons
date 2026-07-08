@@ -19,6 +19,10 @@ class DirectSubmitEventSerializer(serializers.Serializer):
     event_url = serializers.URLField(required=False, allow_blank=True, default="")
     price = serializers.CharField(max_length=60, required=False, allow_blank=True, default="")
     is_free = serializers.BooleanField(required=False, default=False)
-    organizer_name = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    organizer_name = serializers.CharField(
+        max_length=200, required=False, allow_blank=True, default=""
+    )
     contact_email = serializers.EmailField(required=False, allow_blank=True, default="")
-    contact_phone = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    contact_phone = serializers.CharField(
+        max_length=40, required=False, allow_blank=True, default=""
+    )

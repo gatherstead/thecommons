@@ -3,6 +3,7 @@
 Usage:
     python manage.py list_access_codes
 """
+
 from django.core.management.base import BaseCommand
 
 from broadcast.models import AccessCode
@@ -17,7 +18,9 @@ class Command(BaseCommand):
             self.stdout.write("No access codes found.")
             return
 
-        header = f"{'ID':>5}  {'HASH':8}  {'LABEL':<24}  {'TIER':4}  {'USES':10}  {'ACTIVE':6}  EXPIRY"
+        header = (
+            f"{'ID':>5}  {'HASH':8}  {'LABEL':<24}  {'TIER':4}  {'USES':10}  {'ACTIVE':6}  EXPIRY"
+        )
         self.stdout.write(header)
         self.stdout.write("-" * len(header))
 

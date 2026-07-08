@@ -12,6 +12,7 @@ Two tests mirror the two topologies this app actually runs under:
 Neither test uses @override_settings(RATELIMIT_ENABLE=False) -- that would
 disable the exact code path that crashed.
 """
+
 from django.test import SimpleTestCase, override_settings, tag
 from rest_framework.test import APIClient
 

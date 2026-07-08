@@ -12,6 +12,7 @@ every django-celery-beat PeriodicTask (enabled + last-run freshness). Exits
 non-zero if any *critical* check fails so it can feed monitoring; staleness is a
 warning, not a failure.
 """
+
 import json
 import os
 
@@ -36,21 +37,29 @@ DEFAULT_STALENESS_HOURS = {
 
 
 class Command(BaseCommand):
-    help = "Probe DB, Redis broker, cache, Celery worker, and beat schedules for the VM healthcheck."
+    help = (
+        "Probe DB, Redis broker, cache, Celery worker, and beat schedules for the VM healthcheck."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--json", action="store_true", dest="as_json",
+            "--json",
+            action="store_true",
+            dest="as_json",
             help="Emit a JSON array of {status, name, detail} instead of pipe-delimited lines.",
         )
         parser.add_argument(
-            "--celery-timeout", type=float, default=1.0,
+            "--celery-timeout",
+            type=float,
+            default=1.0,
             help="Seconds to wait for a Celery worker to answer control.ping (default 1.0).",
         )
         parser.add_argument(
-            "--require-prod", action="store_true", dest="require_prod",
+            "--require-prod",
+            action="store_true",
+            dest="require_prod",
             help="Assert production-safe settings (DEBUG off, public ALLOWED_HOSTS). "
-                 "Set by deploy/healthcheck.sh; catches dev settings leaking into prod.",
+            "Set by deploy/healthcheck.sh; catches dev settings leaking into prod.",
         )
 
     def handle(self, *args, **options):
@@ -63,9 +72,9 @@ class Command(BaseCommand):
         results.extend(self._check_periodic_tasks())
 
         if options["as_json"]:
-            self.stdout.write(json.dumps(
-                [{"status": s, "name": n, "detail": d} for s, n, d in results]
-            ))
+            self.stdout.write(
+                json.dumps([{"status": s, "name": n, "detail": d} for s, n, d in results])
+            )
         else:
             for status, name, detail in results:
                 self.stdout.write(f"{status}|{name}|{detail}")

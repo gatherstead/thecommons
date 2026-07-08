@@ -9,7 +9,11 @@ from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.safety_scorer import score_all_unscored
-from ingestion.services import auto_publish_safe_events, ingest_direct_submission, publish_all_approved
+from ingestion.services import (
+    auto_publish_safe_events,
+    ingest_direct_submission,
+    publish_all_approved,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +24,7 @@ def _resolve_env_shard():
     Mirrors the env branch of the ingest_events command's --shard handling:
     n rotates daily as (day_of_year % m) so each day polls a different slice.
     """
-    m_env = os.environ.get('INGEST_SHARD_COUNT')
+    m_env = os.environ.get("INGEST_SHARD_COUNT")
     if not m_env:
         return None
     try:
@@ -55,7 +59,7 @@ def run_ingestion_pipeline(self):
                 first_error = e
             return None
 
-    step("cleanup", lambda: call_command('cleanup_old_events'))
+    step("cleanup", lambda: call_command("cleanup_old_events"))
 
     shard = _resolve_env_shard()
     new_count = step("poll", lambda: poll_all_ics_sources(shard=shard))
@@ -78,7 +82,8 @@ def run_ingestion_pipeline(self):
     if result is not None:
         logger.info(
             "run_ingestion_pipeline: %s auto-published, %s held for review",
-            result['auto_approved'], result['held_for_review'],
+            result["auto_approved"],
+            result["held_for_review"],
         )
 
     if first_error is not None:

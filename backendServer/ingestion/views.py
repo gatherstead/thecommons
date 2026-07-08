@@ -11,41 +11,45 @@ from rest_framework.response import Response
 from backend.permissions import BearerTokenAuthentication
 from ingestion.models import EventSource, RawEvent
 from ingestion.serializers import DirectSubmitEventSerializer
-from ingestion.tasks import ingest_direct_submission_task, publish_all_approved_task, run_ingestion_pipeline
+from ingestion.tasks import (
+    ingest_direct_submission_task,
+    publish_all_approved_task,
+    run_ingestion_pipeline,
+)
 
 
 @staff_member_required
 def pipeline_docs(request):
     """Admin page: ingestion pipeline documentation."""
-    return render(request, 'docs/pipeline_docs.html')
+    return render(request, "docs/pipeline_docs.html")
 
 
 @staff_member_required
 def admin_docs(request):
     """Admin page: admin backend documentation."""
-    return render(request, 'docs/admin_docs.html')
+    return render(request, "docs/admin_docs.html")
 
 
 @staff_member_required
 def publish_approved_admin(request):
     """Admin page: manually publish all approved staged events (runs in the background)."""
     queued = False
-    if request.method == 'POST':
+    if request.method == "POST":
         publish_all_approved_task.delay()
         queued = True
-    return render(request, 'docs/publish_approved.html', {'queued': queued})
+    return render(request, "docs/publish_approved.html", {"queued": queued})
 
 
 @csrf_exempt
 @require_GET
 def cron_ingest(request):
     """Endpoint for cron to trigger the ingestion pipeline (runs async on a worker)."""
-    auth = request.headers.get('Authorization', '')
+    auth = request.headers.get("Authorization", "")
     if auth != f"Bearer {settings.CRON_SECRET}":
-        return JsonResponse({'error': 'unauthorized'}, status=401)
+        return JsonResponse({"error": "unauthorized"}, status=401)
 
     result = run_ingestion_pipeline.delay()
-    return JsonResponse({'status': 'queued', 'task_id': result.id}, status=202)
+    return JsonResponse({"status": "queued", "task_id": result.id}, status=202)
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
@@ -106,9 +110,9 @@ def publish_approved_events(request):
 
     If anything fails, the entire operation is rolled back.
     """
-    auth = request.headers.get('Authorization', '')
+    auth = request.headers.get("Authorization", "")
     if auth != f"Bearer {settings.THE_COMMONS_API_KEY}":
-        return JsonResponse({'error': 'unauthorized'}, status=401)
+        return JsonResponse({"error": "unauthorized"}, status=401)
 
     result = publish_all_approved_task.delay()
-    return JsonResponse({'status': 'queued', 'task_id': result.id}, status=202)
+    return JsonResponse({"status": "queued", "task_id": result.id}, status=202)

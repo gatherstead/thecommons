@@ -24,12 +24,12 @@ from .sse import sse_frame
 
 # ── SSRF guard ────────────────────────────────────────────────────────────────
 
-_BLOCKED_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254'}
+_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
 
 
 def _validate_url(url):
     parsed = urlparse(url)
-    if parsed.scheme not in ('http', 'https'):
+    if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme must be http or https, got '{parsed.scheme}'")
 
     hostname = parsed.hostname
@@ -51,33 +51,34 @@ def _validate_url(url):
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
+
 def playground(request):
     if not settings.DEBUG:
         raise Http404
-    towns = list(Town.objects.order_by('name').values('slug', 'name'))
-    return render(request, 'devtools/playground.html', {'towns': towns})
+    towns = list(Town.objects.order_by("name").values("slug", "name"))
+    return render(request, "devtools/playground.html", {"towns": towns})
 
 
 def run_stream(request):
     if not settings.DEBUG:
         raise Http404
 
-    city = request.GET.get('city', '').strip()
-    ics_url = request.GET.get('ics_url', '').strip()
-    source_name = request.GET.get('source_name', '').strip()
-    limit_raw = request.GET.get('limit', '').strip()
+    city = request.GET.get("city", "").strip()
+    ics_url = request.GET.get("ics_url", "").strip()
+    source_name = request.GET.get("source_name", "").strip()
+    limit_raw = request.GET.get("limit", "").strip()
     limit = int(limit_raw) if limit_raw.isdigit() else None
-    prompt_suffix = request.GET.get('prompt_suffix', '').strip()
+    prompt_suffix = request.GET.get("prompt_suffix", "").strip()
 
     def _error_stream(message):
-        yield sse_frame('error', {'message': message, 'traceback': ''})
+        yield sse_frame("error", {"message": message, "traceback": ""})
 
     try:
         _validate_url(ics_url)
     except ValueError as exc:
         return StreamingHttpResponse(
             _error_stream(str(exc)),
-            content_type='text/event-stream',
+            content_type="text/event-stream",
         )
 
     q = queue.Queue()
@@ -85,12 +86,12 @@ def run_stream(request):
         target=run_pipeline_into_queue,
         args=(q,),
         kwargs={
-            'city_slug': city,
-            'ics_url': ics_url,
-            'source_name': source_name,
-            'dry_run': True,
-            'limit': limit,
-            'prompt_suffix': prompt_suffix,
+            "city_slug": city,
+            "ics_url": ics_url,
+            "source_name": source_name,
+            "dry_run": True,
+            "limit": limit,
+            "prompt_suffix": prompt_suffix,
         },
         daemon=True,
     )
@@ -99,13 +100,13 @@ def run_stream(request):
     def stream():
         while True:
             kind, payload = q.get()
-            if kind == '__end__':
+            if kind == "__end__":
                 break
             yield sse_frame(kind, payload)
 
-    resp = StreamingHttpResponse(stream(), content_type='text/event-stream')
-    resp['Cache-Control'] = 'no-cache'
-    resp['X-Accel-Buffering'] = 'no'
+    resp = StreamingHttpResponse(stream(), content_type="text/event-stream")
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
     return resp
 
 
@@ -114,18 +115,18 @@ def save_and_publish(request):
     if not settings.DEBUG:
         raise Http404
 
-    if request.method != 'POST':
-        return HttpResponseBadRequest('POST required')
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
 
-    city = request.POST.get('city', '').strip()
-    ics_url = request.POST.get('ics_url', '').strip()
-    source_name = request.POST.get('source_name', '').strip()
-    prompt_suffix = request.POST.get('prompt_suffix', '').strip()
+    city = request.POST.get("city", "").strip()
+    ics_url = request.POST.get("ics_url", "").strip()
+    source_name = request.POST.get("source_name", "").strip()
+    prompt_suffix = request.POST.get("prompt_suffix", "").strip()
 
     try:
         _validate_url(ics_url)
     except ValueError as exc:
-        return JsonResponse({'error': str(exc)}, status=400)
+        return JsonResponse({"error": str(exc)}, status=400)
 
     try:
         town = Town.objects.get(slug=city)
@@ -135,23 +136,23 @@ def save_and_publish(request):
             source, _ = EventSource.objects.get_or_create(
                 url=ics_url,
                 defaults={
-                    'name': effective_name,
-                    'source_type': 'ics',
-                    'active': True,
-                    'prompt_suffix': prompt_suffix,
+                    "name": effective_name,
+                    "source_type": "ics",
+                    "active": True,
+                    "prompt_suffix": prompt_suffix,
                 },
             )
 
             # Always refresh prompt_suffix so updates on existing rows take effect
             source.prompt_suffix = prompt_suffix
-            source.save(update_fields=['prompt_suffix'])
+            source.save(update_fields=["prompt_suffix"])
 
             fetch_ics_feed(source)
             standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
 
             for staged in StagedEvent.objects.filter(raw_event__source=source):
                 staged.town = town.name
-                staged.save(update_fields=['town'])
+                staged.save(update_fields=["town"])
 
             dedup_all_pending(source=source)
             score_all_unscored(source=source, prompt_suffix=prompt_suffix)
@@ -165,42 +166,44 @@ def save_and_publish(request):
                 ).distinct()
             ]
 
-        return JsonResponse({'published': published, 'counts': counts})
+        return JsonResponse({"published": published, "counts": counts})
 
     except Town.DoesNotExist:
-        return JsonResponse({'error': f"Town '{city}' not found"}, status=400)
+        return JsonResponse({"error": f"Town '{city}' not found"}, status=400)
     except Exception as exc:
-        return JsonResponse({'error': str(exc)}, status=400)
+        return JsonResponse({"error": str(exc)}, status=400)
 
 
 @csrf_protect
 def add_source(request):
     if not settings.DEBUG:
         raise Http404
-    if request.method != 'POST':
-        return HttpResponseBadRequest('POST required')
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
 
-    ics_url = request.POST.get('ics_url', '').strip()
-    source_name = request.POST.get('source_name', '').strip()
-    prompt_suffix = request.POST.get('prompt_suffix', '').strip()
+    ics_url = request.POST.get("ics_url", "").strip()
+    source_name = request.POST.get("source_name", "").strip()
+    prompt_suffix = request.POST.get("prompt_suffix", "").strip()
 
     try:
         _validate_url(ics_url)
     except ValueError as exc:
-        return JsonResponse({'error': str(exc)}, status=400)
+        return JsonResponse({"error": str(exc)}, status=400)
 
     effective_name = source_name or urlparse(ics_url).hostname
     source, created = EventSource.objects.update_or_create(
         url=ics_url,
         defaults={
-            'name': effective_name,
-            'source_type': 'ics',
-            'active': True,
-            'prompt_suffix': prompt_suffix,
+            "name": effective_name,
+            "source_type": "ics",
+            "active": True,
+            "prompt_suffix": prompt_suffix,
         },
     )
-    return JsonResponse({
-        'created': created,
-        'source_id': source.id,
-        'name': source.name,
-    })
+    return JsonResponse(
+        {
+            "created": created,
+            "source_id": source.id,
+            "name": source.name,
+        }
+    )

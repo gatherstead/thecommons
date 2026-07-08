@@ -15,6 +15,7 @@ Two static fields remain: position (#input_5_3) and heard_about (#input_5_22).
 Field input_26 ("Email", autocomplete=new-password) is an anti-spam honeypot —
 intentionally left blank.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import TRIANGLE, Eligibility
@@ -44,28 +45,47 @@ def _end(ev):
 # Plain fillable fields. The anti-spam honeypot #input_5_26 is intentionally
 # absent here (filling it flags the submission as a bot).
 _RECIPE_FIELDS = [
-    RecipeField("#input_5_1", "text", lambda ev: ev.organizer_name, required=True,
-                label="Organization name"),
+    RecipeField(
+        "#input_5_1", "text", lambda ev: ev.organizer_name, required=True, label="Organization name"
+    ),
     RecipeField("#input_5_3", "text", lambda ev: _POSITION, label="Your position"),
-    RecipeField("#input_5_4", "text", lambda ev: ev.organizer_name, required=True,
-                label="Your name"),
-    RecipeField("#input_5_5", "text", lambda ev: ev.contact_email, required=True,
-                label="Your email"),
+    RecipeField(
+        "#input_5_4", "text", lambda ev: ev.organizer_name, required=True, label="Your name"
+    ),
+    RecipeField(
+        "#input_5_5", "text", lambda ev: ev.contact_email, required=True, label="Your email"
+    ),
     RecipeField("#input_5_6", "text", lambda ev: ev.title, required=True, label="Event title"),
-    RecipeField("#input_5_7", "textarea", lambda ev: ev.description, required=True,
-                label="Event description"),
+    RecipeField(
+        "#input_5_7",
+        "textarea",
+        lambda ev: ev.description,
+        required=True,
+        label="Event description",
+    ),
     RecipeField("#input_5_8", "date", _dates, required=True, label="Date(s)"),
-    RecipeField("#input_5_10", "time", lambda ev: h.format_time(ev.start_datetime),
-                required=True, label="Start time"),
-    RecipeField("#input_5_9", "time", lambda ev: h.format_time(_end(ev)), required=True,
-                label="End time"),
+    RecipeField(
+        "#input_5_10",
+        "time",
+        lambda ev: h.format_time(ev.start_datetime),
+        required=True,
+        label="Start time",
+    ),
+    RecipeField(
+        "#input_5_9", "time", lambda ev: h.format_time(_end(ev)), required=True, label="End time"
+    ),
     RecipeField("#input_5_11", "text", lambda ev: ev.venue_name, required=True, label="Venue"),
     RecipeField("#input_5_13_1", "text", lambda ev: ev.address_line1, label="Address"),
     RecipeField("#input_5_13_3", "text", _city, label="City"),  # City ← Locality (per spec)
     RecipeField("#input_5_13_4", "text", lambda ev: ev.state, label="State"),
     RecipeField("#input_5_14", "text", lambda ev: ev.event_url, required=True, label="Event URL"),
-    RecipeField("#input_5_16", "text", lambda ev: "0" if ev.is_free else ev.price, required=True,
-                label="Cost"),
+    RecipeField(
+        "#input_5_16",
+        "text",
+        lambda ev: "0" if ev.is_free else ev.price,
+        required=True,
+        label="Cost",
+    ),
     RecipeField("#input_5_22", "text", lambda ev: _HEARD_ABOUT, label="How heard"),
 ]
 
@@ -90,19 +110,39 @@ class TriangleOnTheCheapAdapter(SiteAdapter):
         photo = "Yes" if has_image else "I'm not uploading a photo"
         ai = "No" if has_image else "I'm not uploading a photo"
         specs += [
-            RecipeField('input[name="input_17"][value="No"]', "radio", lambda ev: "No",
-                        recipe_only=True, label="Paid advertising info?"),
-            RecipeField(f'input[name="input_20"][value="{photo}"]', "radio",
-                        lambda ev, v=photo: v, recipe_only=True, label="Photo permission"),
-            RecipeField(f'input[name="input_25"][value="{ai}"]', "radio",
-                        lambda ev, v=ai: v, recipe_only=True, label="Was AI used?"),
+            RecipeField(
+                'input[name="input_17"][value="No"]',
+                "radio",
+                lambda ev: "No",
+                recipe_only=True,
+                label="Paid advertising info?",
+            ),
+            RecipeField(
+                f'input[name="input_20"][value="{photo}"]',
+                "radio",
+                lambda ev, v=photo: v,
+                recipe_only=True,
+                label="Photo permission",
+            ),
+            RecipeField(
+                f'input[name="input_25"][value="{ai}"]',
+                "radio",
+                lambda ev, v=ai: v,
+                recipe_only=True,
+                label="Was AI used?",
+            ),
         ]
         if has_image:
-            specs.append(RecipeField(
-                "#input_5_19", "file", lambda ev: ev.image_url, recipe_only=True,
-                label="Event image",
-                hint="upload the image manually — files can't be auto-filled",
-            ))
+            specs.append(
+                RecipeField(
+                    "#input_5_19",
+                    "file",
+                    lambda ev: ev.image_url,
+                    recipe_only=True,
+                    label="Event image",
+                    hint="upload the image manually — files can't be auto-filled",
+                )
+            )
         return specs
 
     def fill_and_submit(self, page, ev, ctx):
@@ -112,9 +152,11 @@ class TriangleOnTheCheapAdapter(SiteAdapter):
 
         missing = h.apply_specs(page, self.recipe_field_specs(ev), ev, ctx.timeout_ms)
         if missing:
-            return TargetResult(status="needs_manual",
-                                error="required fields unfilled: " + "; ".join(missing),
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="required fields unfilled: " + "; ".join(missing),
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         # Radio: "more info about paid advertising?" → No.
         _check_radio(page, "input_17", "No")
@@ -138,9 +180,11 @@ class TriangleOnTheCheapAdapter(SiteAdapter):
         # submit to suppress — dry run and real run alike defer to a human via
         # manual review. Always needs_manual (never "succeeded").
         note = "[DRY RUN] " if ctx.dry_run else ""
-        return TargetResult(status="needs_manual",
-                            error=note + "reCAPTCHA present; submit manually",
-                            screenshot_path=shot)
+        return TargetResult(
+            status="needs_manual",
+            error=note + "reCAPTCHA present; submit manually",
+            screenshot_path=shot,
+        )
 
 
 def _check_radio(page, name: str, value: str) -> None:

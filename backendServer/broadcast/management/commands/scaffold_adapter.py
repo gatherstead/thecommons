@@ -7,6 +7,7 @@ Writes broadcast/adapters/_scaffold/<site_key>/{schema.json,page.png,adapter.py.
 Step B (writing the real fill_and_submit) is the scaffolding skill —
 see broadcast/adapters/_scaffold/SKILL.md.
 """
+
 import json
 import pathlib
 
@@ -57,7 +58,7 @@ CAPTURE_JS = """
 }
 """
 
-DRAFT_TEMPLATE = '''from broadcast.adapters._generic import FieldSpec, standard_fill_and_submit
+DRAFT_TEMPLATE = """from broadcast.adapters._generic import FieldSpec, standard_fill_and_submit
 from broadcast.adapters.base import SiteAdapter
 from broadcast.routing import TRIANGLE, Eligibility
 
@@ -87,7 +88,7 @@ class {class_name}(SiteAdapter):
             image_label=None,        # TODO
             submit_button="Submit",  # TODO
         )
-'''
+"""
 
 
 class Command(BaseCommand):
@@ -118,18 +119,28 @@ class Command(BaseCommand):
 
         (out_dir / "schema.json").write_text(json.dumps(controls, indent=2))
 
-        field_stubs = "\n".join(
-            f'    # TODO map: {c["tag"]}[{c["type"]}] name={c["name"]!r} → '
-            f'FieldSpec({c["label"]!r}{", required=True" if c["required"] else ""}),'
-            for c in controls
-        ) or "    # (no controls detected — the form may render via JS after interaction)"
+        field_stubs = (
+            "\n".join(
+                f"    # TODO map: {c['tag']}[{c['type']}] name={c['name']!r} → "
+                f"FieldSpec({c['label']!r}{', required=True' if c['required'] else ''}),"
+                for c in controls
+            )
+            or "    # (no controls detected — the form may render via JS after interaction)"
+        )
         class_name = "".join(part.capitalize() for part in key.split("_")) + "Adapter"
-        (out_dir / "adapter.py.draft").write_text(DRAFT_TEMPLATE.format(
-            field_stubs=field_stubs, class_name=class_name, key=key, url=options["url"],
-        ))
+        (out_dir / "adapter.py.draft").write_text(
+            DRAFT_TEMPLATE.format(
+                field_stubs=field_stubs,
+                class_name=class_name,
+                key=key,
+                url=options["url"],
+            )
+        )
 
-        self.stdout.write(self.style.SUCCESS(
-            f"captured {len(controls)} controls → {out_dir}/\n"
-            "Next: run the scaffolding skill (broadcast/adapters/_scaffold/SKILL.md) "
-            "to turn the draft into a real adapter, then verify with broadcast_dry_run."
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"captured {len(controls)} controls → {out_dir}/\n"
+                "Next: run the scaffolding skill (broadcast/adapters/_scaffold/SKILL.md) "
+                "to turn the draft into a real adapter, then verify with broadcast_dry_run."
+            )
+        )

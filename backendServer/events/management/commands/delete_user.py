@@ -7,15 +7,15 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--email',
+            "--email",
             required=True,
-            help='Email address of the account to delete.',
+            help="Email address of the account to delete.",
         )
 
     def handle(self, *args, **options):
         from events.models import BetterAuthUser, NewsletterSubscriber, UserProfile, BusinessProfile
 
-        email = options['email'].strip().lower()
+        email = options["email"].strip().lower()
 
         # --- Django-side rows (no real FK constraints, so delete manually) ---
         try:
@@ -31,10 +31,12 @@ class Command(BaseCommand):
         # --- neon_auth schema (raw SQL — Django won't generate DDL for managed=False tables) ---
         # Cascade on neon_auth.user wipes session, account, and verification rows automatically.
         if user_id is None:
-            self.stdout.write(self.style.WARNING(
-                f"No neon_auth.user found for {email}. "
-                f"Cleaned up newsletter subscriber if present."
-            ))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"No neon_auth.user found for {email}. "
+                    f"Cleaned up newsletter subscriber if present."
+                )
+            )
             self.stdout.write(f"  newsletter rows deleted : {deleted_newsletter}")
             return
 
@@ -43,7 +45,9 @@ class Command(BaseCommand):
             neon_rows = cursor.rowcount
 
         self.stdout.write(self.style.SUCCESS(f"Deleted account: {email}"))
-        self.stdout.write(f"  neon_auth.user (+ cascaded session/account/verification) : {neon_rows}")
+        self.stdout.write(
+            f"  neon_auth.user (+ cascaded session/account/verification) : {neon_rows}"
+        )
         self.stdout.write(f"  UserProfile rows deleted    : {deleted_profile}")
         self.stdout.write(f"  BusinessProfile rows deleted: {deleted_biz}")
         self.stdout.write(f"  NewsletterSubscriber rows   : {deleted_newsletter}")

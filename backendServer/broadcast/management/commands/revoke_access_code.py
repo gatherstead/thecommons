@@ -4,6 +4,7 @@ Usage:
     python manage.py revoke_access_code "partner-x"
     python manage.py revoke_access_code 7
 """
+
 from django.core.management.base import BaseCommand, CommandError
 
 from broadcast.models import AccessCode
@@ -36,14 +37,10 @@ class Command(BaseCommand):
                 raise CommandError(f"No access code with label '{value}'.")
             active_matches = matches.filter(is_active=True)
             if active_matches.count() > 1:
-                lines = [
-                    f"Multiple active codes share label '{value}'. "
-                    "Revoke by id instead:"
-                ]
+                lines = [f"Multiple active codes share label '{value}'. Revoke by id instead:"]
                 for m in active_matches.order_by("id"):
                     lines.append(
-                        f"  id={m.id}  label='{m.label}'  "
-                        f"created={m.created_at.date().isoformat()}"
+                        f"  id={m.id}  label='{m.label}'  created={m.created_at.date().isoformat()}"
                     )
                 raise CommandError("\n".join(lines))
             if active_matches.exists():
@@ -63,7 +60,5 @@ class Command(BaseCommand):
         code.is_active = False
         code.save()
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Revoked code id={code.id} ('{code.label}', tier {code.tier})."
-            )
+            self.style.SUCCESS(f"Revoked code id={code.id} ('{code.label}', tier {code.tier}).")
         )

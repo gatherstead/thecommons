@@ -1,5 +1,6 @@
 """Pure UTC → America/New_York conversion (the '4pm→8pm' bug from
 docs/broadcast-handoff.md). No DB, no ORM."""
+
 import unittest
 from datetime import datetime, timezone as dt_timezone
 
@@ -10,7 +11,7 @@ from broadcast.schema import EVENT_TZ, _to_local
 from broadcast.serializers import CanonicalEventSerializer
 
 
-@tag('fast')
+@tag("fast")
 class ToLocalTests(unittest.TestCase):
     def test_summer_utc_converts_to_edt(self):
         # July → EDT (UTC-4): 20:00 UTC is 16:00 ET.
@@ -32,7 +33,7 @@ class ToLocalTests(unittest.TestCase):
         self.assertEqual(_to_local(naive), naive)
 
 
-@tag('fast')
+@tag("fast")
 class CanonicalEventSerializerTzTests(unittest.TestCase):
     _VALID_BASE = {
         "title": "Summer Test Event",

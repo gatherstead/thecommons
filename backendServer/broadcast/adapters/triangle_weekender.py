@@ -14,6 +14,7 @@ Form notes from the capture:
   submit button; we dismiss it before submitting.
 - No captcha on this form.
 """
+
 import difflib
 
 from broadcast.adapters import _helpers as h
@@ -29,34 +30,34 @@ _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
 # terms the Triangle Weekender's AJAX category dropdown understands. The
 # extension searches each term; unmatched terms are skipped silently.
 _WK_CATEGORY_MAP: dict[str, str] = {
-    "music":       "Music",
-    "arts":        "Arts",
+    "music": "Music",
+    "arts": "Arts",
     "family-kids": "Family",
-    "wellness":    "Wellness",
-    "food-drink":  "Food",
-    "festival":    "Festival",
-    "market":      "Market",
-    "literary":    "Literary",
-    "community":   "Community",
-    "nightlife":   "Nightlife",
-    "education":   "Education",
+    "wellness": "Wellness",
+    "food-drink": "Food",
+    "festival": "Festival",
+    "market": "Market",
+    "literary": "Literary",
+    "community": "Community",
+    "nightlife": "Nightlife",
+    "education": "Education",
 }
 
 # Same search terms for the post_tag AJAX dropdown. Tags are free-form so the
 # site may have exactly these as tags, or may not — the extension skips
 # unmatched terms.
 _WK_TAG_MAP: dict[str, str] = {
-    "music":       "Music",
-    "arts":        "Arts",
+    "music": "Music",
+    "arts": "Arts",
     "family-kids": "Family",
-    "wellness":    "Wellness",
-    "food-drink":  "Food",
-    "festival":    "Festival",
-    "market":      "Market",
-    "literary":    "Literary",
-    "community":   "Community",
-    "nightlife":   "Nightlife",
-    "education":   "Education",
+    "wellness": "Wellness",
+    "food-drink": "Food",
+    "festival": "Festival",
+    "market": "Market",
+    "literary": "Literary",
+    "community": "Community",
+    "nightlife": "Nightlife",
+    "education": "Education",
 }
 
 
@@ -83,9 +84,14 @@ def _city(ev) -> str:
 
 
 _COUNTY_MAP = {
-    "durham": "Durham", "chatham": "Chatham", "pittsboro": "Chatham",
-    "chapel-hill": "Orange", "carrboro": "Orange",
-    "raleigh": "Wake", "cary": "Wake", "wake": "Wake",
+    "durham": "Durham",
+    "chatham": "Chatham",
+    "pittsboro": "Chatham",
+    "chapel-hill": "Orange",
+    "carrboro": "Orange",
+    "raleigh": "Wake",
+    "cary": "Wake",
+    "wake": "Wake",
 }
 
 
@@ -105,10 +111,16 @@ def _end(ev):
 # terms are event-dependent or non-fillable — see recipe_field_specs().
 _PLAIN_FIELDS = [
     RecipeField("#post_title", "text", lambda ev: ev.title, required=True, label="Event title"),
-    RecipeField("#post_content", "textarea", lambda ev: ev.description, required=True,
-                label="Description"),
-    RecipeField("#EventStartDate", "date", lambda ev: _wk_date(ev.start_datetime), required=True,
-                label="Start date"),
+    RecipeField(
+        "#post_content", "textarea", lambda ev: ev.description, required=True, label="Description"
+    ),
+    RecipeField(
+        "#EventStartDate",
+        "date",
+        lambda ev: _wk_date(ev.start_datetime),
+        required=True,
+        label="Start date",
+    ),
     RecipeField("#EventEndDate", "date", lambda ev: _wk_date(_end(ev)), label="End date"),
     RecipeField("#EventURL", "text", lambda ev: ev.event_url, required=True, label="Event URL"),
     RecipeField("#EventCost", "text", lambda ev: "0" if ev.is_free else ev.price, label="Cost"),
@@ -132,69 +144,160 @@ class TriangleWeekenderAdapter(SiteAdapter):
         specs = list(_PLAIN_FIELDS)
         if not ev.all_day:
             specs += [
-                RecipeField("#EventStartTime", "time", lambda ev: _wk_time(ev.start_datetime),
-                            label="Start time"),
-                RecipeField("#EventEndTime", "time", lambda ev: _wk_time(_end(ev)),
-                            label="End time"),
+                RecipeField(
+                    "#EventStartTime",
+                    "time",
+                    lambda ev: _wk_time(ev.start_datetime),
+                    label="Start time",
+                ),
+                RecipeField(
+                    "#EventEndTime", "time", lambda ev: _wk_time(_end(ev)), label="End time"
+                ),
             ]
         if ev.venue_name:
-            specs.append(RecipeField("#saved_tribe_venue", "select2", lambda ev: ev.venue_name,
-                                     recipe_only=True, label="Venue",
-                                     hint="pick the match or choose Create"))
+            specs.append(
+                RecipeField(
+                    "#saved_tribe_venue",
+                    "select2",
+                    lambda ev: ev.venue_name,
+                    recipe_only=True,
+                    label="Venue",
+                    hint="pick the match or choose Create",
+                )
+            )
             # Venue detail inputs — exported so the extension pre-fills them when
             # the user chooses "Create" (existing venues self-populate). Selectors
             # verified in broadcast/captures/triangle_weekender.html. City maps
             # from our locality; website maps from event_url.
             _venue_create_hint = "only applies if you choose Create above"
             specs += [
-                RecipeField("input[name='venue[Address][]']", "text",
-                            lambda ev: ev.address_line1, recipe_only=True,
-                            label="Venue address", hint=_venue_create_hint),
-                RecipeField("input[name='venue[City][]']", "text", _city,
-                            recipe_only=True, label="Venue city", hint=_venue_create_hint),
-                RecipeField("#StateProvinceText", "text", lambda ev: ev.state,
-                            recipe_only=True, label="Venue state", hint=_venue_create_hint),
-                RecipeField("#EventZip", "text", lambda ev: ev.zip,
-                            recipe_only=True, label="Venue ZIP", hint=_venue_create_hint),
-                RecipeField("input[name='venue[URL][]']", "text", lambda ev: ev.event_url,
-                            recipe_only=True, label="Venue website", hint=_venue_create_hint),
+                RecipeField(
+                    "input[name='venue[Address][]']",
+                    "text",
+                    lambda ev: ev.address_line1,
+                    recipe_only=True,
+                    label="Venue address",
+                    hint=_venue_create_hint,
+                ),
+                RecipeField(
+                    "input[name='venue[City][]']",
+                    "text",
+                    _city,
+                    recipe_only=True,
+                    label="Venue city",
+                    hint=_venue_create_hint,
+                ),
+                RecipeField(
+                    "#StateProvinceText",
+                    "text",
+                    lambda ev: ev.state,
+                    recipe_only=True,
+                    label="Venue state",
+                    hint=_venue_create_hint,
+                ),
+                RecipeField(
+                    "#EventZip",
+                    "text",
+                    lambda ev: ev.zip,
+                    recipe_only=True,
+                    label="Venue ZIP",
+                    hint=_venue_create_hint,
+                ),
+                RecipeField(
+                    "input[name='venue[URL][]']",
+                    "text",
+                    lambda ev: ev.event_url,
+                    recipe_only=True,
+                    label="Venue website",
+                    hint=_venue_create_hint,
+                ),
             ]
         if ev.organizer_name:
-            specs.append(RecipeField("#saved_tribe_organizer", "select2",
-                                     lambda ev: ev.organizer_name, recipe_only=True,
-                                     label="Organizer", hint="pick the match or choose Create"))
+            specs.append(
+                RecipeField(
+                    "#saved_tribe_organizer",
+                    "select2",
+                    lambda ev: ev.organizer_name,
+                    recipe_only=True,
+                    label="Organizer",
+                    hint="pick the match or choose Create",
+                )
+            )
             # Organizer detail inputs — exported so the extension pre-fills the
             # contact email/phone when the user chooses "Create" above.
             specs += [
-                RecipeField("#organizer-email", "text", lambda ev: ev.contact_email,
-                            recipe_only=True, label="Organizer email",
-                            hint="only applies if you choose Create above"),
-                RecipeField("#organizer-phone", "text", lambda ev: ev.contact_phone,
-                            recipe_only=True, label="Organizer phone",
-                            hint="only applies if you choose Create above"),
+                RecipeField(
+                    "#organizer-email",
+                    "text",
+                    lambda ev: ev.contact_email,
+                    recipe_only=True,
+                    label="Organizer email",
+                    hint="only applies if you choose Create above",
+                ),
+                RecipeField(
+                    "#organizer-phone",
+                    "text",
+                    lambda ev: ev.contact_phone,
+                    recipe_only=True,
+                    label="Organizer phone",
+                    hint="only applies if you choose Create above",
+                ),
             ]
         for county in sorted({_COUNTY_MAP[loc] for loc in ev.locality if loc in _COUNTY_MAP}):
-            specs.append(RecipeField(
-                f"input[name='_ecp_custom_2[]'][value='{county}']", "checkbox",
-                lambda ev, c=county: c, recipe_only=True, label=f"County: {county}"))
+            specs.append(
+                RecipeField(
+                    f"input[name='_ecp_custom_2[]'][value='{county}']",
+                    "checkbox",
+                    lambda ev, c=county: c,
+                    recipe_only=True,
+                    label=f"County: {county}",
+                )
+            )
         # Categories — AJAX select2 multi (tax_input[tribe_events_cat][]). The
         # selector targets the hidden <select> whose next sibling is the visible
         # select2 container. Only emitted when ev.categories contains known slugs.
-        specs.append(RecipeField(
-            "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
-            _wk_category_terms, recipe_only=True, label="Event categories",
-            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
+        specs.append(
+            RecipeField(
+                "select[name='tax_input[tribe_events_cat][]']",
+                "select2_multi",
+                _wk_category_terms,
+                recipe_only=True,
+                label="Event categories",
+                hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
+            )
+        )
         # Tags — same AJAX select2 multi pattern (post_tag taxonomy).
-        specs.append(RecipeField(
-            "select[name='tax_input[post_tag][]']", "select2_multi",
-            _wk_tag_terms, recipe_only=True, label="Event tags",
-            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
+        specs.append(
+            RecipeField(
+                "select[name='tax_input[post_tag][]']",
+                "select2_multi",
+                _wk_tag_terms,
+                recipe_only=True,
+                label="Event tags",
+                hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
+            )
+        )
         if ev.image_url:
-            specs.append(RecipeField("#event_image", "file", lambda ev: ev.image_url,
-                                     recipe_only=True, label="Event image",
-                                     hint="auto-uploaded by the extension; falls back to manual highlight if needed"))
-        specs.append(RecipeField("#terms", "terms", lambda ev: "true", required=True,
-                                 recipe_only=True, label="Accept community terms"))
+            specs.append(
+                RecipeField(
+                    "#event_image",
+                    "file",
+                    lambda ev: ev.image_url,
+                    recipe_only=True,
+                    label="Event image",
+                    hint="auto-uploaded by the extension; falls back to manual highlight if needed",
+                )
+            )
+        specs.append(
+            RecipeField(
+                "#terms",
+                "terms",
+                lambda ev: "true",
+                required=True,
+                recipe_only=True,
+                label="Accept community terms",
+            )
+        )
         return specs
 
     def fill_and_submit(self, page, ev, ctx):
@@ -203,15 +306,20 @@ class TriangleWeekenderAdapter(SiteAdapter):
         h.dismiss_consent(page)
 
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="captcha/bot-check present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         specs = self.recipe_field_specs(ev)
         missing = h.apply_specs(page, specs, ev, ctx.timeout_ms)
         if missing:
-            return TargetResult(status="needs_manual",
-                                error="required fields unfilled: " + "; ".join(missing),
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="required fields unfilled: " + "; ".join(missing),
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         # The timepicker leaves its dropdown open, which would intercept the next
         # click — close it before driving the venue/organizer select2 widgets.
@@ -238,7 +346,10 @@ class TriangleWeekenderAdapter(SiteAdapter):
 
         # Organizer: same linked-post select2 pattern.
         if ev.organizer_name:
-            if _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name) == "created":
+            if (
+                _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name)
+                == "created"
+            ):
                 _try_fill(page, "#organizer-email", ev.contact_email)
                 _try_fill(page, "#organizer-phone", ev.contact_phone)
 
@@ -259,25 +370,35 @@ class TriangleWeekenderAdapter(SiteAdapter):
         # Required: agree to the community terms (checkbox is gated on scrolling
         # the terms region to the bottom).
         if not _check_terms(page):
-            return TargetResult(status="needs_manual", error="could not accept terms checkbox",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="could not accept terms checkbox",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="captcha/bot-check present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         # A timed newsletter popup can overlay the submit button — clear it.
         _dismiss_popups(page)
 
         shot = h.take_screenshot(page, ctx, self.key, "before-submit")
         if ctx.dry_run:
-            return TargetResult(status="succeeded", error="[DRY RUN] not submitted",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="succeeded", error="[DRY RUN] not submitted", screenshot_path=shot
+            )
 
         page.locator("#post").click(timeout=ctx.timeout_ms)
         page.wait_for_load_state("networkidle", timeout=ctx.timeout_ms)
-        return TargetResult(status="succeeded", external_url=page.url,
-                            screenshot_path=h.take_screenshot(page, ctx, self.key, "after-submit"))
+        return TargetResult(
+            status="succeeded",
+            external_url=page.url,
+            screenshot_path=h.take_screenshot(page, ctx, self.key, "after-submit"),
+        )
 
 
 def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
@@ -341,9 +462,12 @@ def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
 # Close buttons used by popup/offcanvas plugins; first visible one wins.
 _POPUP_CLOSE_SELECTORS = [
     ".uael-offcanvas-close",
-    ".pum-close", ".popmake-close",
-    ".dialog-close-button", ".elementor-popup-modal .dialog-close-button",
-    "[aria-label='Close']", "[aria-label='close']",
+    ".pum-close",
+    ".popmake-close",
+    ".dialog-close-button",
+    ".elementor-popup-modal .dialog-close-button",
+    "[aria-label='Close']",
+    "[aria-label='close']",
     "button.close",
 ]
 

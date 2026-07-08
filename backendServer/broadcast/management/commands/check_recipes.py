@@ -13,6 +13,7 @@ only run it when you mean to.
 This is a deliberately small, non-scalable monitor: it tells you when a site's
 DOM has drifted from the hardcoded recipe so you can fix-on-break.
 """
+
 from datetime import datetime
 
 from django.core.management.base import BaseCommand
@@ -21,8 +22,17 @@ from broadcast.adapters import enabled_adapters
 from broadcast.schema import CanonicalEvent
 
 VALID_TYPES = {
-    "text", "textarea", "date", "time", "select",
-    "radio", "checkbox", "file", "select2", "terms", "manual_widget",
+    "text",
+    "textarea",
+    "date",
+    "time",
+    "select",
+    "radio",
+    "checkbox",
+    "file",
+    "select2",
+    "terms",
+    "manual_widget",
 }
 
 # A representative event that exercises every conditional field (timed, image,
@@ -53,8 +63,11 @@ class Command(BaseCommand):
     help = "Audit manual-review recipes against their (optionally live) forms."
 
     def add_arguments(self, parser):
-        parser.add_argument("--live", action="store_true",
-                            help="load each live form and check every selector resolves")
+        parser.add_argument(
+            "--live",
+            action="store_true",
+            help="load each live form and check every selector resolves",
+        )
         parser.add_argument("--headed", action="store_true", help="show the browser (with --live)")
 
     def handle(self, *args, **options):
@@ -73,8 +86,10 @@ class Command(BaseCommand):
             rows = [(k, s_ok, s_msg, None) for (k, s_ok, s_msg) in rows]
 
         self._print_table(rows, live=options["live"])
-        any_fail = any(not s_ok or (live_res is not None and not live_res[0])
-                       for (_, s_ok, _, live_res) in rows)
+        any_fail = any(
+            not s_ok or (live_res is not None and not live_res[0])
+            for (_, s_ok, _, live_res) in rows
+        )
         if any_fail:
             self.stderr.write(self.style.ERROR("one or more recipes FAILED"))
             raise SystemExit(1)
@@ -142,7 +157,7 @@ class Command(BaseCommand):
 
     def _print_table(self, rows, live):
         width = max((len(k) for (k, *_rest) in rows), default=10)
-        for (key, s_ok, s_msg, live_res) in rows:
+        for key, s_ok, s_msg, live_res in rows:
             status = "PASS" if s_ok else "FAIL"
             line = f"{key:<{width}}  structure={status:<4}"
             if not s_ok:
@@ -155,5 +170,9 @@ class Command(BaseCommand):
                     line += f"  live={'PASS' if l_ok else 'FAIL'}"
                     if not l_ok:
                         line += f" ({l_msg})"
-            styler = self.style.SUCCESS if (s_ok and (live_res is None or live_res[0])) else self.style.ERROR
+            styler = (
+                self.style.SUCCESS
+                if (s_ok and (live_res is None or live_res[0]))
+                else self.style.ERROR
+            )
             self.stdout.write(styler(line))

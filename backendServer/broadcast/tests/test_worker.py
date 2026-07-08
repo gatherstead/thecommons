@@ -9,10 +9,15 @@ from broadcast.worker import claim_next, recover_orphans
 def make_submission(status="queued"):
     return BroadcastSubmission.objects.create(
         client_label="test",
-        title="T", description="D",
+        title="T",
+        description="D",
         start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
-        venue_name="V", address_line1="1 Main St", city="Pittsboro",
-        zip="27312", locality="pittsboro", categories=["music"],
+        venue_name="V",
+        address_line1="1 Main St",
+        city="Pittsboro",
+        zip="27312",
+        locality="pittsboro",
+        categories=["music"],
         status=status,
     )
 

@@ -1,5 +1,6 @@
 """runner.run_submission state-machine tests with _run_target stubbed, so no
 Playwright/browser launches (that heavy path lives in test_mock_adapter.py)."""
+
 from datetime import datetime, timezone as dt_timezone
 from unittest import mock
 
@@ -13,10 +14,15 @@ from broadcast.runner import run_submission
 def make_submission(site_keys, status="running", dry_run=False):
     submission = BroadcastSubmission.objects.create(
         client_label="test",
-        title="T", description="D",
+        title="T",
+        description="D",
         start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
-        venue_name="V", address_line1="1 Main St", city="Pittsboro",
-        zip="27312", locality=["pittsboro"], categories=["music"],
+        venue_name="V",
+        address_line1="1 Main St",
+        city="Pittsboro",
+        zip="27312",
+        locality=["pittsboro"],
+        categories=["music"],
         status=status,
     )
     for key in site_keys:
@@ -37,9 +43,7 @@ class RunSubmissionTests(TestCase):
         submission.refresh_from_db()
         self.assertEqual(submission.status, "done")
         self.assertIsNotNone(submission.finished_at)
-        self.assertEqual(
-            set(submission.targets.values_list("status", flat=True)), {"succeeded"}
-        )
+        self.assertEqual(set(submission.targets.values_list("status", flat=True)), {"succeeded"})
 
     def test_one_failure_marks_submission_failed(self):
         submission = make_submission(["a_site", "b_site"])

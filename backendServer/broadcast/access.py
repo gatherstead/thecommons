@@ -4,6 +4,7 @@ JWT path: Authorization: Bearer → email claim → BroadcastAccess tier.
 Code path: X-Broadcast-Access-Code header or body access_code → AccessCode row.
 No credentials → tier 0. resolve_access is read-only; callers write AccessCodeUse.
 """
+
 import hashlib
 import hmac
 from dataclasses import dataclass, field
@@ -97,8 +98,7 @@ def resolve_access(request, draft_id: str | None = None) -> AccessResult:
                 uses_remaining = max(matched.max_uses - used, 0)
                 if used >= matched.max_uses:
                     already_counted = (
-                        draft_id is not None
-                        and matched.uses.filter(draft_id=draft_id).exists()
+                        draft_id is not None and matched.uses.filter(draft_id=draft_id).exists()
                     )
                     if not already_counted:
                         return AccessResult(0, None, False, None, None, None)

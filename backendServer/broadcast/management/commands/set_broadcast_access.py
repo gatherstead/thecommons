@@ -3,6 +3,7 @@
 Usage:
     python manage.py set_broadcast_access aryav@unc.edu 2
 """
+
 from django.core.management.base import BaseCommand
 
 from broadcast.models import BroadcastAccess

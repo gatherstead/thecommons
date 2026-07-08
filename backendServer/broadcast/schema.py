@@ -2,6 +2,7 @@
 
 Decoupled from the ORM row so adapters never touch the database.
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo

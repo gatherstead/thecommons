@@ -17,7 +17,7 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
     Fetch an ICS feed URL, parse events, and save as RawEvent records.
     Returns list of newly created RawEvents.
     """
-    assert source.source_type == 'ics', "Source must be ICS type"
+    assert source.source_type == "ics", "Source must be ICS type"
 
     response = requests.get(source.url, timeout=30)
     response.raise_for_status()
@@ -29,20 +29,18 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
         if component.name != "VEVENT":
             continue
 
-        raw_title = str(component.get('SUMMARY', 'Untitled Event'))
-        raw_description = str(component.get('DESCRIPTION', ''))
-        raw_location = str(component.get('LOCATION', ''))
+        raw_title = str(component.get("SUMMARY", "Untitled Event"))
+        raw_description = str(component.get("DESCRIPTION", ""))
+        raw_location = str(component.get("LOCATION", ""))
 
         # Get the UID for dedup
-        uid = str(component.get('UID', ''))
+        uid = str(component.get("UID", ""))
         if not uid:
-            uid = hashlib.sha256(
-                f"{raw_title}{component.get('DTSTART').dt}".encode()
-            ).hexdigest()
+            uid = hashlib.sha256(f"{raw_title}{component.get('DTSTART').dt}".encode()).hexdigest()
 
         # Parse start/end times
-        dtstart = component.get('DTSTART')
-        dtend = component.get('DTEND')
+        dtstart = component.get("DTSTART")
+        dtend = component.get("DTEND")
 
         if dtstart is None:
             continue
@@ -69,8 +67,8 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
             continue
 
         # Get URL: first try the ICS URL property, then extract from description
-        raw_url = str(component.get('URL', ''))
-        source_url = raw_url if raw_url.startswith(('http://', 'https://')) else ''
+        raw_url = str(component.get("URL", ""))
+        source_url = raw_url if raw_url.startswith(("http://", "https://")) else ""
         if not source_url:
             # Extract first https URL from description
             url_match = re.search(r'https?://[^\s<>"\']+', raw_description)
@@ -82,13 +80,13 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
             source=source,
             source_uid=uid,
             defaults={
-                'raw_title': raw_title[:500],
-                'raw_description': raw_description,
-                'raw_location': raw_location[:500],
-                'raw_start': raw_start,
-                'raw_end': raw_end,
-                'source_url': source_url[:500] if source_url else '',
-            }
+                "raw_title": raw_title[:500],
+                "raw_description": raw_description,
+                "raw_location": raw_location[:500],
+                "raw_start": raw_start,
+                "raw_end": raw_end,
+                "source_url": source_url[:500] if source_url else "",
+            },
         )
 
         if created:
@@ -99,7 +97,7 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:
 
     # Update last_polled
     source.last_polled = timezone.now()
-    source.save(update_fields=['last_polled'])
+    source.save(update_fields=["last_polled"])
 
     logger.info(f"Imported {len(new_events)} new events from {source.name}")
     return new_events
@@ -113,10 +111,10 @@ def poll_all_ics_sources(shard: tuple[int, int] | None = None):
     the sources — load is even across the week and the per-source `poll_interval_hours`
     throttle still guards against accidental double-polls.
     """
-    sources = EventSource.objects.filter(source_type='ics', active=True)
+    sources = EventSource.objects.filter(source_type="ics", active=True)
     if shard is not None:
         n, m = shard
-        sources = sources.extra(where=['id %% %s = %s'], params=[m, n])
+        sources = sources.extra(where=["id %% %s = %s"], params=[m, n])
         logger.info(f"Sharded poll: only sources with id %% {m} == {n}")
 
     total_new = 0

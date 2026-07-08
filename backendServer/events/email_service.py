@@ -12,14 +12,14 @@ logger = logging.getLogger(__name__)
 
 def _get_brevo_client():
     configuration = brevo_python.Configuration()
-    configuration.api_key['api-key'] = os.environ['BREVO_API_KEY']
+    configuration.api_key["api-key"] = os.environ["BREVO_API_KEY"]
     return brevo_python.TransactionalEmailsApi(brevo_python.ApiClient(configuration))
 
 
 def _get_sender():
     return brevo_python.SendSmtpEmailSender(
         name="The Commons",
-        email=os.environ.get('DIGEST_FROM_EMAIL', 'digest@thecommons.town'),
+        email=os.environ.get("DIGEST_FROM_EMAIL", "digest@thecommons.town"),
     )
 
 
@@ -59,15 +59,14 @@ def _build_recipients(frequency: str) -> list[dict]:
     """
     from .models import UserProfile, NewsletterSubscriber
 
-    pref_map = {'WEEKLY': 'WEEKLY', 'MONTHLY': 'MONTHLY'}
+    pref_map = {"WEEKLY": "WEEKLY", "MONTHLY": "MONTHLY"}
     db_pref = pref_map[frequency]
 
     # Authenticated users with a profile
     profiles = (
-        UserProfile.objects
-        .filter(email_preference=db_pref)
-        .select_related('user')
-        .prefetch_related('tags')
+        UserProfile.objects.filter(email_preference=db_pref)
+        .select_related("user")
+        .prefetch_related("tags")
     )
     seen = {}
     for profile in profiles:
@@ -80,7 +79,7 @@ def _build_recipients(frequency: str) -> list[dict]:
         if email not in seen:
             seen[email] = set()  # empty = no tag filter → send all events
 
-    return [{'email': email, 'tags': tags} for email, tags in seen.items()]
+    return [{"email": email, "tags": tags} for email, tags in seen.items()]
 
 
 def send_digest(frequency: str) -> dict:
@@ -90,7 +89,7 @@ def send_digest(frequency: str) -> dict:
     """
     from .models import Event
 
-    if frequency == 'WEEKLY':
+    if frequency == "WEEKLY":
         cutoff = timezone.now() + timedelta(days=7)
         subject = "This Week in The Commons"
     else:
@@ -98,42 +97,43 @@ def send_digest(frequency: str) -> dict:
         subject = "This Month in The Commons"
 
     all_events = list(
-        Event.objects
-        .filter(date__gte=timezone.now(), date__lte=cutoff)
-        .select_related('town')
-        .prefetch_related('tags')
-        .order_by('date')
+        Event.objects.filter(date__gte=timezone.now(), date__lte=cutoff)
+        .select_related("town")
+        .prefetch_related("tags")
+        .order_by("date")
     )
 
     recipients = _build_recipients(frequency)
     if not recipients:
         logger.info("No active %s subscribers — skipping digest.", frequency)
-        return {'sent': 0, 'failed': 0}
+        return {"sent": 0, "failed": 0}
 
-    site_url = os.environ.get('SITE_URL', 'https://www.thecommons.town')
+    site_url = os.environ.get("SITE_URL", "https://www.thecommons.town")
 
     sent = failed = 0
     for recipient in recipients:
-        tag_filter = recipient['tags']
+        tag_filter = recipient["tags"]
         if tag_filter:
             events = [
-                e for e in all_events
-                if tag_filter.intersection({t.name for t in e.tags.all()})
+                e for e in all_events if tag_filter.intersection({t.name for t in e.tags.all()})
             ]
         else:
             events = all_events
 
-        html_body = render_to_string('email/digest.html', {
-            'events': events,
-            'frequency': frequency,
-            'subject': subject,
-            'site_url': site_url,
-        })
+        html_body = render_to_string(
+            "email/digest.html",
+            {
+                "events": events,
+                "frequency": frequency,
+                "subject": subject,
+                "site_url": site_url,
+            },
+        )
 
-        if send_email(recipient['email'], subject, html_body):
+        if send_email(recipient["email"], subject, html_body):
             sent += 1
         else:
             failed += 1
 
     logger.info("Digest sent: %d succeeded, %d failed.", sent, failed)
-    return {'sent': sent, 'failed': failed}
+    return {"sent": sent, "failed": failed}

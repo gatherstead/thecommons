@@ -15,9 +15,14 @@ class QueueLoggingHandler(logging.Handler):
     def emit(self, record):
         if record.thread != self.ident:
             return  # isolate concurrent runs to this worker thread
-        self.q.put(("log", {
-            "stage": getattr(record, "stage", ""),
-            "level": record.levelname,
-            "message": self.format(record),
-            "ts": record.created,
-        }))
+        self.q.put(
+            (
+                "log",
+                {
+                    "stage": getattr(record, "stage", ""),
+                    "level": record.levelname,
+                    "message": self.format(record),
+                    "ts": record.created,
+                },
+            )
+        )

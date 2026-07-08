@@ -9,7 +9,14 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from ingestion.views import admin_docs, cron_ingest, direct_submit, pipeline_docs, publish_approved_admin, publish_approved_events
+from ingestion.views import (
+    admin_docs,
+    cron_ingest,
+    direct_submit,
+    pipeline_docs,
+    publish_approved_admin,
+    publish_approved_events,
+)
 from events.views import subscribe, me, businesses, business_detail, my_business
 
 urlpatterns = [

@@ -8,9 +8,9 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 INSTALLED_APPS = [
-    'unfold',
-    'corsheaders',
-    'rest_framework',
+    "unfold",
+    "corsheaders",
+    "rest_framework",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -24,7 +24,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -41,9 +41,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.thecommons.town",
 ] + [o for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o]
 
-CSRF_TRUSTED_ORIGINS = [
-    o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o
-]
+CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "content-type",
@@ -86,7 +84,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles_build', 'static')
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles_build", "static")
 
 LOGGING = {
     "version": 1,
@@ -111,16 +109,20 @@ LOGGING = {
 BROADCAST_HEADLESS = os.getenv("BROADCAST_HEADLESS", "true").lower() != "false"
 BROADCAST_DRY_RUN_DEFAULT = os.getenv("BROADCAST_DRY_RUN_DEFAULT", "false").lower() == "true"
 BROADCAST_MAX_CONCURRENCY = int(os.getenv("BROADCAST_MAX_CONCURRENCY", "1"))
-BROADCAST_SCREENSHOT_DIR = os.getenv("BROADCAST_SCREENSHOT_DIR", str(BASE_DIR / "broadcast_artifacts" / "screenshots"))
-BROADCAST_DOWNLOAD_DIR = os.getenv("BROADCAST_DOWNLOAD_DIR", str(BASE_DIR / "broadcast_artifacts" / "downloads"))
+BROADCAST_SCREENSHOT_DIR = os.getenv(
+    "BROADCAST_SCREENSHOT_DIR", str(BASE_DIR / "broadcast_artifacts" / "screenshots")
+)
+BROADCAST_DOWNLOAD_DIR = os.getenv(
+    "BROADCAST_DOWNLOAD_DIR", str(BASE_DIR / "broadcast_artifacts" / "downloads")
+)
 BROADCAST_TIMEOUT_MS = int(os.getenv("BROADCAST_TIMEOUT_MS", "30000"))
 # When on, submit/retry spawn a one-shot worker process to drain the queue.
 # Off in prod (the systemd broadcast-worker handles it); dev turns it on.
 BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "false").lower() == "true"
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-CRON_SECRET = os.environ.get('CRON_SECRET', '')
-THE_COMMONS_API_KEY = os.environ.get('THE_COMMONS_API_KEY', '')
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+THE_COMMONS_API_KEY = os.environ.get("THE_COMMONS_API_KEY", "")
 
 # ── Redis / Celery ───────────────────────────────────────────────────────────
 # One self-hosted Redis: DB 0 = broker + result backend, DB 1 reserved for a
@@ -142,9 +144,9 @@ CACHES = {
     }
 }
 
-BETTER_AUTH_JWKS_URL = os.environ.get('BETTER_AUTH_JWKS_URL', '')
-BETTER_AUTH_ISSUER = os.environ.get('BETTER_AUTH_ISSUER', '')
-BETTER_AUTH_AUDIENCE = os.environ.get('BETTER_AUTH_AUDIENCE', '')
+BETTER_AUTH_JWKS_URL = os.environ.get("BETTER_AUTH_JWKS_URL", "")
+BETTER_AUTH_ISSUER = os.environ.get("BETTER_AUTH_ISSUER", "")
+BETTER_AUTH_AUDIENCE = os.environ.get("BETTER_AUTH_AUDIENCE", "")
 
 UNFOLD = {
     "SITE_TITLE": "The Commons Admin",
@@ -161,10 +163,22 @@ UNFOLD = {
             {
                 "title": "Ingestion",
                 "items": [
-                    {"title": "Event Sources", "link": "/admin/ingestion/eventsource/", "icon": "rss_feed"},
+                    {
+                        "title": "Event Sources",
+                        "link": "/admin/ingestion/eventsource/",
+                        "icon": "rss_feed",
+                    },
                     {"title": "Raw Events", "link": "/admin/ingestion/rawevent/", "icon": "inbox"},
-                    {"title": "Staged Events", "link": "/admin/ingestion/stagedevent/", "icon": "pending_actions"},
-                    {"title": "Publish Approved", "link": "/admin/docs/publish-approved/", "icon": "publish"},
+                    {
+                        "title": "Staged Events",
+                        "link": "/admin/ingestion/stagedevent/",
+                        "icon": "pending_actions",
+                    },
+                    {
+                        "title": "Publish Approved",
+                        "link": "/admin/docs/publish-approved/",
+                        "icon": "publish",
+                    },
                 ],
             },
             {
@@ -179,14 +193,22 @@ UNFOLD = {
                 "title": "Users",
                 "items": [
                     {"title": "Users", "link": "/admin/auth/user/", "icon": "person"},
-                    {"title": "User Profiles", "link": "/admin/events/userprofile/", "icon": "manage_accounts"},
+                    {
+                        "title": "User Profiles",
+                        "link": "/admin/events/userprofile/",
+                        "icon": "manage_accounts",
+                    },
                 ],
             },
             {
                 "title": "Documentation",
                 "items": [
                     {"title": "Admin Docs", "link": "/admin/docs/admin-docs/", "icon": "help"},
-                    {"title": "Pipeline Docs", "link": "/admin/docs/pipeline-docs/", "icon": "menu_book"},
+                    {
+                        "title": "Pipeline Docs",
+                        "link": "/admin/docs/pipeline-docs/",
+                        "icon": "menu_book",
+                    },
                 ],
             },
         ],

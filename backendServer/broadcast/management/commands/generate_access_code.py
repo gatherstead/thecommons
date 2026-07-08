@@ -5,6 +5,7 @@ Usage:
     python manage.py generate_access_code --unlimited --label "beta-tester"
     python manage.py generate_access_code --expires 2026-12-31T23:59:59
 """
+
 import secrets
 from datetime import datetime
 

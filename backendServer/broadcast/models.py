@@ -74,9 +74,7 @@ class BroadcastTarget(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(
-                fields=["submission", "site_key"], name="uniq_submission_site"
-            )
+            models.UniqueConstraint(fields=["submission", "site_key"], name="uniq_submission_site")
         ]
 
     def __str__(self):
@@ -112,9 +110,7 @@ class AccessCode(models.Model):
 
 
 class AccessCodeUse(models.Model):
-    access_code = models.ForeignKey(
-        AccessCode, related_name="uses", on_delete=models.CASCADE
-    )
+    access_code = models.ForeignKey(AccessCode, related_name="uses", on_delete=models.CASCADE)
     draft_id = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
 

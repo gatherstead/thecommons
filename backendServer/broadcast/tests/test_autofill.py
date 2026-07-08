@@ -4,6 +4,7 @@ Fast tier: StripFencesTest, CoerceTest, ExtractEventFieldsTest (no DB).
 DB tier: AutofillViewTest (permission layer requires DB for access resolution).
 All Gemini network calls are mocked.
 """
+
 import json
 from types import SimpleNamespace
 from unittest import mock
@@ -58,15 +59,15 @@ class StripFencesTest(SimpleTestCase):
         self.assertEqual(_strip_fences('{"a": 1}'), '{"a": 1}')
 
     def test_json_fences(self):
-        raw = "```json\n{\"a\": 1}\n```"
+        raw = '```json\n{"a": 1}\n```'
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
     def test_plain_fences(self):
-        raw = "```\n{\"a\": 1}\n```"
+        raw = '```\n{"a": 1}\n```'
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
     def test_leading_trailing_whitespace(self):
-        raw = "  ```json\n{\"a\": 1}\n```  "
+        raw = '  ```json\n{"a": 1}\n```  '
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
 
@@ -75,10 +76,25 @@ class CoerceTest(SimpleTestCase):
     def test_all_keys_present_with_defaults_on_empty(self):
         result = _coerce({})
         for key in (
-            "title", "description", "start_datetime", "end_datetime", "all_day",
-            "venue_name", "address_line1", "state", "zip", "locality", "categories",
-            "event_url", "ticket_url", "price", "is_free", "image_url",
-            "organizer_name", "contact_email", "contact_phone",
+            "title",
+            "description",
+            "start_datetime",
+            "end_datetime",
+            "all_day",
+            "venue_name",
+            "address_line1",
+            "state",
+            "zip",
+            "locality",
+            "categories",
+            "event_url",
+            "ticket_url",
+            "price",
+            "is_free",
+            "image_url",
+            "organizer_name",
+            "contact_email",
+            "contact_phone",
         ):
             self.assertIn(key, result)
 
@@ -168,10 +184,25 @@ class ExtractEventFieldsTest(SimpleTestCase):
         with patch("broadcast.autofill.genai.Client", return_value=client_inst):
             result = extract_event_fields("some event text")
         for key in (
-            "title", "description", "start_datetime", "end_datetime", "all_day",
-            "venue_name", "address_line1", "state", "zip", "locality", "categories",
-            "event_url", "ticket_url", "price", "is_free", "image_url",
-            "organizer_name", "contact_email", "contact_phone",
+            "title",
+            "description",
+            "start_datetime",
+            "end_datetime",
+            "all_day",
+            "venue_name",
+            "address_line1",
+            "state",
+            "zip",
+            "locality",
+            "categories",
+            "event_url",
+            "ticket_url",
+            "price",
+            "is_free",
+            "image_url",
+            "organizer_name",
+            "contact_email",
+            "contact_phone",
         ):
             self.assertIn(key, result, f"missing key: {key}")
 

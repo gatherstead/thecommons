@@ -8,6 +8,7 @@ Hard rules (design doc §8):
 4. Respect ctx.dry_run: fill but never click final submit.
 5. Screenshot before (and after, on success) submit.
 """
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -27,9 +28,7 @@ FILLABLE_TYPES = frozenset({"text", "textarea", "date", "time", "select"})
 # Recipe field types that are always emitted by recipe(), even when their
 # resolved value is empty — the manual-review content script needs to know they
 # exist (and how to drive them) regardless.
-_ALWAYS_EMIT_TYPES = frozenset(
-    {"radio", "checkbox", "file", "select2", "terms", "manual_widget"}
-)
+_ALWAYS_EMIT_TYPES = frozenset({"radio", "checkbox", "file", "select2", "terms", "manual_widget"})
 
 
 @dataclass
@@ -59,6 +58,7 @@ class RecipeField:
     skipped by the shared Playwright fill loop (their server-side handling lives
     in the adapter's imperative code).
     """
+
     selector: str
     type: str
     resolve: Callable[["CanonicalEvent"], str]
@@ -107,14 +107,16 @@ class SiteAdapter:
             value = spec.value_for(ev)
             if not value and not spec.required and spec.type not in _ALWAYS_EMIT_TYPES:
                 continue
-            fields.append({
-                "selector": spec.selector,
-                "type": spec.type,
-                "value": value,
-                "required": spec.required,
-                "label": spec.label,
-                "hint": spec.hint or None,
-            })
+            fields.append(
+                {
+                    "selector": spec.selector,
+                    "type": spec.type,
+                    "value": value,
+                    "required": spec.required,
+                    "label": spec.label,
+                    "hint": spec.hint or None,
+                }
+            )
         return {
             "site_key": self.key,
             "name": self.name,

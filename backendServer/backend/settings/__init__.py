@@ -10,6 +10,7 @@ unset case still defaults to dev (every laptop relies on that), but a typo like
 `DJANGO_ENV=production` now fails loud. The deploy health check
 (`manage.py healthcheck --require-prod`) catches the remaining unset-in-prod case.
 """
+
 import os
 
 from django.core.exceptions import ImproperlyConfigured

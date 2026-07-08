@@ -3,6 +3,7 @@
 Standalone — imports only from broadcast/ and rest_framework.
 Does NOT import from backend/permissions.py (isolation contract).
 """
+
 from rest_framework.permissions import BasePermission
 
 from broadcast.access import resolve_access
@@ -41,9 +42,11 @@ class _BroadcastTierPermission(BasePermission):
 
 class RequiresBroadcastTier1(_BroadcastTierPermission):
     """Allow tier 1+ (standard broadcast access)."""
+
     min_tier = 1
 
 
 class RequiresBroadcastTier2(_BroadcastTierPermission):
     """Allow tier 2+ (AI features require elevated access)."""
+
     min_tier = 2

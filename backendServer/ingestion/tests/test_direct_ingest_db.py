@@ -10,34 +10,34 @@ from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.services import ingest_direct_submission
 
 
-@tag('db')
+@tag("db")
 class DirectIngestTests(TestCase):
     STD_PAYLOAD = {
-        'title': 'Test Concert',
-        'description': 'A great show at the Cradle.',
-        'location_name': "Cat's Cradle",
-        'town': 'Carrboro',
-        'tags': ['live-music'],
-        'price': 10,
+        "title": "Test Concert",
+        "description": "A great show at the Cradle.",
+        "location_name": "Cat's Cradle",
+        "town": "Carrboro",
+        "tags": ["live-music"],
+        "price": 10,
     }
 
     def setUp(self):
         self.source = EventSource.objects.create(
-            name='Direct Feed',
-            source_type='ics',
-            url='https://feed.test/direct.ics',
+            name="Direct Feed",
+            source_type="ics",
+            url="https://feed.test/direct.ics",
         )
         self.raw = RawEvent.objects.create(
             source=self.source,
-            raw_title='Raw Concert',
-            raw_description='A show',
+            raw_title="Raw Concert",
+            raw_description="A show",
             raw_location="Cat's Cradle, Carrboro, NC",
             raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=timezone.utc),
-            source_url='',  # avoids fetch_page_text network call
-            source_uid='direct-uid-1',
+            source_url="",  # avoids fetch_page_text network call
+            source_uid="direct-uid-1",
         )
-        self.town = make_town(slug='carrboro')
-        self.user = make_user(user_type='BUSINESS')
+        self.town = make_town(slug="carrboro")
+        self.user = make_user(user_type="BUSINESS")
 
     def _gemini_mocks(self, std_payload, score):
         """
@@ -52,15 +52,13 @@ class DirectIngestTests(TestCase):
         gets fake_std; the second call (scorer) gets fake_scorer.
         """
         fake_std = mock.Mock()
-        fake_std.models.generate_content.return_value = mock.Mock(
-            text=json.dumps(std_payload)
-        )
+        fake_std.models.generate_content.return_value = mock.Mock(text=json.dumps(std_payload))
         fake_scorer = mock.Mock()
         fake_scorer.models.generate_content.return_value = mock.Mock(
-            text=json.dumps({'score': score, 'notes': ''})
+            text=json.dumps({"score": score, "notes": ""})
         )
         return mock.patch(
-            'ingestion.standardizer.genai.Client',
+            "ingestion.standardizer.genai.Client",
             side_effect=[fake_std, fake_scorer],
         )
 
@@ -70,13 +68,13 @@ class DirectIngestTests(TestCase):
 
         self.assertIsNotNone(event)
         self.assertEqual(Event.objects.count(), 1)
-        self.assertEqual(event.source_name, 'Direct submission by host')
+        self.assertEqual(event.source_name, "Direct submission by host")
         self.assertEqual(event.created_by, self.user)
         self.assertTrue(event.is_verified)
         # Staged row must survive (chain preserved for future edits).
         self.assertTrue(StagedEvent.objects.exists())
         staged = StagedEvent.objects.get()
-        self.assertEqual(staged.status, 'approved')
+        self.assertEqual(staged.status, "approved")
         self.assertEqual(staged.published_event, event)
 
     def test_re_edit_updates_event_in_place(self):
@@ -86,15 +84,15 @@ class DirectIngestTests(TestCase):
         self.assertEqual(Event.objects.count(), 1)
 
         # Simulate host editing the raw submission and resubmitting.
-        self.raw.raw_title = 'Updated Raw Concert'
-        self.raw.save(update_fields=['raw_title'])
-        updated_payload = {**self.STD_PAYLOAD, 'title': 'Updated Concert'}
+        self.raw.raw_title = "Updated Raw Concert"
+        self.raw.save(update_fields=["raw_title"])
+        updated_payload = {**self.STD_PAYLOAD, "title": "Updated Concert"}
 
         with self._gemini_mocks(updated_payload, 0.0):
             event = ingest_direct_submission(self.raw.id, self.user.id)
 
         self.assertEqual(Event.objects.count(), 1)
-        self.assertEqual(event.title, 'Updated Concert')
+        self.assertEqual(event.title, "Updated Concert")
         # Staged row must still exist after re-edit.
         self.assertEqual(StagedEvent.objects.count(), 1)
 
@@ -105,7 +103,7 @@ class DirectIngestTests(TestCase):
         self.assertIsNone(result)
         self.assertEqual(Event.objects.count(), 0)
         staged = StagedEvent.objects.get()
-        self.assertEqual(staged.status, 'pending')
+        self.assertEqual(staged.status, "pending")
 
     def test_anonymous_submission_no_user_id(self):
         """user_id=None → submitted_by=None, is_verified=False, Event created."""

@@ -104,8 +104,9 @@ class SubmitAndJobTest(TestCase):
             )
 
     def test_submit_creates_one_target_per_site(self):
-        resp = self._submit(["explore_pittsboro", "triangle_on_the_cheap",
-                             "explore_pittsboro"])  # duplicate is deduped
+        resp = self._submit(
+            ["explore_pittsboro", "triangle_on_the_cheap", "explore_pittsboro"]
+        )  # duplicate is deduped
         self.assertEqual(resp.status_code, 201)
         submission = BroadcastSubmission.objects.get(id=resp.json()["job_id"])
         self.assertEqual(submission.status, "queued")
@@ -117,8 +118,12 @@ class SubmitAndJobTest(TestCase):
         code = _make_code(label="makrs", raw="SECRET1")
         resp = self.client.post(
             "/broadcast/submit",
-            {"access_code": "SECRET1", "event": EVENT,
-             "site_keys": ["explore_pittsboro"], "dry_run": True},
+            {
+                "access_code": "SECRET1",
+                "event": EVENT,
+                "site_keys": ["explore_pittsboro"],
+                "dry_run": True,
+            },
             format="json",
         )
         self.assertEqual(resp.status_code, 201)
@@ -348,9 +353,7 @@ class ManualRecipeTest(TestCase):
                     f"/broadcast/jobs/{self.submission.id}/manual/{site_key}",
                     HTTP_AUTHORIZATION="Bearer faketoken",
                 )
-        return self.client.get(
-            f"/broadcast/jobs/{self.submission.id}/manual/{site_key}"
-        )
+        return self.client.get(f"/broadcast/jobs/{self.submission.id}/manual/{site_key}")
 
     def test_needs_manual_returns_recipe(self):
         self._target("triangle_on_the_cheap", "needs_manual")

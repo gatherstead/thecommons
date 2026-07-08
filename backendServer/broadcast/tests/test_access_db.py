@@ -3,6 +3,7 @@
 Uses @tag("db") + TestCase (real Postgres test DB).
 JWT path stubs verify_better_auth_jwt via unittest.mock.patch — no JWKS hit.
 """
+
 from datetime import timedelta
 from unittest import mock
 
@@ -31,7 +32,9 @@ def _make_request(
     return req
 
 
-def _make_code(label="testclient", tier=2, max_uses=3, is_active=True, expires_at=None, raw="RAWCODE"):
+def _make_code(
+    label="testclient", tier=2, max_uses=3, is_active=True, expires_at=None, raw="RAWCODE"
+):
     return AccessCode.objects.create(
         code_hash=hash_code(raw),
         label=label,
@@ -281,6 +284,7 @@ class AccessInfoEndpointTest(TestCase):
 # ---------------------------------------------------------------------------
 # Preview metering tests
 # ---------------------------------------------------------------------------
+
 
 @override_settings(RATELIMIT_ENABLE=False)
 @tag("db")

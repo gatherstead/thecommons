@@ -3,6 +3,7 @@
 Run with:
     DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test broadcast.tests.test_commands_db
 """
+
 from io import StringIO
 
 from django.core.management import call_command
@@ -31,6 +32,7 @@ def _make_request_with_code(raw_code):
 # ---------------------------------------------------------------------------
 # set_broadcast_access
 # ---------------------------------------------------------------------------
+
 
 @tag("db")
 class SetBroadcastAccessTest(TestCase):
@@ -69,6 +71,7 @@ class SetBroadcastAccessTest(TestCase):
 # ---------------------------------------------------------------------------
 # generate_access_code
 # ---------------------------------------------------------------------------
+
 
 @tag("db")
 class GenerateAccessCodeTest(TestCase):
@@ -158,6 +161,7 @@ class GenerateAccessCodeTest(TestCase):
 # list_access_codes
 # ---------------------------------------------------------------------------
 
+
 @tag("db")
 class ListAccessCodesTest(TestCase):
     def test_empty_db(self):
@@ -209,8 +213,12 @@ class ListAccessCodesTest(TestCase):
         self.assertNotIn(code.code_hash, out)
 
     def test_active_and_inactive_shown(self):
-        AccessCode.objects.create(code_hash=hash_code("EEE"), label="active-one", tier=2, max_uses=3)
-        AccessCode.objects.create(code_hash=hash_code("FFF"), label="inactive-one", tier=2, max_uses=3, is_active=False)
+        AccessCode.objects.create(
+            code_hash=hash_code("EEE"), label="active-one", tier=2, max_uses=3
+        )
+        AccessCode.objects.create(
+            code_hash=hash_code("FFF"), label="inactive-one", tier=2, max_uses=3, is_active=False
+        )
         out = _call("list_access_codes")
         self.assertIn("active-one", out)
         self.assertIn("inactive-one", out)
@@ -221,6 +229,7 @@ class ListAccessCodesTest(TestCase):
 # ---------------------------------------------------------------------------
 # revoke_access_code
 # ---------------------------------------------------------------------------
+
 
 @tag("db")
 class RevokeAccessCodeTest(TestCase):

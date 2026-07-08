@@ -16,11 +16,11 @@ class NeonAuthTestRunner(DiscoverRunner):
         config = super().setup_databases(**kwargs)
         # Fast-tier-only runs (plain unittest.TestCase) need no DB, so Django
         # builds none — don't reach for `default` and hit the real database.
-        if 'default' not in kwargs.get('aliases', set()):
+        if "default" not in kwargs.get("aliases", set()):
             return config
-        connection = connections['default']
+        connection = connections["default"]
         with connection.cursor() as cursor:
-            cursor.execute('CREATE SCHEMA IF NOT EXISTS neon_auth')
+            cursor.execute("CREATE SCHEMA IF NOT EXISTS neon_auth")
         with connection.schema_editor() as editor:
             editor.create_model(BetterAuthUser)
             editor.create_model(BetterAuthAccount)

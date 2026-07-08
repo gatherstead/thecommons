@@ -3,6 +3,7 @@
 No global REST_FRAMEWORK config exists in this project; auth/permissions are
 applied per-view (house pattern). Rate limits blunt access-code brute force.
 """
+
 import os
 
 from django.conf import settings
@@ -48,10 +49,12 @@ def preview(request):
 
     ev = serializer.to_canonical()
     eligible, excluded = eligible_targets(ev, enabled_adapters())
-    return Response({
-        "eligible": [{"site_key": a.key, "name": a.name} for a in eligible],
-        "excluded": [{"site_key": k, "reason": r} for k, r in excluded],
-    })
+    return Response(
+        {
+            "eligible": [{"site_key": a.key, "name": a.name} for a in eligible],
+            "excluded": [{"site_key": k, "reason": r} for k, r in excluded],
+        }
+    )
 
 
 @ratelimit(key="ip", rate="3/m", method="POST", block=True)
@@ -64,12 +67,14 @@ def submit(request):
 
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     unknown = [k for k in site_keys if k not in registry()]
     if unknown:
-        return Response({"site_keys": f"unknown sites: {unknown}"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": f"unknown sites: {unknown}"}, status=status.HTTP_400_BAD_REQUEST
+        )
 
     dry_run = request.data.get("dry_run")
     if dry_run is None:
@@ -104,8 +109,9 @@ def job_retry(request, job_id):
         raise Http404
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     requeued = retry_targets(submission, site_keys)
     return Response({"job_id": str(submission.id), "requeued": requeued})
 
@@ -121,8 +127,9 @@ def job_submit_real(request, job_id):
         raise Http404
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     submitted = submit_real_targets(submission, site_keys)
     return Response({"job_id": str(submission.id), "submitted": submitted})
 
@@ -137,11 +144,13 @@ def job_cancel(request, job_id):
     except BroadcastSubmission.DoesNotExist:
         raise Http404
     skipped = cancel_submission(submission)
-    return Response({
-        "job_id": str(submission.id),
-        "status": submission.status,
-        "skipped": skipped,
-    })
+    return Response(
+        {
+            "job_id": str(submission.id),
+            "status": submission.status,
+            "skipped": skipped,
+        }
+    )
 
 
 @api_view(["GET"])
@@ -184,8 +193,9 @@ def job_manual_recipe(request, job_id, site_key):
     if not target:
         raise Http404
     if target.status != "needs_manual":
-        return Response({"detail": "target is not awaiting manual review"},
-                        status=status.HTTP_409_CONFLICT)
+        return Response(
+            {"detail": "target is not awaiting manual review"}, status=status.HTTP_409_CONFLICT
+        )
     return Response(manual_recipe(submission, site_key))
 
 
@@ -250,11 +260,13 @@ def access_info(request):
     if credentials_supplied and result.identity is None:
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_403_FORBIDDEN)
 
-    return Response({
-        "tier": result.tier,
-        "is_trial": result.is_trial,
-        "uses_remaining": result.uses_remaining,
-    })
+    return Response(
+        {
+            "tier": result.tier,
+            "is_trial": result.is_trial,
+            "uses_remaining": result.uses_remaining,
+        }
+    )
 
 
 def mock_form(request):

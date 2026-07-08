@@ -4,6 +4,7 @@ fills the form and screenshots without ever clicking submit.
     uv run python manage.py broadcast_dry_run --site triangle_on_the_cheap \
         --fixture pittsboro_music.json
 """
+
 import json
 import pathlib
 import tempfile
@@ -26,16 +27,17 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--site", required=True, help="site_key of the adapter")
-        parser.add_argument("--fixture", required=True,
-                            help="fixture filename in broadcast/fixtures/ (or an absolute path)")
+        parser.add_argument(
+            "--fixture",
+            required=True,
+            help="fixture filename in broadcast/fixtures/ (or an absolute path)",
+        )
         parser.add_argument("--headed", action="store_true", help="show the browser")
 
     def handle(self, *args, **options):
         adapter = get_adapter(options["site"])
         if adapter is None:
-            raise CommandError(
-                f"unknown site '{options['site']}'. Known: {sorted(registry())}"
-            )
+            raise CommandError(f"unknown site '{options['site']}'. Known: {sorted(registry())}")
 
         fixture_path = pathlib.Path(options["fixture"])
         if not fixture_path.is_absolute():
@@ -51,14 +53,14 @@ class Command(BaseCommand):
 
         ok, reason = adapter.eligibility.matches(ev)
         if not ok:
-            self.stdout.write(self.style.WARNING(
-                f"note: this event would be excluded by routing ({reason}); running anyway"
-            ))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"note: this event would be excluded by routing ({reason}); running anyway"
+                )
+            )
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=not options["headed"], args=CHROMIUM_ARGS
-            )
+            browser = p.chromium.launch(headless=not options["headed"], args=CHROMIUM_ARGS)
             try:
                 page = browser.new_context().new_page()
                 with tempfile.TemporaryDirectory() as tmp:

@@ -2,6 +2,7 @@
 
 Self-contained module: no imports from events/ or ingestion/ (isolation contract).
 """
+
 import json
 import logging
 import time
@@ -152,10 +153,13 @@ def extract_event_fields(text: str) -> dict:
                 break
             except Exception as exc:
                 if "503" in str(exc) or "UNAVAILABLE" in str(exc):
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     logger.warning(
                         "[autofill][%s] 503 on attempt %d/%d, retrying in %ds…",
-                        model, attempt + 1, _MAX_RETRIES, wait,
+                        model,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        wait,
                     )
                     time.sleep(wait)
                 else:

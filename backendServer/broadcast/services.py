@@ -1,4 +1,5 @@
 """Persistence for broadcast submissions. Views stay thin; logic lives here."""
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -51,9 +52,7 @@ def create_submission(
     # Unique (submission, site_key) holds because keys are deduped here and
     # the DB constraint backstops any race.
     for site_key in dict.fromkeys(site_keys):
-        BroadcastTarget.objects.create(
-            submission=submission, site_key=site_key, dry_run=dry_run
-        )
+        BroadcastTarget.objects.create(submission=submission, site_key=site_key, dry_run=dry_run)
     _maybe_autospawn_worker()
     return submission
 
@@ -66,8 +65,7 @@ def retry_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
     the same (submission, site_key).
     """
     updated = (
-        submission.targets
-        .filter(site_key__in=site_keys)
+        submission.targets.filter(site_key__in=site_keys)
         .exclude(status__in=["pending", "in_progress"])
         .update(status="pending", error="", external_url="", screenshot_path="")
     )
@@ -88,8 +86,7 @@ def submit_real_targets(submission: BroadcastSubmission, site_keys: list[str]) -
     submission so the worker picks them up again.
     """
     updated = (
-        submission.targets
-        .filter(site_key__in=site_keys, dry_run=True)
+        submission.targets.filter(site_key__in=site_keys, dry_run=True)
         .exclude(status__in=["pending", "in_progress"])
         .update(status="pending", dry_run=False, error="", external_url="", screenshot_path="")
     )
@@ -132,19 +129,22 @@ def job_payload(submission: BroadcastSubmission) -> dict:
     targets = []
     for t in submission.targets.all().order_by("site_key"):
         adapter = get_adapter(t.site_key)
-        targets.append({
-            "site_key": t.site_key,
-            "name": adapter.name if adapter else t.site_key,
-            "status": t.status,
-            "attempts": t.attempts,
-            "dry_run": t.dry_run,
-            "error": t.error,
-            "external_url": t.external_url,
-            "screenshot_url": (
-                f"/broadcast/jobs/{submission.id}/screenshots/{t.site_key}"
-                if t.screenshot_path else ""
-            ),
-        })
+        targets.append(
+            {
+                "site_key": t.site_key,
+                "name": adapter.name if adapter else t.site_key,
+                "status": t.status,
+                "attempts": t.attempts,
+                "dry_run": t.dry_run,
+                "error": t.error,
+                "external_url": t.external_url,
+                "screenshot_url": (
+                    f"/broadcast/jobs/{submission.id}/screenshots/{t.site_key}"
+                    if t.screenshot_path
+                    else ""
+                ),
+            }
+        )
     return {
         "job_id": str(submission.id),
         "status": submission.status,

@@ -72,24 +72,24 @@ Additional context scraped from the event webpage (use this to find price, cost,
 
 def fetch_page_text(url: str, max_chars: int = 6000) -> str:
     """Fetch a webpage and extract its visible text. Returns empty string on failure."""
-    if not url or not url.startswith(('http://', 'https://')):
-        return ''
+    if not url or not url.startswith(("http://", "https://")):
+        return ""
     try:
-        resp = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (compatible; TheCommons/1.0)'
-        })
+        resp = requests.get(
+            url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (compatible; TheCommons/1.0)"}
+        )
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        soup = BeautifulSoup(resp.text, "html.parser")
         # Remove script/style elements
-        for tag in soup(['script', 'style', 'nav']):
+        for tag in soup(["script", "style", "nav"]):
             tag.decompose()
-        text = soup.get_text(separator='\n', strip=True)
+        text = soup.get_text(separator="\n", strip=True)
         # Collapse blank lines but keep structure
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         return text[:max_chars]
     except Exception as e:
         logger.debug(f"Could not fetch {url}: {e}")
-        return ''
+        return ""
 
 
 def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:
@@ -97,7 +97,7 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro']
+    models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
     max_retries = 3
 
     # Fetch the event webpage for additional context (price, details, etc.)
@@ -127,8 +127,8 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
                 )
                 break  # success
             except Exception as e:
-                if '503' in str(e) or 'UNAVAILABLE' in str(e):
-                    wait = 2 ** attempt  # 1s, 2s, 4s
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    wait = 2**attempt  # 1s, 2s, 4s
                     logger.warning(
                         f"[{model}] 503 on attempt {attempt + 1}/{max_retries}, "
                         f"retrying in {wait}s..."
@@ -145,9 +145,9 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
 
     try:
         text = response.text.strip()
-        if text.startswith('```'):
-            text = text.split('\n', 1)[1]
-            text = text.rsplit('```', 1)[0]
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            text = text.rsplit("```", 1)[0]
 
         data = json.loads(text)
     except json.JSONDecodeError as e:
@@ -155,35 +155,35 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
         logger.error(f"Raw response: {response.text}")
         raise
 
-    valid_tags = [t for t in data.get('tags', []) if t in VALID_TAGS]
+    valid_tags = [t for t in data.get("tags", []) if t in VALID_TAGS]
 
     # Parse price: -1 means N/A (displayed as "N/A" on frontend)
-    price = data.get('price', -1)
+    price = data.get("price", -1)
 
     # Prefer the ICS source URL if it's a real webpage, fall back to Gemini's extraction
-    if raw_event.source_url and raw_event.source_url.startswith(('http://', 'https://')):
+    if raw_event.source_url and raw_event.source_url.startswith(("http://", "https://")):
         link = raw_event.source_url
     else:
-        link = data.get('link', '') or ''
-        if not link.startswith(('http://', 'https://')):
-            link = ''
+        link = data.get("link", "") or ""
+        if not link.startswith(("http://", "https://")):
+            link = ""
 
     staged = StagedEvent.objects.create(
         raw_event=raw_event,
-        title=data.get('title', raw_event.raw_title)[:500],
-        description=data.get('description', ''),
-        location_name=data.get('location_name', raw_event.raw_location)[:255],
-        town=data.get('town', '')[:100],
+        title=data.get("title", raw_event.raw_title)[:500],
+        description=data.get("description", ""),
+        location_name=data.get("location_name", raw_event.raw_location)[:255],
+        town=data.get("town", "")[:100],
         start_datetime=raw_event.raw_start,
         end_datetime=raw_event.raw_end,
         tags=valid_tags,
         price=price,
         link=link[:500],
-        status='pending',
+        status="pending",
     )
 
     raw_event.processed = True
-    raw_event.save(update_fields=['processed'])
+    raw_event.save(update_fields=["processed"])
 
     logger.info(f"Standardized: {staged.title}")
     return staged

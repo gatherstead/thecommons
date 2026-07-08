@@ -7,7 +7,15 @@ from broadcast.models import BroadcastSubmission, BroadcastTarget
 class BroadcastTargetInline(TabularInline):
     model = BroadcastTarget
     extra = 0
-    fields = ("site_key", "status", "attempts", "dry_run", "external_url", "error", "screenshot_path")
+    fields = (
+        "site_key",
+        "status",
+        "attempts",
+        "dry_run",
+        "external_url",
+        "error",
+        "screenshot_path",
+    )
     readonly_fields = fields
     can_delete = False
 

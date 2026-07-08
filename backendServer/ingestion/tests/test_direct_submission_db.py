@@ -8,6 +8,7 @@ New contract (JWT-based ownership, anonymous allowed):
 - High safety score                        → 202, StagedEvent pending, no live Event.
 - Re-post of same draft_id is idempotent.
 """
+
 import json
 import uuid
 from unittest import mock
@@ -54,6 +55,7 @@ STD_PAYLOAD = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _gemini_patch(std_payload, score):
     """Patch google.genai.Client so standardize_event and score_event each get
     their own fake client, in call order.
@@ -67,9 +69,7 @@ def _gemini_patch(std_payload, score):
     score_event (→ fake_scorer).
     """
     fake_std = mock.Mock()
-    fake_std.models.generate_content.return_value = mock.Mock(
-        text=json.dumps(std_payload)
-    )
+    fake_std.models.generate_content.return_value = mock.Mock(text=json.dumps(std_payload))
     fake_scorer = mock.Mock()
     fake_scorer.models.generate_content.return_value = mock.Mock(
         text=json.dumps({"score": score, "notes": ""})
@@ -81,6 +81,7 @@ def _gemini_patch(std_payload, score):
 
 
 # ── Test class ────────────────────────────────────────────────────────────────
+
 
 @override_settings(RATELIMIT_ENABLE=False)
 @tag("db")

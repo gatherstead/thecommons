@@ -1,4 +1,5 @@
 """Shared helpers for site adapters. Deterministic only — no generated content."""
+
 import os
 import re
 from urllib.parse import urlparse

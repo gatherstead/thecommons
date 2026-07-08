@@ -25,21 +25,23 @@ class _Rollback(Exception):
 
 def _event_dict(e):
     return {
-        'uuid': e.uuid,
-        'title': e.title,
-        'town': e.town.name if e.town else '',
-        'date': e.date,
-        'venue': e.venue,
-        'source_name': e.source_name,
-        'price': e.price,
-        'link': e.link,
+        "uuid": e.uuid,
+        "title": e.title,
+        "town": e.town.name if e.town else "",
+        "date": e.date,
+        "venue": e.venue,
+        "source_name": e.source_name,
+        "price": e.price,
+        "link": e.link,
     }
 
 
-def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True, limit=None, prompt_suffix=""):
-    ingestion_logger = logging.getLogger('ingestion')
+def run_pipeline_into_queue(
+    q, *, city_slug, ics_url, source_name, dry_run=True, limit=None, prompt_suffix=""
+):
+    ingestion_logger = logging.getLogger("ingestion")
     handler = QueueLoggingHandler(q, threading.get_ident())
-    handler.setFormatter(logging.Formatter('%(message)s'))
+    handler.setFormatter(logging.Formatter("%(message)s"))
     ingestion_logger.addHandler(handler)
 
     try:
@@ -48,10 +50,15 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
             try:
                 town = Town.objects.get(slug=city_slug)
             except Town.DoesNotExist:
-                q.put(("error", {
-                    "message": f"Town with slug '{city_slug}' not found.",
-                    "traceback": "",
-                }))
+                q.put(
+                    (
+                        "error",
+                        {
+                            "message": f"Town with slug '{city_slug}' not found.",
+                            "traceback": "",
+                        },
+                    )
+                )
                 return
 
             with transaction.atomic():
@@ -61,7 +68,7 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
                 effective_source_name = source_name or urlparse(ics_url).hostname
                 source = EventSource(
                     name=effective_source_name,
-                    source_type='ics',
+                    source_type="ics",
                     url=ics_url,
                     active=True,
                 )
@@ -71,87 +78,116 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
 
                 if limit is not None:
                     keep_ids = list(
-                        RawEvent.objects.filter(source=source).values_list('id', flat=True)[:limit]
+                        RawEvent.objects.filter(source=source).values_list("id", flat=True)[:limit]
                     )
                     RawEvent.objects.filter(source=source).exclude(id__in=keep_ids).delete()
 
                 fetch_records = list(
                     RawEvent.objects.filter(source=source).values(
-                        'id', 'raw_title', 'raw_location', 'raw_start', 'source_url', 'source_uid'
+                        "id", "raw_title", "raw_location", "raw_start", "source_url", "source_uid"
                     )
                 )
                 q.put(("stage_data", {"stage": "fetch", "records": fetch_records}))
-                q.put(("stage", {
-                    "stage": "fetch",
-                    "status": "end",
-                    "summary": {"count": len(fetch_records)},
-                }))
+                q.put(
+                    (
+                        "stage",
+                        {
+                            "stage": "fetch",
+                            "status": "end",
+                            "summary": {"count": len(fetch_records)},
+                        },
+                    )
+                )
 
                 # ── STANDARDIZE ───────────────────────────────────────────────
                 q.put(("stage", {"stage": "standardize", "status": "start"}))
                 std_count = standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
                 std_records = []
                 for s in StagedEvent.objects.filter(raw_event__source=source):
-                    std_records.append({
-                        'id': s.id,
-                        'title': s.title,
-                        'town': s.town,
-                        'location_name': s.location_name,
-                        'start_datetime': s.start_datetime,
-                        'tags': s.tags,
-                        'price': s.price,
-                        'link': s.link,
-                    })
+                    std_records.append(
+                        {
+                            "id": s.id,
+                            "title": s.title,
+                            "town": s.town,
+                            "location_name": s.location_name,
+                            "start_datetime": s.start_datetime,
+                            "tags": s.tags,
+                            "price": s.price,
+                            "link": s.link,
+                        }
+                    )
                 q.put(("stage_data", {"stage": "standardize", "records": std_records}))
-                q.put(("stage", {
-                    "stage": "standardize",
-                    "status": "end",
-                    "summary": {"count": std_count},
-                }))
+                q.put(
+                    (
+                        "stage",
+                        {
+                            "stage": "standardize",
+                            "status": "end",
+                            "summary": {"count": std_count},
+                        },
+                    )
+                )
 
                 # ── FORCE_TOWN ────────────────────────────────────────────────
                 q.put(("stage", {"stage": "force_town", "status": "start"}))
                 for staged in StagedEvent.objects.filter(raw_event__source=source):
                     if slugify(staged.town) != town.slug:
-                        q.put(("warning", {
-                            "code": "town_mismatch",
-                            "message": f"Gemini guessed town '{staged.town}' but you forced '{town.name}'",
-                            "detail": {
-                                "staged_title": staged.title,
-                                "gemini_town": staged.town,
-                            },
-                        }))
+                        q.put(
+                            (
+                                "warning",
+                                {
+                                    "code": "town_mismatch",
+                                    "message": f"Gemini guessed town '{staged.town}' but you forced '{town.name}'",
+                                    "detail": {
+                                        "staged_title": staged.title,
+                                        "gemini_town": staged.town,
+                                    },
+                                },
+                            )
+                        )
                     staged.town = town.name
-                    staged.save(update_fields=['town'])
+                    staged.save(update_fields=["town"])
                 q.put(("stage", {"stage": "force_town", "status": "end"}))
 
                 # ── DEDUP ─────────────────────────────────────────────────────
                 q.put(("stage", {"stage": "dedup", "status": "start"}))
                 dedup_count = dedup_all_pending(source=source)
-                q.put(("stage", {
-                    "stage": "dedup",
-                    "status": "end",
-                    "summary": {"count": dedup_count},
-                }))
+                q.put(
+                    (
+                        "stage",
+                        {
+                            "stage": "dedup",
+                            "status": "end",
+                            "summary": {"count": dedup_count},
+                        },
+                    )
+                )
 
                 # ── SAFETY ────────────────────────────────────────────────────
                 q.put(("stage", {"stage": "safety", "status": "start"}))
                 safety_count = score_all_unscored(source=source, prompt_suffix=prompt_suffix)
                 safety_records = []
                 for s in StagedEvent.objects.filter(raw_event__source=source):
-                    safety_records.append({
-                        'id': s.id,
-                        'title': s.title,
-                        'safety_score': s.safety_score,
-                        'safety_notes': s.safety_notes,
-                        'status': s.status,
-                    })
+                    safety_records.append(
+                        {
+                            "id": s.id,
+                            "title": s.title,
+                            "safety_score": s.safety_score,
+                            "safety_notes": s.safety_notes,
+                            "status": s.status,
+                        }
+                    )
                 q.put(("stage_data", {"stage": "safety", "records": safety_records}))
-                q.put(("stage", {
-                    "stage": "safety",
-                    "status": "end",
-                    "summary": {"count": safety_count},
-                }))
+                q.put(
+                    (
+                        "stage",
+                        {
+                            "stage": "safety",
+                            "status": "end",
+                            "summary": {"count": safety_count},
+                        },
+                    )
+                )
 
                 # ── PUBLISH ───────────────────────────────────────────────────
                 q.put(("stage", {"stage": "publish", "status": "start"}))
@@ -167,17 +203,22 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
                 ]
 
                 q.put(("stage_data", {"stage": "publish", "records": published}))
-                q.put(("stage", {
-                    "stage": "publish",
-                    "status": "end",
-                    "summary": counts,
-                }))
+                q.put(
+                    (
+                        "stage",
+                        {
+                            "stage": "publish",
+                            "status": "end",
+                            "summary": counts,
+                        },
+                    )
+                )
 
                 final = {
-                    'dry_run': dry_run,
-                    'town': town.name,
-                    'counts': counts,
-                    'published': published,
+                    "dry_run": dry_run,
+                    "town": town.name,
+                    "counts": counts,
+                    "published": published,
                 }
 
                 if dry_run:
@@ -191,10 +232,15 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
             q.put(("done", rb.final))
 
     except Exception as e:
-        q.put(("error", {
-            "message": str(e),
-            "traceback": traceback.format_exc(),
-        }))
+        q.put(
+            (
+                "error",
+                {
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        )
     finally:
         ingestion_logger.removeHandler(handler)
         connection.close()

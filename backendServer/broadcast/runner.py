@@ -8,6 +8,7 @@ locals would silently switch to a second DB connection there. So the browser
 is launched per target and all DB writes happen between Playwright sessions.
 One Chromium at a time either way — same memory profile on the 6 GB VM.
 """
+
 import logging
 import os
 import tempfile
@@ -55,9 +56,15 @@ def run_submission(submission: BroadcastSubmission) -> None:
         target.error = result.error
         target.screenshot_path = result.screenshot_path
         target.finished_at = timezone.now()
-        target.save(update_fields=[
-            "status", "external_url", "error", "screenshot_path", "finished_at",
-        ])
+        target.save(
+            update_fields=[
+                "status",
+                "external_url",
+                "error",
+                "screenshot_path",
+                "finished_at",
+            ]
+        )
         if result.status == "failed":
             any_failed = True
         logger.info("broadcast %s → %s: %s", submission.id, target.site_key, result.status)
@@ -85,12 +92,12 @@ def _run_target(target, ev) -> TargetResult:
     os.makedirs(screenshot_dir, exist_ok=True)
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=settings.BROADCAST_HEADLESS, args=CHROMIUM_ARGS
-            )
+            browser = p.chromium.launch(headless=settings.BROADCAST_HEADLESS, args=CHROMIUM_ARGS)
             try:
                 page = browser.new_context().new_page()
-                with tempfile.TemporaryDirectory(dir=_ensure(settings.BROADCAST_DOWNLOAD_DIR)) as tmp:
+                with tempfile.TemporaryDirectory(
+                    dir=_ensure(settings.BROADCAST_DOWNLOAD_DIR)
+                ) as tmp:
                     ctx = RunContext(
                         dry_run=target.dry_run,
                         screenshot_dir=screenshot_dir,

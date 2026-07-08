@@ -72,6 +72,7 @@ def score_event(staged: StagedEvent, prompt_suffix: str = "") -> tuple[float, st
     if response is None:
         raise RuntimeError(f"All models failed scoring '{staged.title}'")
 
+    assert response.text is not None, "Gemini returned a response with no text"
     text = response.text.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1]

@@ -24,12 +24,12 @@ class EventSourceAdmin(ModelAdmin):
     def event_count(self, obj):
         return obj.raw_events.count()
 
-    event_count.short_description = "# Events"
+    event_count.short_description = "# Events"  # type: ignore[attr-defined]
 
     def prompt_suffix_preview(self, obj):
         return obj.prompt_suffix[:40] if obj.prompt_suffix else "—"
 
-    prompt_suffix_preview.short_description = "Prompt Suffix"
+    prompt_suffix_preview.short_description = "Prompt Suffix"  # type: ignore[attr-defined]
 
     @admin.action(description="Run ingestion pipeline (poll → standardize → dedup)")
     def run_ingestion_pipeline(self, request, queryset):
@@ -68,20 +68,20 @@ class StagedEventAdmin(ModelAdmin):
     def tag_list(self, obj):
         return ", ".join(obj.tags) if obj.tags else "—"
 
-    tag_list.short_description = "Tags"
+    tag_list.short_description = "Tags"  # type: ignore[attr-defined]
 
     def source_name(self, obj):
         return obj.raw_event.source.name if obj.raw_event else "—"
 
-    source_name.short_description = "Source"
+    source_name.short_description = "Source"  # type: ignore[attr-defined]
 
     def safety_score_display(self, obj):
         if obj.safety_score is None:
             return "—"
         return f"{obj.safety_score:.2f}"
 
-    safety_score_display.short_description = "Safety"
-    safety_score_display.admin_order_field = "safety_score"
+    safety_score_display.short_description = "Safety"  # type: ignore[attr-defined]
+    safety_score_display.admin_order_field = "safety_score"  # type: ignore[attr-defined]
 
     @admin.action(description="Approve selected events")
     def approve_events(self, request, queryset):

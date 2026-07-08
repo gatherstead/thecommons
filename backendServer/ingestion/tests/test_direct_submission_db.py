@@ -1,13 +1,13 @@
-"""T0 — Acceptance test for the direct host submission endpoint.
+"""T0 — Acceptance tests for POST /api/events/direct-submit (R4 contract).
 
-POST /api/events/direct-submit
-  body: {access_code, draft_id, event}
-
-This test is intentionally RED: the endpoint does not exist yet.
-It encodes the full feature contract so that once the endpoint and any
-supporting task/service code are implemented, this file passes unchanged.
+New contract (JWT-based ownership, anonymous allowed):
+- Anonymous POST + valid event + draft_id  → 202, submitted_by=None.
+- POST with valid Bearer JWT               → 202, submitted_by=user.
+- POST with INVALID Bearer token           → 401, no Event created.
+- Missing draft_id                         → 400.
+- High safety score                        → 202, StagedEvent pending, no live Event.
+- Re-post of same draft_id is idempotent.
 """
-import hashlib
 import json
 import uuid
 from unittest import mock
@@ -17,11 +17,9 @@ from rest_framework.test import APIClient
 
 from events.models import Event
 from events.tests.factories import make_town, make_user
-from ingestion.models import HostAccessGrant, StagedEvent
+from ingestion.models import StagedEvent
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-ACCESS_CODE = "HOSTCODE-T0-TEST"
 
 # Fixed draft_id so idempotency tests can re-use it across POSTs.
 DRAFT_ID = str(uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
@@ -56,20 +54,30 @@ STD_PAYLOAD = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _gemini_fake(payload):
-    """Return a mock genai.Client whose generate_content yields *payload*."""
-    fake = mock.Mock()
-    fake.models.generate_content.return_value = mock.Mock(text=json.dumps(payload))
-    return fake
+def _gemini_patch(std_payload, score):
+    """Patch google.genai.Client so standardize_event and score_event each get
+    their own fake client, in call order.
 
-
-def _scorer_fake(score):
-    """Return a mock safety-scorer genai.Client yielding *score*."""
-    fake = mock.Mock()
-    fake.models.generate_content.return_value = mock.Mock(
+    Both ``ingestion.standardizer`` and ``ingestion.safety_scorer`` do
+    ``from google import genai``, so they reference the *same* ``google.genai``
+    module object. Two independent ``mock.patch`` calls on that object clobber
+    each other (the second wins), which would feed score-JSON to the
+    standardizer. A single patch with ``side_effect`` avoids that: the pipeline
+    calls ``genai.Client()`` first in standardize_event (→ fake_std) and then in
+    score_event (→ fake_scorer).
+    """
+    fake_std = mock.Mock()
+    fake_std.models.generate_content.return_value = mock.Mock(
+        text=json.dumps(std_payload)
+    )
+    fake_scorer = mock.Mock()
+    fake_scorer.models.generate_content.return_value = mock.Mock(
         text=json.dumps({"score": score, "notes": ""})
     )
-    return fake
+    return mock.patch(
+        "ingestion.standardizer.genai.Client",
+        side_effect=[fake_std, fake_scorer],
+    )
 
 
 # ── Test class ────────────────────────────────────────────────────────────────
@@ -83,64 +91,88 @@ class DirectSubmissionTest(TestCase):
         self.client = APIClient()
         self.user = make_user()
         make_town(slug="carrboro")
-        HostAccessGrant.objects.create(
-            user=self.user,
-            code_hash=hashlib.sha256(ACCESS_CODE.encode()).hexdigest(),
-            is_active=True,
-        )
 
-    def _post(self, access_code, draft_id, event, *, score=0.0, std_payload=None):
-        """POST to the direct-submit endpoint with both Gemini mocks active."""
+    def _post_anon(self, draft_id, event, *, score=0.0, std_payload=None):
+        """POST without auth credentials."""
         if std_payload is None:
             std_payload = STD_PAYLOAD
-        with mock.patch(
-            "ingestion.standardizer.genai.Client", return_value=_gemini_fake(std_payload)
-        ), mock.patch(
-            "ingestion.safety_scorer.genai.Client", return_value=_scorer_fake(score)
-        ):
+        with _gemini_patch(std_payload, score):
             return self.client.post(
                 "/api/events/direct-submit",
-                {"access_code": access_code, "draft_id": draft_id, "event": event},
+                {"draft_id": draft_id, "event": event},
                 format="json",
             )
 
-    # 1. Valid submission → 202 + exactly one Event exists after the pipeline.
-    def test_valid_submission_returns_202_and_creates_one_event(self):
-        resp = self._post(ACCESS_CODE, DRAFT_ID, EVENT)
+    def _post_jwt(self, draft_id, event, *, score=0.0, std_payload=None):
+        """POST with a valid (mocked) Bearer JWT for self.user."""
+        if std_payload is None:
+            std_payload = STD_PAYLOAD
+        jwt_claims = {"sub": self.user.id, "email": self.user.email}
+        with mock.patch("backend.jwt_auth.verify_better_auth_jwt", return_value=jwt_claims):
+            with _gemini_patch(std_payload, score):
+                return self.client.post(
+                    "/api/events/direct-submit",
+                    {"draft_id": draft_id, "event": event},
+                    format="json",
+                    HTTP_AUTHORIZATION="Bearer fake-jwt-token",
+                )
+
+    # 1. Anonymous submission → 202 + one Event with no owner.
+    def test_anonymous_submission_returns_202_and_creates_event(self):
+        resp = self._post_anon(DRAFT_ID, EVENT)
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(Event.objects.count(), 1)
 
-    # 2. That Event has the correct source_name and owner.
-    def test_event_has_correct_source_name_and_created_by(self):
-        self._post(ACCESS_CODE, DRAFT_ID, EVENT)
+    def test_anonymous_submission_submitted_by_is_none(self):
+        self._post_anon(DRAFT_ID, EVENT)
+        staged = StagedEvent.objects.get()
+        self.assertIsNone(staged.submitted_by)
+
+    # 2. Authenticated (JWT) submission → 202, attributed to that user.
+    def test_jwt_submission_returns_202_and_attributes_user(self):
+        resp = self._post_jwt(DRAFT_ID, EVENT)
+        self.assertEqual(resp.status_code, 202)
         event = Event.objects.get()
         self.assertEqual(event.source_name, "Direct submission by host")
         self.assertEqual(event.created_by, self.user)
 
-    # 3. Re-posting the same draft_id with a changed title is idempotent: still
-    #    one Event, and its title reflects the second submission.
+    # 3. Invalid Bearer token → 401, no Event persisted.
+    def test_invalid_bearer_token_returns_401(self):
+        with mock.patch("backend.jwt_auth.verify_better_auth_jwt", return_value=None):
+            resp = self.client.post(
+                "/api/events/direct-submit",
+                {"draft_id": DRAFT_ID, "event": EVENT},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer bad-token",
+            )
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(Event.objects.count(), 0)
+
+    # 4. Re-posting the same draft_id is idempotent (one Event, updated title).
     def test_repost_same_draft_id_updates_event_without_duplicating(self):
-        self._post(ACCESS_CODE, DRAFT_ID, EVENT)
+        self._post_jwt(DRAFT_ID, EVENT)
         self.assertEqual(Event.objects.count(), 1)
 
         updated_event = dict(EVENT, title="Updated Jazz Night")
         updated_std = dict(STD_PAYLOAD, title="Updated Jazz Night")
-        self._post(ACCESS_CODE, DRAFT_ID, updated_event, std_payload=updated_std)
+        self._post_jwt(DRAFT_ID, updated_event, std_payload=updated_std)
 
         self.assertEqual(Event.objects.count(), 1)
-        event = Event.objects.get()
-        self.assertEqual(event.title, "Updated Jazz Night")
+        self.assertEqual(Event.objects.get().title, "Updated Jazz Night")
 
-    # 4. Invalid access_code → 403, no Event persisted.
-    def test_invalid_access_code_returns_403_and_no_event(self):
-        resp = self._post("WRONG-CODE", DRAFT_ID, EVENT)
-        self.assertEqual(resp.status_code, 403)
-        self.assertEqual(Event.objects.count(), 0)
+    # 5. Missing draft_id → 400.
+    def test_missing_draft_id_returns_400(self):
+        resp = self.client.post(
+            "/api/events/direct-submit",
+            {"event": EVENT},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
 
-    # 5. Safety score above threshold → StagedEvent(status='pending') held for
+    # 6. Safety score above threshold → StagedEvent(status='pending') held for
     #    review; no live Event created.
     def test_high_safety_score_creates_pending_staged_event_not_live_event(self):
-        resp = self._post(ACCESS_CODE, DRAFT_ID, EVENT, score=0.9)
+        resp = self._post_jwt(DRAFT_ID, EVENT, score=0.9)
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(Event.objects.count(), 0)
         self.assertEqual(

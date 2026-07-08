@@ -34,21 +34,22 @@ backendServer/
 │   ├── views.py                   #   cron_ingest, publish, admin doc pages
 │   └── management/commands/       #   ingest_events, cleanup_old_events
 ├── broadcast/                     # Event syndication (see ../docs/broadcast.md)
-│   ├── models.py                  #   BroadcastSubmission, BroadcastTarget
+│   ├── models.py                  #   BroadcastSubmission, BroadcastTarget, BroadcastAccess, AccessCode, AccessCodeUse
 │   ├── schema.py / routing.py     #   CanonicalEvent (ORM-decoupled); tag-based eligibility
 │   ├── services.py / worker.py    #   Submission persistence; DB-queue worker (SKIP LOCKED)
 │   ├── runner.py                  #   sync_playwright runner (no ORM inside)
 │   ├── views.py / serializers.py / permissions.py / access.py
 │   ├── adapters/                  #   One module per target site (10 Tier-1 + mock) + registry
 │   └── management/commands/       #   run_broadcast_worker, broadcast_dry_run, capture_broadcast_form,
-│                                  #     check_recipes, scaffold_adapter
+│                                  #     check_recipes, scaffold_adapter, set_broadcast_access,
+│                                  #     generate_access_code, list_access_codes, revoke_access_code
 ├── templates/                     # admin docs pages (docs/) + email digests (email/)
 └── pyproject.toml / uv.lock
 ```
 
 ## API Endpoints
 
-Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `code` `X-Broadcast-Access-Code`. `APPEND_SLASH=False` — slashes are exact. No global DRF config; auth/permissions are per-view.
+Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `tier≥N` broadcast tier (Bearer JWT or `X-Broadcast-Access-Code`, resolved by `broadcast/access.py`). `APPEND_SLASH=False` — slashes are exact. No global DRF config; auth/permissions are per-view.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -63,16 +64,19 @@ Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `
 | GET/POST | `/businesses` · `/businesses/me` · `/businesses/<uuid>` | user | Business listing CRUD |
 | GET | `/api/cron/ingest` | CRON_SECRET | Queue ingestion pipeline |
 | POST | `/api/events/publish-approved` | key | Queue bulk publish |
-| POST | `/broadcast/preview` · `/submit` | code | Preview eligible sites / enqueue submission |
-| GET/POST | `/broadcast/jobs/<uuid>[/retry\|/submit-real\|/cancel]` | code | Job status + lifecycle ops |
-| GET | `/broadcast/jobs/<uuid>/screenshots/<key>` · `/manual/<key>` | code | Screenshot / manual-review recipe |
+| GET | `/broadcast/access` | — | Caller's tier + trial metadata (403 for invalid creds) |
+| POST | `/broadcast/preview` · `/submit` | tier≥1 | Preview eligible sites / enqueue submission |
+| POST | `/broadcast/ai-autofill` | tier≥2 | LLM field extraction from free text |
+| POST | `/broadcast/direct-recipe` | tier≥1 | Recipe JSON for a site (no job) |
+| GET/POST | `/broadcast/jobs/<uuid>[/retry\|/submit-real\|/cancel]` | tier≥1 | Job status + lifecycle ops |
+| GET | `/broadcast/jobs/<uuid>/screenshots/<key>` · `/manual/<key>` | tier≥1 | Screenshot / manual-review recipe |
 | GET/POST | `/admin/docs/...` · `/admin/` | staff | Docs pages + django-unfold admin |
 
 ## Management Commands
 
 - **events:** `devserver` (auto-port runserver), `seed_dev`, `healthcheck [--json]`, `delete_user --email`, `send_digest`, `send_test_digest --email`, `send_weekly_digest`.
 - **ingestion:** `ingest_events` (full pipeline; `--skip-*`, `--shard N/M`), `cleanup_old_events`.
-- **broadcast:** `run_broadcast_worker [--once]`, `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`.
+- **broadcast:** `run_broadcast_worker [--once]`, `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`, `set_broadcast_access <email> <0|1|2>`, `generate_access_code [--tier] [--label] [--expires] [--uses|--unlimited]`, `list_access_codes`, `revoke_access_code <label|id>`.
 
 ## Redis + Celery (local)
 

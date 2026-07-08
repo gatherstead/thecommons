@@ -8,6 +8,7 @@ class EventSource(models.Model):
         ('ics', 'ICS/iCal Feed'),
         ('scraper', 'Web Scraper'),
         ('email', 'Email Inbox'),
+        ('direct', 'Direct Host Submission'),
     ]
 
     name = models.CharField(max_length=255)
@@ -17,6 +18,7 @@ class EventSource(models.Model):
     last_polled = models.DateTimeField(null=True, blank=True)
     poll_interval_hours = models.IntegerField(default=24)
     notes = models.TextField(blank=True)
+    prompt_suffix = models.TextField(blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

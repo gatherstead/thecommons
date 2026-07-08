@@ -45,7 +45,7 @@ Better Auth (Next.js) owns these tables; Django maps them **read-only** for join
 
 | Model | Key fields | Relationships |
 |-------|-----------|---------------|
-| `EventSource` | `name`, `source_type` (ics/scraper/email), `url`, `active`, `last_polled`, `poll_interval_hours` | reverse `raw_events` |
+| `EventSource` | `name`, `source_type` (ics/scraper/email/**direct**), `url`, `active`, `last_polled`, `poll_interval_hours` | reverse `raw_events` |
 | `RawEvent` | raw title/description/location, raw start/end, `source_url`, `source_uid`, `processed` | FK→`EventSource`; `unique_together=(source, source_uid)` |
 | `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, category, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`BetterAuthUser` (`submitted_by`) |
 
@@ -55,6 +55,9 @@ Better Auth (Next.js) owns these tables; Django maps them **read-only** for join
 |-------|-----------|---------------|
 | `BroadcastSubmission` | `uuid` (PK), `client_label`, denormalized event fields (title, datetimes, venue/address, locality JSON, categories JSON, urls, price, organizer, contacts), `status` (queued/running/done/failed/canceled), timestamps | reverse `targets` |
 | `BroadcastTarget` | `uuid` (PK), `site_key`, `status` (pending/in_progress/succeeded/failed/needs_manual/skipped), `attempts`, `external_url`, `error`, `screenshot_path`, `dry_run`, timestamps | FK→`BroadcastSubmission`; `UniqueConstraint(submission, site_key)` |
+| `BroadcastAccess` | `email` (unique, lowercased), `tier` (0/1/2, default 0), timestamps | — |
+| `AccessCode` | `code_hash` (SHA-256 hex; raw shown once at generation, never stored), `label`, `tier` (default 2), `max_uses` (null=unlimited, default 3), `is_active`, `expires_at`, timestamps | reverse `uses` |
+| `AccessCodeUse` | `draft_id`, timestamps | FK→`AccessCode` (`related_name="uses"`); `unique_together(access_code, draft_id)` |
 
 ### Database ownership
 
@@ -72,7 +75,7 @@ Better Auth (Next.js) owns these tables; Django maps them **read-only** for join
 Notes that apply throughout:
 - **`APPEND_SLASH=False`** — trailing slashes are matched exactly as written below.
 - **No global DRF config.** Each view sets its own `@authentication_classes` / `@permission_classes` (house pattern).
-- Auth column: `—` = public, `user` = Better Auth JWT, `API key` = `THE_COMMONS_API_KEY`, `code` = `X-Broadcast-Access-Code`.
+- Auth column: `—` = public, `user` = Better Auth JWT, `API key` = `THE_COMMONS_API_KEY`, `tier≥N` = broadcast tier (Bearer JWT or `X-Broadcast-Access-Code`, resolved by `broadcast/access.py`).
 
 ### Root (`backend/urls.py`)
 
@@ -80,6 +83,7 @@ Notes that apply throughout:
 |--------|------|------|---------|
 | GET | `/api/cron/ingest` | `CRON_SECRET` | Queue the ingestion pipeline (Celery) |
 | POST | `/api/events/publish-approved` | API key | Queue bulk publish of approved staged events |
+| POST | `/api/events/direct-submit` | JWT optional (anonymous allowed) | Direct host event submission — fire-and-forget from broadcast SPA; 10/m by IP; invalid token → 401 |
 | GET/PATCH | `/auth/me` | user | Read / update own profile |
 | POST | `/auth/subscribe` | — | Newsletter signup |
 | GET/POST | `/businesses` | user | Browse published businesses / create a listing |
@@ -101,19 +105,24 @@ Notes that apply throughout:
 | GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
 | POST | `/events/create` | user or API key | Submit an event → `StagedEvent` |
 
-### Broadcast (`/broadcast/`, all gated by `X-Broadcast-Access-Code`)
+### Broadcast (`/broadcast/`)
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/broadcast/preview` | Compute eligible/excluded target sites for an event |
-| POST | `/broadcast/submit` | Create submission + targets, enqueue |
-| GET | `/broadcast/jobs/<uuid>` | Job status + per-target detail |
-| POST | `/broadcast/jobs/<uuid>/retry` | Re-queue selected targets |
-| POST | `/broadcast/jobs/<uuid>/submit-real` | Promote dry-run targets to real |
-| POST | `/broadcast/jobs/<uuid>/cancel` | Cancel job, skip pending |
-| GET | `/broadcast/jobs/<uuid>/screenshots/<site_key>` | Serve gated screenshot PNG |
-| GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | Recipe JSON for a `needs_manual` target |
-| GET | `/broadcast/mock-form` | Dev-only (`DEBUG`) mock submission form |
+Auth via Bearer JWT or `X-Broadcast-Access-Code` header, resolved to a tier by `broadcast/access.py`. Tier ≥ 1 required for most endpoints; tier ≥ 2 for ai-autofill. See [docs/broadcast.md §Access control](docs/broadcast.md#access-control) for the full tier table.
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/broadcast/access` | open | Caller's tier + trial metadata |
+| POST | `/broadcast/preview` | tier ≥ 1 | Compute eligible/excluded target sites for an event; meters trial use |
+| POST | `/broadcast/ai-autofill` | tier ≥ 2 | LLM-extract event fields from pasted text |
+| POST | `/broadcast/direct-recipe` | tier ≥ 1 | Recipe JSON for a site from event data — no job required |
+| POST | `/broadcast/submit` | tier ≥ 1 | Create submission + targets, enqueue |
+| GET | `/broadcast/jobs/<uuid>` | tier ≥ 1 | Job status + per-target detail |
+| POST | `/broadcast/jobs/<uuid>/retry` | tier ≥ 1 | Re-queue selected targets |
+| POST | `/broadcast/jobs/<uuid>/submit-real` | tier ≥ 1 | Promote dry-run targets to real |
+| POST | `/broadcast/jobs/<uuid>/cancel` | tier ≥ 1 | Cancel job, skip pending |
+| GET | `/broadcast/jobs/<uuid>/screenshots/<site_key>` | tier ≥ 1 | Serve gated screenshot PNG |
+| GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | tier ≥ 1 | Recipe JSON for a `needs_manual` target |
+| GET | `/broadcast/mock-form` | — (`DEBUG` only) | Dev-only mock submission form |
 
 > Login/signup/logout are handled by Better Auth in **Next.js** at `/api/auth/*` (including lazy `POST /api/auth/enter` and `POST /api/auth/set-password`).
 
@@ -125,11 +134,15 @@ Notes that apply throughout:
 
 Auth is owned by **Better Auth running inside Next.js** — there are no Django login/signup endpoints. Django only *verifies* tokens.
 
+### Auth-origin topology
+
+Better Auth is served at **`https://auth.thecommons.town`** (reverse-proxied by nginx on the shared VM; still physically the Next.js app). A **shared cookie domain `.thecommons.town`** (`BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town`, `SameSite=None; Secure`) lets one session span the apex app and `broadcast.thecommons.town`. Every client points its Better Auth client at `BETTER_AUTH_URL` / `VITE_BETTER_AUTH_URL` = `https://auth.thecommons.town`. Django's `BETTER_AUTH_JWKS_URL` also points at this origin. `trustedOrigins` in `src/lib/auth.ts` lists apex, www, broadcast subdomain, localhost:3000, localhost:5173, and any `BETTER_AUTH_TRUSTED_ORIGINS` env additions.
+
 ### The bridge
 - Browser authenticates with Better Auth and holds a session cookie.
-- To call Django, the frontend fetches a short-lived **JWT** from `/api/auth/token` (Better Auth `jwt()` plugin) and sends it as `Authorization: Bearer <jwt>`.
+- To call Django, the frontend fetches a short-lived **JWT** from `/api/auth/token` (Better Auth `jwt()` plugin) and sends it as `Authorization: Bearer <jwt>`. JWT payload carries the `email` claim by default (`sub` = user id).
 - `BearerTokenAuthentication` accepts either:
-  1. a **Better Auth JWT** verified statelessly against the frontend's JWKS endpoint (`BETTER_AUTH_JWKS_URL`); `sub` resolves to a `BetterAuthUser`. The JWKS client is cached in-process with a TTL and **stale-grace** fallback so brief Next.js outages don't cascade.
+  1. a **Better Auth JWT** verified statelessly against the JWKS endpoint (`BETTER_AUTH_JWKS_URL`); `sub` resolves to a `BetterAuthUser`. The JWKS client is cached in-process with a TTL and **stale-grace** fallback so brief Next.js outages don't cascade. In `broadcast/`, `verify_better_auth_jwt` is called directly — no `BetterAuthUser` ORM lookup (isolation preserved).
   2. the shared **`THE_COMMONS_API_KEY`** (no user attached) — for app-level calls like event creation.
 - Permission classes live in `backend/permissions.py` and are applied per-view alongside DRF's `IsAuthenticated`.
 
@@ -168,7 +181,7 @@ Orchestrated by `ingestion.tasks.run_ingestion_pipeline` (Celery, daily 04:00 ET
    publish_all_approved()      atomically create Event rows, link, delete StagedEvents
 ```
 
-Manual entrypoints: `POST /api/cron/ingest` (`CRON_SECRET`) queues the pipeline; `POST /api/events/publish-approved` (API key) and the admin docs page queue `publish_all_approved_task`. Public/auth users submit via `POST /events/create`, which creates a pending `StagedEvent` directly (skipping poll/standardize). Unknown `Town` slugs cause an event to be skipped at publish time. Threshold is `SAFETY_SCORE_THRESHOLD` (default 0.3). See [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) and [docs/safety-scoring.md](docs/safety-scoring.md).
+Manual entrypoints: `POST /api/cron/ingest` (`CRON_SECRET`) queues the pipeline; `POST /api/events/publish-approved` (API key) and the admin docs page queue `publish_all_approved_task`. Public/auth users submit via `POST /events/create`, which creates a pending `StagedEvent` directly (skipping poll/standardize). **Hosts submit via `POST /api/events/direct-submit`** (Bearer JWT optional; anonymous accepted; invalid token → 401; 10/m by IP) — the broadcast SPA fires this fire-and-forget alongside every preview; it upserts a `RawEvent` keyed by `draft_id` (idempotent re-edits), runs the same standardize/score/publish pipeline, and retains the `StagedEvent` row for the edit chain. Valid JWT → `submitted_by` attributed; no JWT → `submitted_by=None`. Bridge code lives in `ingestion/`; `broadcast/` imports nothing from `ingestion/` (`test_isolation.py` enforces this). Unknown `Town` slugs cause an event to be skipped at publish time. Threshold is `SAFETY_SCORE_THRESHOLD` (default 0.3). See [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) and [docs/safety-scoring.md](docs/safety-scoring.md).
 
 ---
 
@@ -178,7 +191,7 @@ Manual entrypoints: `POST /api/cron/ingest` (`CRON_SECRET`) queues the pipeline;
 
 The broadcast subsystem pushes a single event out to multiple third-party community calendars via headless Playwright form-filling. It is deliberately **isolated** from `events/` (its `routing.py` must not import from `events`) and does **not** use Celery — it runs its own DB-backed queue worker.
 
-Flow: access code → `preview` (build a `CanonicalEvent`, match adapters via `routing.eligible_targets`) → `submit` (create `BroadcastSubmission` + `BroadcastTarget`s) → `run_broadcast_worker` claims the job (`SELECT FOR UPDATE SKIP LOCKED`) → `runner.py` drives one Chromium session per target (no ORM inside `sync_playwright`) → per-site adapters fill and submit.
+Flow: tier-based auth (Bearer JWT or access code, resolved by `broadcast/access.py`) → `preview` (build a `CanonicalEvent`, match adapters via `routing.eligible_targets`) → `submit` (create `BroadcastSubmission` + `BroadcastTarget`s) → `run_broadcast_worker` claims the job (`SELECT FOR UPDATE SKIP LOCKED`) → `runner.py` drives one Chromium session per target (no ORM inside `sync_playwright`) → per-site adapters fill and submit.
 
 **[docs/broadcast.md](docs/broadcast.md) is the single source of truth** for models, adapters, access codes, env vars, commands, and the manual-review handoff.
 
@@ -254,10 +267,13 @@ Settings are split by `DJANGO_SETTINGS_MODULE`:
 - `test.py` — inherits dev; strips `-pooler` from the DB host (Neon direct endpoint so the test DB can be created/dropped), eager Celery, locmem cache, stubbed external creds. See [§Testing](#testing--ci).
 
 ### Backend env vars (`backendServer/.env`)
-`DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `CORS_EXTRA_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `REDIS_URL` (DB 0), `REDIS_CACHE_URL` (DB 1), `GEMINI_API_KEY`, `CRON_SECRET`, `THE_COMMONS_API_KEY`, `SAFETY_SCORE_THRESHOLD` (opt), `INGEST_SHARD_COUNT` (opt), `BETTER_AUTH_JWKS_URL` / `_ISSUER` / `_AUDIENCE`, `BREVO_API_KEY`, `DIGEST_FROM_EMAIL`, `SITE_URL`, and the `BROADCAST_*` family (see [docs/broadcast.md](docs/broadcast.md)). DEPLOY.md is authoritative for production values.
+`DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `CORS_EXTRA_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `REDIS_URL` (DB 0), `REDIS_CACHE_URL` (DB 1), `GEMINI_API_KEY`, `CRON_SECRET`, `THE_COMMONS_API_KEY`, `SAFETY_SCORE_THRESHOLD` (opt), `INGEST_SHARD_COUNT` (opt), `BETTER_AUTH_JWKS_URL` (points at `https://auth.thecommons.town/api/auth/jwks` in prod) / `_ISSUER` / `_AUDIENCE`, `BREVO_API_KEY`, `DIGEST_FROM_EMAIL`, `SITE_URL`, and the `BROADCAST_*` family (see [docs/broadcast.md](docs/broadcast.md); access codes are now DB-only — no env code list). DEPLOY.md is authoritative for production values.
 
 ### Frontend env vars (`theCommonsWeb/.env.local`)
-`NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_THE_COMMONS_API_KEY`, `NEXT_PUBLIC_BETTER_AUTH_URL` (public); `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (server-only).
+`NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_THE_COMMONS_API_KEY`, `NEXT_PUBLIC_BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS` (opt, comma-separated extra origins), `BETTER_AUTH_COOKIE_DOMAIN` (prod: `.thecommons.town` — enables cross-subdomain sessions) (public); `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (server-only — prod: `https://auth.thecommons.town`).
+
+### Broadcast SPA env vars (`broadcastWeb/.env`)
+`VITE_BROADCAST_API_BASE_URL`, `VITE_BROADCAST_EXTENSION_ID`, `VITE_BETTER_AUTH_URL` (prod: `https://auth.thecommons.town`).
 
 ### Dev mode
 There is **no single "dev mode" flag or auth bypass.** Auth is never bypassed. Dev-vs-prod behavior is spread across:

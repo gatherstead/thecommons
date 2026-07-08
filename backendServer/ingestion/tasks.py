@@ -9,7 +9,7 @@ from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.safety_scorer import score_all_unscored
-from ingestion.services import auto_publish_safe_events, publish_all_approved
+from ingestion.services import auto_publish_safe_events, ingest_direct_submission, publish_all_approved
 
 logger = logging.getLogger(__name__)
 
@@ -92,3 +92,9 @@ def run_ingestion_pipeline(self):
 def publish_all_approved_task():
     """Background wrapper for the bulk publish (called from admin/API)."""
     return publish_all_approved()
+
+
+@shared_task
+def ingest_direct_submission_task(raw_event_id, user_id):
+    """Background wrapper for direct host submission ingestion."""
+    return ingest_direct_submission(raw_event_id, user_id)

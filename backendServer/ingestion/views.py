@@ -4,8 +4,14 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+from django_ratelimit.decorators import ratelimit
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.response import Response
 
-from ingestion.tasks import publish_all_approved_task, run_ingestion_pipeline
+from backend.permissions import BearerTokenAuthentication
+from ingestion.models import EventSource, RawEvent
+from ingestion.serializers import DirectSubmitEventSerializer
+from ingestion.tasks import ingest_direct_submission_task, publish_all_approved_task, run_ingestion_pipeline
 
 
 @staff_member_required
@@ -40,6 +46,55 @@ def cron_ingest(request):
 
     result = run_ingestion_pipeline.delay()
     return JsonResponse({'status': 'queued', 'task_id': result.id}, status=202)
+
+
+@ratelimit(key="ip", rate="10/m", method="POST", block=True)
+@api_view(["POST"])
+@authentication_classes([BearerTokenAuthentication])
+@permission_classes([])
+def direct_submit(request):
+    """Accept a direct host event submission, upsert a RawEvent, and enqueue processing.
+
+    Attribute to the caller's Better Auth JWT when present; accept anonymous
+    submissions (owner = None) otherwise.  Invalid tokens are rejected with 401
+    by BearerTokenAuthentication before this view body runs.
+    """
+    user_id = request.user.id if getattr(request.user, "is_authenticated", False) else None
+
+    serializer = DirectSubmitEventSerializer(data=request.data.get("event", {}))
+    if not serializer.is_valid():
+        return Response({"event": serializer.errors}, status=400)
+
+    draft_id = request.data.get("draft_id")
+    if not draft_id:
+        return Response({"draft_id": "required"}, status=400)
+
+    source, _ = EventSource.objects.get_or_create(
+        name="Direct Host Submission",
+        source_type="direct",
+        defaults={"url": "", "active": False},
+    )
+
+    data = serializer.validated_data
+    raw_location = ", ".join(p for p in [data["venue_name"], data["address_line1"]] if p)[:500]
+
+    raw_event, _ = RawEvent.objects.update_or_create(
+        source=source,
+        source_uid=str(draft_id),
+        defaults={
+            "raw_title": data["title"][:500],
+            "raw_description": data["description"],
+            "raw_location": raw_location,
+            "raw_start": data["start_datetime"],
+            "raw_end": data.get("end_datetime"),
+            "source_url": data.get("event_url", "")[:500],
+            "processed": False,
+        },
+    )
+
+    ingest_direct_submission_task.delay(raw_event.id, user_id)
+
+    return Response({"status": "queued", "draft_id": str(draft_id)}, status=202)
 
 
 @csrf_exempt

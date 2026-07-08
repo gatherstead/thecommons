@@ -5,6 +5,7 @@ from broadcast import views
 app_name = "broadcast"
 
 urlpatterns = [
+    path("access", views.access_info, name="access"),
     path("preview", views.preview, name="preview"),
     path("submit", views.submit, name="submit"),
     path("jobs/<uuid:job_id>", views.job_detail, name="job-detail"),

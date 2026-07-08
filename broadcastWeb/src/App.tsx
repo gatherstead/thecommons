@@ -6,10 +6,15 @@ import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
+import { authClient, fetchJwt } from "./lib/authClient";
 import {
+  type ApiAuth,
+  ApiError,
   aiAutofill,
   cancelJob,
   directRecipe,
+  directSubmit,
+  getAccess,
   getJob,
   previewBroadcast,
   retryJob,
@@ -17,6 +22,7 @@ import {
 } from "./services/broadcastApi";
 
 const DEV_FIXTURE: EventDraft = {
+  draft_id: "",
   title: "Bull City BOOs Fest",
   description:
     "Join The MAKRS Society for our 5th annual Halloween Festival at Durham Central Park!\n\nCostumes Encouraged!!\n\nCool People. Cool Stuff.\n\n🍕 THE FOOD: 10-15 food trucks, breweries, cideries, wine, desserts and more!\n\n🔥 THE PERFORMANCES: Contortionist, magician, aerialist, fire performers and more!\n\n🎧 THE MUSIC: Live DJ keeping the party alive all night!\n\n🔮 THE EXPERIENCE: Lasers, fog, stilt walkers, tarot card readers, costume contests, selfie wall and more!\n\nVendor Applications: https://www.eventeny.com/events/vendor/?id=46443\nFood Truck Applications: https://www.eventeny.com/events/vendor/?id=46444\nEvent Website: https://makrs.com/bull-city-boos-fest",
@@ -40,6 +46,7 @@ const DEV_FIXTURE: EventDraft = {
 };
 
 const EMPTY_DRAFT: EventDraft = {
+  draft_id: "",
   title: "",
   description: "",
   start_datetime: "",
@@ -137,10 +144,25 @@ const restoreFillStatus = (
 };
 
 export default function App() {
+  const session = authClient.useSession();
+  const [jwt, setJwt] = useState<string | null>(null);
+  const [tier, setTier] = useState<0 | 1 | 2>(0);
+  const [isTrial, setIsTrial] = useState(false);
+  const [usesRemaining, setUsesRemaining] = useState<number | null>(null);
+
   const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
-  const [verified, setVerified] = useState(SESSION.verified ?? false);
+  const [accessVerified, setAccessVerified] = useState(SESSION.verified ?? false);
+
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginName, setLoginName] = useState("");
+  const [loginMode, setLoginMode] = useState<"signin" | "signup">("signin");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
+    draft_id: DRAFT.draft?.draft_id || crypto.randomUUID(),
     ...STICKY_CONTACT,
   });
   const [preview, setPreview] = useState<PreviewResult | null>(DRAFT.preview ?? null);
@@ -157,18 +179,62 @@ export default function App() {
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
+  const auth: ApiAuth = jwt ? { jwt } : { accessCode };
+
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
   const locked = Boolean(preview);
+  const hasAccess = tier >= 1;
+
+  useEffect(() => {
+    if (session.data) {
+      fetchJwt().then(async (token) => {
+        setJwt(token);
+        if (token) {
+          try {
+            const access = await getAccess({ jwt: token });
+            setTier(access.tier);
+            setIsTrial(access.is_trial);
+            setUsesRemaining(access.uses_remaining);
+          } catch {
+            setTier(0);
+            setIsTrial(false);
+            setUsesRemaining(null);
+          }
+        }
+      });
+    } else if (!session.isPending) {
+      setJwt(null);
+      if (!accessVerified) {
+        setTier(0);
+        setIsTrial(false);
+        setUsesRemaining(null);
+      }
+    }
+  }, [session.data, session.isPending]);
+
+  // On mount: re-validate a persisted access code so tier info is current.
+  useEffect(() => {
+    if (accessVerified && !session.data) {
+      getAccess({ accessCode }).then((access) => {
+        setTier(access.tier);
+        setIsTrial(access.is_trial);
+        setUsesRemaining(access.uses_remaining);
+      }).catch(() => {
+        setAccessVerified(false);
+        setTier(0);
+      });
+    }
+  }, []); // mount only — intentional
 
   useEffect(() => {
     saveSession({
       accessCode,
-      verified,
+      verified: accessVerified,
       organizer_name: draft.organizer_name,
       contact_email: draft.contact_email,
       contact_phone: draft.contact_phone,
     });
-  }, [accessCode, verified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
+  }, [accessCode, accessVerified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
 
   useEffect(() => {
     saveDraft({
@@ -179,15 +245,71 @@ export default function App() {
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
+    const authSnap: ApiAuth = jwt ? { jwt } : { accessCode };
     const id = setInterval(() => {
-      getJob(accessCode, jobIdRef.current!)
+      getJob(authSnap, jobIdRef.current!)
         .then(setJob)
         .catch(() => {
           /* transient poll failure — keep polling */
         });
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [jobActive, accessCode]);
+  }, [jobActive, accessCode, jwt]);
+
+  const handleVerify = async () => {
+    if (!accessCode.trim()) return;
+    try {
+      const access = await getAccess({ accessCode });
+      setAccessVerified(true);
+      setTier(access.tier);
+      setIsTrial(access.is_trial);
+      setUsesRemaining(access.uses_remaining);
+      setError("");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setError("Access code not recognized. Check your code and try again.");
+      } else {
+        setError("Could not verify access code. Try again.");
+      }
+      setAccessVerified(false);
+      setTier(0);
+    }
+  };
+
+  const handleSignIn = async () => {
+    setLoginLoading(true);
+    setLoginError("");
+    const result = await authClient.signIn.email({
+      email: loginEmail,
+      password: loginPassword,
+    });
+    setLoginLoading(false);
+    if (result.error) {
+      setLoginError(result.error.message ?? "Sign in failed.");
+    }
+  };
+
+  const handleSignUp = async () => {
+    setLoginLoading(true);
+    setLoginError("");
+    const result = await authClient.signUp.email({
+      email: loginEmail,
+      password: loginPassword,
+      name: loginName,
+    });
+    setLoginLoading(false);
+    if (result.error) {
+      setLoginError(result.error.message ?? "Account creation failed.");
+    }
+  };
+
+  const handleSignOut = async () => {
+    await authClient.signOut();
+    setJwt(null);
+    setTier(0);
+    setIsTrial(false);
+    setUsesRemaining(null);
+  };
 
   const handleDraftChange = (next: EventDraft) => {
     setDraft(next);
@@ -200,8 +322,9 @@ export default function App() {
   const handlePreview = async () => {
     setBusy(true);
     setError("");
+    directSubmit(auth, draft.draft_id, toApiEvent(draft)).catch(() => {});
     try {
-      const result = await previewBroadcast(accessCode, toApiEvent(draft));
+      const result = await previewBroadcast(auth, toApiEvent(draft));
       setPreview(result);
       // Coming-soon calendars are shown in the picker but can't be submitted —
       // keep them out of the default selection so they never enter the submit list.
@@ -224,8 +347,8 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      await retryJob(accessCode, jobIdRef.current, siteKeys);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await retryJob(auth, jobIdRef.current, siteKeys);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Retry failed.");
     } finally {
@@ -237,8 +360,8 @@ export default function App() {
     if (!jobIdRef.current) return;
     setError("");
     try {
-      await submitReal(accessCode, jobIdRef.current, siteKeys);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await submitReal(auth, jobIdRef.current, siteKeys);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed.");
     }
@@ -249,8 +372,8 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      await cancelJob(accessCode, jobIdRef.current);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await cancelJob(auth, jobIdRef.current);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancel failed.");
     } finally {
@@ -265,7 +388,7 @@ export default function App() {
     }
     setExtFillStatus((prev) => ({ ...prev, [siteKey]: "filling" }));
     try {
-      const recipe = await directRecipe(accessCode, toApiEvent(draft), siteKey);
+      const recipe = await directRecipe(auth, toApiEvent(draft), siteKey);
       const ok = await sendFill(extensionId, recipe);
       setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "submitted" : "unavailable" }));
     } catch {
@@ -281,6 +404,7 @@ export default function App() {
     setSelected(new Set());
     setDraft((prev) => ({
       ...EMPTY_DRAFT,
+      draft_id: crypto.randomUUID(),
       organizer_name: prev.organizer_name,
       contact_email: prev.contact_email,
       contact_phone: prev.contact_phone,
@@ -291,7 +415,7 @@ export default function App() {
     setSpeedSubmit(false);
   };
 
-  // Reset everything for a fresh event, but keep the (verified) access code.
+  // Reset everything for a fresh event, but keep the (verified) access/auth state.
   const startOver = resetCore;
 
   const resetForm = resetCore;
@@ -300,13 +424,14 @@ export default function App() {
     setAiBusy(true);
     setError("");
     try {
-      const result = await aiAutofill(accessCode, aiText);
+      const result = await aiAutofill(auth, aiText);
       setDraft((prev) => ({
         ...EMPTY_DRAFT,
         organizer_name: prev.organizer_name,
         contact_email: prev.contact_email,
         contact_phone: prev.contact_phone,
         ...result.event,
+        draft_id: crypto.randomUUID(),
       }));
       setPreview(null);
       setJob(null);
@@ -335,6 +460,8 @@ export default function App() {
     ? Object.fromEntries(preview.eligible.map((s) => [s.site_key, s.name]))
     : {};
 
+  const loggedInNoAccess = session.data && !session.isPending && tier === 0;
+
   return (
     <div className="page">
       <header className="masthead">
@@ -357,126 +484,232 @@ export default function App() {
         <h2>Access</h2>
         <div className="field-grid">
           <div className="field access-col">
-            <label htmlFor="access-code">
-              Access Code <span className="required-mark">*</span>
-            </label>
+            <p className="field-section-label">Account</p>
+            {session.isPending ? (
+              <p className="hint">Checking session…</p>
+            ) : session.data ? (
+              <>
+                <p className="account-email">{session.data.user.email}</p>
+                {loggedInNoAccess && (
+                  <p className="section-note">
+                    This account has no broadcast access yet — contact The Commons.
+                  </p>
+                )}
+                <button type="button" className="linklike" onClick={handleSignOut}>
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor="login-email">Email</label>
+                  <input
+                    id="login-email"
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    autoComplete="email"
+                    disabled={loginLoading}
+                  />
+                </div>
+                {loginMode === "signup" && (
+                  <div className="field">
+                    <label htmlFor="login-name">Name</label>
+                    <input
+                      id="login-name"
+                      type="text"
+                      value={loginName}
+                      onChange={(e) => setLoginName(e.target.value)}
+                      autoComplete="name"
+                      disabled={loginLoading}
+                    />
+                  </div>
+                )}
+                <div className="field">
+                  <label htmlFor="login-password">Password</label>
+                  <input
+                    id="login-password"
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    autoComplete={loginMode === "signin" ? "current-password" : "new-password"}
+                    disabled={loginLoading}
+                  />
+                </div>
+                {loginError && <p className="field-error">{loginError}</p>}
+                <div className="actions">
+                  {loginMode === "signin" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSignIn}
+                        disabled={loginLoading || !loginEmail || !loginPassword}
+                      >
+                        {loginLoading ? "Signing in…" : "Sign in"}
+                      </button>
+                      <button
+                        type="button"
+                        className="linklike"
+                        onClick={() => { setLoginMode("signup"); setLoginError(""); }}
+                      >
+                        Create account
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSignUp}
+                        disabled={loginLoading || !loginEmail || !loginPassword || !loginName}
+                      >
+                        {loginLoading ? "Creating…" : "Create account"}
+                      </button>
+                      <button
+                        type="button"
+                        className="linklike"
+                        onClick={() => { setLoginMode("signin"); setLoginError(""); }}
+                      >
+                        Sign in instead
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="field access-col">
+            <p className="field-section-label">Access Code</p>
             <div className="verify-row">
               <input
                 id="access-code"
                 type="password"
                 value={accessCode}
-                onChange={(e) => { setAccessCode(e.target.value); setVerified(false); }}
+                onChange={(e) => {
+                  setAccessCode(e.target.value);
+                  setAccessVerified(false);
+                  if (!jwt) setTier(0);
+                }}
                 autoComplete="off"
                 disabled={busy || job !== null || locked}
+                placeholder="Provided by The Commons"
               />
               <button
                 type="button"
-                className={verified ? "verify is-verified" : "verify"}
-                onClick={() => { if (accessCode.trim() !== "") setVerified(true); }}
-                disabled={verified || accessCode.trim() === ""}
+                className={accessVerified && !jwt ? "verify is-verified" : "verify"}
+                onClick={handleVerify}
+                disabled={accessVerified && !jwt || accessCode.trim() === "" || !!jwt}
               >
-                {verified ? "✓ Success" : "Verify"}
+                {accessVerified && !jwt ? "✓ Verified" : "Verify"}
               </button>
             </div>
-            <p className="hint">Provided by The Commons. Remembered on this device — you stay signed in across events.</p>
+            {isTrial && hasAccess && usesRemaining !== null && (
+              <p className="hint">
+                {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining —
+                one use per event previewed; edits are free.
+              </p>
+            )}
+            <p className="hint">Remembered on this device — you stay signed in across events.</p>
+          </div>
+        </div>
+
+        <div className="contact-row">
+          <div className="field">
+            <label htmlFor="contact-name">Contact Name</label>
+            <input
+              id="contact-name"
+              type="text"
+              value={draft.organizer_name ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
+              disabled={busy || job !== null || !hasAccess || locked}
+              maxLength={200}
+            />
           </div>
 
-          <div className="contact-col">
-            <div className="field">
-              <label htmlFor="contact-name">Contact Name</label>
-              <input
-                id="contact-name"
-                type="text"
-                value={draft.organizer_name ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-                maxLength={200}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="contact-email">Contact Email</label>
-              <input
-                id="contact-email"
-                type="email"
-                value={draft.contact_email ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="contact-phone">Contact Phone</label>
-              <input
-                id="contact-phone"
-                type="tel"
-                value={draft.contact_phone ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-                maxLength={40}
-              />
-            </div>
-
-            <p className="hint">Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.</p>
+          <div className="field">
+            <label htmlFor="contact-email">Contact Email</label>
+            <input
+              id="contact-email"
+              type="email"
+              value={draft.contact_email ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
+              disabled={busy || job !== null || !hasAccess || locked}
+            />
           </div>
+
+          <div className="field">
+            <label htmlFor="contact-phone">Contact Phone</label>
+            <input
+              id="contact-phone"
+              type="tel"
+              value={draft.contact_phone ?? ""}
+              onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
+              disabled={busy || job !== null || !hasAccess || locked}
+              maxLength={40}
+            />
+          </div>
+
+          <p className="hint contact-hint">
+            Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.
+          </p>
         </div>
       </section>
 
-      <section className={`section${locked ? " form-dim" : ""}`}>
-        <h2>AI Autofill</h2>
-        <p className="hint">
-          Paste a raw event description, email, or flyer text below and the AI will fill
-          the event fields for you. Works on a blank event form — your saved contact
-          details are fine; reset first if you've already entered event details.
-        </p>
-        {!verified ? (
-          <p className="section-note">Verify your access code to begin.</p>
-        ) : !isDraftEmpty(draft) ? (
-          <>
-            <textarea
-              className="ai-autofill-textarea"
-              disabled
-              placeholder="Paste an event description / flyer text / email…"
-              value={aiText}
-            />
-            <div className="actions">
-              <button type="button" disabled>
-                ✨ Generate from text
-              </button>
-              <span className="section-note">
-                AI autofill works on a blank event form — click Reset to clear the event details first.
-              </span>
-            </div>
-          </>
-        ) : (
-          <>
-            <textarea
-              className="ai-autofill-textarea"
-              placeholder="Paste an event description / flyer text / email…"
-              value={aiText}
-              onChange={(e) => setAiText(e.target.value)}
-              disabled={aiBusy || job !== null || locked}
-            />
-            <div className="actions">
-              <button
-                type="button"
-                onClick={handleAiAutofill}
-                disabled={
-                  !verified ||
-                  aiText.trim() === "" ||
-                  !isDraftEmpty(draft) ||
-                  aiBusy ||
-                  job !== null ||
-                  locked
-                }
-              >
-                {aiBusy ? "Generating…" : "✨ Generate from text"}
-              </button>
-            </div>
-          </>
-        )}
-      </section>
+      {tier >= 2 && (
+        <section className={`section${locked ? " form-dim" : ""}`}>
+          <h2>AI Autofill</h2>
+          <p className="hint">
+            Paste a raw event description, email, or flyer text below and the AI will fill
+            the event fields for you. Works on a blank event form — your saved contact
+            details are fine; reset first if you've already entered event details.
+          </p>
+          {!isDraftEmpty(draft) ? (
+            <>
+              <textarea
+                className="ai-autofill-textarea"
+                disabled
+                placeholder="Paste an event description / flyer text / email…"
+                value={aiText}
+              />
+              <div className="actions">
+                <button type="button" disabled>
+                  ✨ Generate from text
+                </button>
+                <span className="section-note">
+                  AI autofill works on a blank event form — click Reset to clear the event details first.
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <textarea
+                className="ai-autofill-textarea"
+                placeholder="Paste an event description / flyer text / email…"
+                value={aiText}
+                onChange={(e) => setAiText(e.target.value)}
+                disabled={aiBusy || job !== null || locked}
+              />
+              <div className="actions">
+                <button
+                  type="button"
+                  onClick={handleAiAutofill}
+                  disabled={
+                    aiText.trim() === "" ||
+                    !isDraftEmpty(draft) ||
+                    aiBusy ||
+                    job !== null ||
+                    locked
+                  }
+                >
+                  {aiBusy ? "Generating…" : "✨ Generate from text"}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
+      {/* ── The Event form ── */}
       <section className="section">
         <div className="section-title-row">
           <h2>The Event</h2>
@@ -490,7 +723,7 @@ export default function App() {
             Reset form
           </button>
         </div>
-        <div className={verified && !locked ? "" : "form-dim"}>
+        <div className={hasAccess && !locked ? "" : "form-dim"}>
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
@@ -514,14 +747,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={handlePreview}
-                disabled={busy || job !== null || !draftValid || accessCode.trim() === "" || !verified}
+                disabled={busy || job !== null || !draftValid || !hasAccess}
               >
                 {busy ? "Checking…" : "Preview Destinations"}
               </button>
-              {!verified && (
-                <span className="section-note">Verify your access code to begin.</span>
+              {!hasAccess && (
+                <span className="section-note">Verify your access code or sign in to begin.</span>
               )}
-              {verified && !draftValid && (
+              {hasAccess && !draftValid && (
                 <span className="section-note">Fill the required (*) fields to preview.</span>
               )}
             </>
@@ -663,7 +896,7 @@ export default function App() {
           <h2>Progress</h2>
           <JobProgress
             job={job}
-            accessCode={accessCode}
+            auth={auth}
             onRetry={handleRetry}
             onSubmitReal={handleSubmitReal}
             retrying={busy}

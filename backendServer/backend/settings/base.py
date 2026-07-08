@@ -108,8 +108,6 @@ LOGGING = {
 # it proxies to gunicorn over a Unix socket, which leaves REMOTE_ADDR empty.
 # `manage.py runserver` in dev populates REMOTE_ADDR directly and never sets
 # X-Real-IP, so overriding this key here breaks ratelimit locally.
-# BROADCAST_ACCESS_CODES is read from the env at request time (broadcast/access.py),
-# never via settings — it must not leak into settings dumps.
 BROADCAST_HEADLESS = os.getenv("BROADCAST_HEADLESS", "true").lower() != "false"
 BROADCAST_DRY_RUN_DEFAULT = os.getenv("BROADCAST_DRY_RUN_DEFAULT", "false").lower() == "true"
 BROADCAST_MAX_CONCURRENCY = int(os.getenv("BROADCAST_MAX_CONCURRENCY", "1"))

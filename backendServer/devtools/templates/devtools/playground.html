@@ -15,12 +15,18 @@
   .playground .controls label { font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.25rem; }
   .playground .controls select,
   .playground .controls input[type="url"],
-  .playground .controls input[type="text"] {
+  .playground .controls input[type="text"],
+  .playground .controls textarea {
     width: 100%;
     padding: 0.45rem 0.65rem;
     border: 1px solid #d1d5db;
     border-radius: 4px;
     font-size: 0.9rem;
+  }
+  .playground .controls textarea {
+    min-height: 3.5rem;
+    font-family: inherit;
+    resize: vertical;
   }
   .playground .btn-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; }
   .playground .btn-run {
@@ -49,6 +55,19 @@
   }
   .playground .btn-save:hover { background: #15803d; }
   .playground .btn-save:disabled { background: #86efac; cursor: not-allowed; }
+  .playground .btn-add {
+    display: inline-block;
+    background: #fff;
+    color: #374151;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playground .btn-add:hover { background: #f9fafb; border-color: #9ca3af; }
+  .playground .btn-add:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
 
   /* Warning / info boxes */
   .playground .warning {
@@ -197,6 +216,79 @@
     color: #9ca3af;
     margin: 1.25rem 0 0.4rem;
   }
+
+  /* ── Site Preview panel (newspaper aesthetic) ───────────────
+     Scoped under .preview-* so nothing conflicts with the admin
+     table styles above. Design tokens mirror globals.css.       */
+  .playground .preview-section {
+    background: #faf7f0;
+    border: 1px solid #c8c3b8;
+    border-radius: 6px;
+    padding: 0.75rem 1.1rem;
+    margin-top: 0.75rem;
+    font-family: Georgia, "Times New Roman", Times, serif;
+    color: #1a1a1a;
+  }
+  .playground .preview-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    border-bottom: 1px solid #c8c3b8;
+    padding: 0.85rem 0;
+  }
+  .playground .preview-card:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .playground .preview-card-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .playground .preview-card-town-date {
+    font-size: 0.72rem;
+    font-variant: small-caps;
+    letter-spacing: 0.05em;
+    color: #8b0000;
+    margin-bottom: 0.2rem;
+  }
+  .playground .preview-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #1a1a1a;
+    margin-bottom: 0.25rem;
+  }
+  .playground .preview-card-venue {
+    font-size: 0.82rem;
+    color: #555555;
+    margin-bottom: 0.3rem;
+  }
+  .playground .preview-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+  }
+  .playground .preview-card-tag {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-variant: small-caps;
+    letter-spacing: 0.04em;
+    color: #8b0000;
+    border: 1px solid #c8c3b8;
+    border-radius: 3px;
+    padding: 0.1rem 0.4rem;
+  }
+  .playground .preview-card-price {
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #1a1a1a;
+    text-align: right;
+    white-space: nowrap;
+    align-self: center;
+  }
 </style>
 
 {% csrf_token %}
@@ -234,9 +326,14 @@
       <label for="source_name">Source Name <span style="font-weight:400;color:#6b7280;">(optional human-readable label)</span></label>
       <input id="source_name" type="text" placeholder="e.g. Chapel Hill Arts Council" />
     </div>
+    <div>
+      <label for="prompt_suffix">Prompt suffix <span style="font-weight:400;color:#6b7280;">(optional — appended to Gemini's standardize + safety prompts)</span></label>
+      <textarea id="prompt_suffix" placeholder="e.g. Treat all events as family-friendly."></textarea>
+    </div>
     <div class="btn-row">
       <button id="run-btn" class="btn-run">Run (dry-run)</button>
       <button id="save-btn" class="btn-save">Save source &amp; publish</button>
+      <button id="add-source-btn" class="btn-add">Add source only</button>
     </div>
   </div>
 
@@ -267,11 +364,13 @@
   "use strict";
 
   /* ── DOM refs ─────────────────────────────────────────────── */
-  const cityEl       = document.getElementById("city");
-  const icsUrlEl     = document.getElementById("ics_url");
-  const sourceNameEl = document.getElementById("source_name");
-  const runBtn       = document.getElementById("run-btn");
-  const saveBtn      = document.getElementById("save-btn");
+  const cityEl          = document.getElementById("city");
+  const icsUrlEl        = document.getElementById("ics_url");
+  const sourceNameEl    = document.getElementById("source_name");
+  const promptSuffixEl  = document.getElementById("prompt_suffix");
+  const runBtn          = document.getElementById("run-btn");
+  const saveBtn         = document.getElementById("save-btn");
+  const addSourceBtn    = document.getElementById("add-source-btn");
 
   const stagesArea   = document.getElementById("stages-area");
   const stagesRow    = document.getElementById("stages-row");
@@ -498,6 +597,16 @@
     return "$" + n.toFixed(2).replace(/\.00$/, "");
   }
 
+  /* Preview-only price formatter. 0 → "Free Entry"; <0 or null → null (omit);
+     otherwise "$X.XX". Do NOT change fmtPrice — other explorer code depends on it. */
+  function fmtPreviewPrice(p) {
+    if (p == null || p === "") return null;
+    const n = Number(p);
+    if (isNaN(n) || n < 0) return null;
+    if (n === 0) return "Free Entry";
+    return "$" + n.toFixed(2).replace(/\.00$/, "");
+  }
+
   function fmtScore(s) {
     if (s == null) return "—";
     const n = Number(s);
@@ -565,6 +674,79 @@
 
     rows.push("<div class='detail-hint'>Click the row again to unpin.</div>");
     card.innerHTML = rows.join("");
+  }
+
+  /* ── Site preview panel ───────────────────────────────────────
+     Hand-built static-HTML approximation of the non-featured variant of
+     EventRow.tsx. Source of truth: theCommonsWeb/src/components/events/EventRow.tsx
+     This panel will drift as the real component evolves — acceptable for a dev preview. */
+  function renderPreview(parent, events) {
+    if (!events || events.length === 0) return;
+
+    const label = document.createElement("div");
+    label.className = "section-label";
+    label.textContent = "Preview (as it would appear on the site)";
+    parent.appendChild(label);
+
+    const section = document.createElement("div");
+    section.className = "preview-section";
+
+    events.forEach(function (ev) {
+      /* Date/time — parse defensively; fall back to raw string if invalid */
+      var datePart = "";
+      var timePart = "";
+      var rawDt = ev.start_datetime || ev.date;
+      if (rawDt) {
+        var d = new Date(rawDt);
+        if (!isNaN(d.getTime())) {
+          datePart = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+          timePart = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        } else {
+          datePart = String(rawDt);
+        }
+      }
+
+      /* Town + date header */
+      var town = ev.town || ev.geminiTown || "";
+      var townDateParts = [];
+      if (town) townDateParts.push(escHtml(town));
+      if (datePart) townDateParts.push(escHtml(datePart));
+      var townDate = townDateParts.join(" &mdash; ");
+
+      /* Venue • time muted line */
+      var venueParts = [];
+      if (ev.venue || ev.location_name) venueParts.push(escHtml(ev.venue || ev.location_name));
+      if (timePart) venueParts.push(escHtml(timePart));
+      var venueStr = venueParts.join(" &bull; ");
+
+      /* Tags */
+      var tagsHtml = "";
+      if (ev.tags && ev.tags.length) {
+        tagsHtml = "<div class='preview-card-tags'>" +
+          ev.tags.map(function (t) {
+            return "<span class='preview-card-tag'>" + escHtml(t) + "</span>";
+          }).join("") +
+          "</div>";
+      }
+
+      /* Price */
+      var priceStr = fmtPreviewPrice(ev.price);
+
+      var card = document.createElement("div");
+      card.className = "preview-card";
+      card.innerHTML =
+        "<div class='preview-card-body'>" +
+          (townDate ? "<div class='preview-card-town-date'>" + townDate + "</div>" : "") +
+          "<div class='preview-card-title'>" + escHtml(ev.title || "(untitled)") + "</div>" +
+          (venueStr ? "<div class='preview-card-venue'>" + venueStr + "</div>" : "") +
+          tagsHtml +
+        "</div>" +
+        (priceStr ? "<div class='preview-card-price'>" + escHtml(priceStr) + "</div>" : "");
+
+      section.appendChild(card);
+    });
+
+    parent.appendChild(section);
   }
 
   /* ── Event explorer (master table + detail card) ──────────── */
@@ -670,6 +852,7 @@
     resultsArea.appendChild(section);
 
     renderExplorer(resultsArea, events);
+    renderPreview(resultsArea, events);
   }
 
   /* ── Error rendering ──────────────────────────────────────── */
@@ -708,9 +891,10 @@
     saveBtn.disabled = true;
 
     const params = new URLSearchParams({
-      city:        city,
-      ics_url:     icsUrl,
-      source_name: sourceName,
+      city:          city,
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffixEl.value,
     });
     const url = "/devtools/run?" + params.toString();
 
@@ -777,9 +961,12 @@
       return;
     }
 
+    const promptSuffix = promptSuffixEl.value;
+
     const confirmed = window.confirm(
       "This will write to the LIVE database.\n\n" +
-      "City: " + city + "\nICS URL: " + icsUrl + "\nSource name: " + (sourceName || "(empty)") + "\n\n" +
+      "City: " + city + "\nICS URL: " + icsUrl + "\nSource name: " + (sourceName || "(empty)") +
+      "\nPrompt suffix: " + (promptSuffix.trim() || "(none)") + "\n\n" +
       "Continue?"
     );
     if (!confirmed) return;
@@ -788,9 +975,10 @@
     saveBtn.disabled = true;
 
     const body = new URLSearchParams({
-      city:        city,
-      ics_url:     icsUrl,
-      source_name: sourceName,
+      city:          city,
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffix,
     });
 
     fetch("/devtools/save", {
@@ -824,6 +1012,59 @@
     .finally(function () {
       runBtn.disabled  = false;
       saveBtn.disabled = false;
+    });
+  });
+  /* ── Add source button ────────────────────────────────────── */
+  addSourceBtn.addEventListener("click", function () {
+    const icsUrl     = icsUrlEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+
+    if (!icsUrl) {
+      alert("Please enter an ICS feed URL.");
+      return;
+    }
+
+    runBtn.disabled       = true;
+    saveBtn.disabled      = true;
+    addSourceBtn.disabled = true;
+
+    const body = new URLSearchParams({
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffixEl.value,
+    });
+
+    fetch("/devtools/add-source", {
+      method:  "POST",
+      headers: {
+        "X-CSRFToken":  getCsrf(),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) {
+          throw new Error("Server returned " + resp.status + ": " + t);
+        });
+      }
+      return resp.json();
+    })
+    .then(function (data) {
+      const successBox = document.createElement("div");
+      successBox.className = "result success";
+      successBox.innerHTML =
+        "<strong>Source " + (data.created ? "created" : "updated") + ".</strong> " +
+        escHtml(data.name) + " has been registered and will be picked up by the daily cron.";
+      resultsArea.appendChild(successBox);
+    })
+    .catch(function (err) {
+      renderError(err.message || String(err), null);
+    })
+    .finally(function () {
+      runBtn.disabled       = false;
+      saveBtn.disabled      = false;
+      addSourceBtn.disabled = false;
     });
   });
 }());

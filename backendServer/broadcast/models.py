@@ -2,6 +2,8 @@ from uuid import uuid4
 
 from django.db import models
 
+_TIER_CHOICES = [(0, "Tier 0"), (1, "Tier 1"), (2, "Tier 2")]
+
 
 class BroadcastSubmission(models.Model):
     STATUS_CHOICES = [
@@ -79,3 +81,45 @@ class BroadcastTarget(models.Model):
 
     def __str__(self):
         return f"{self.site_key}: {self.status}"
+
+
+class BroadcastAccess(models.Model):
+    email = models.CharField(max_length=254, unique=True)
+    tier = models.IntegerField(choices=_TIER_CHOICES, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        self.email = self.email.lower()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.email} (tier {self.tier})"
+
+
+class AccessCode(models.Model):
+    code_hash = models.CharField(max_length=64, unique=True)
+    label = models.CharField(max_length=64)
+    tier = models.IntegerField(choices=_TIER_CHOICES, default=2)
+    max_uses = models.IntegerField(null=True, blank=True, default=3)
+    is_active = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.label} (tier {self.tier})"
+
+
+class AccessCodeUse(models.Model):
+    access_code = models.ForeignKey(
+        AccessCode, related_name="uses", on_delete=models.CASCADE
+    )
+    draft_id = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("access_code", "draft_id")]
+
+    def __str__(self):
+        return f"{self.access_code.label} / {self.draft_id}"

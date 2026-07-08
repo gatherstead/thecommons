@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from ingestion.views import admin_docs, cron_ingest, pipeline_docs, publish_approved_admin, publish_approved_events
+from ingestion.views import admin_docs, cron_ingest, direct_submit, pipeline_docs, publish_approved_admin, publish_approved_events
 from events.views import subscribe, me, businesses, business_detail, my_business
 
 urlpatterns = [
@@ -21,6 +21,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/cron/ingest", cron_ingest, name="cron-ingest"),
     path("api/events/publish-approved", publish_approved_events, name="publish-approved-events"),
+    path("api/events/direct-submit", direct_submit, name="direct-submit"),
     path("auth/subscribe", subscribe, name="subscribe"),
     path("auth/me", me, name="auth-me"),
     path("businesses", businesses, name="businesses"),

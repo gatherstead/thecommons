@@ -152,6 +152,52 @@ Approving a staged event immediately creates the corresponding `Event` in the da
 
 ---
 
+## Direct Host Submission
+
+**Endpoint:** `POST /api/events/direct-submit`
+**Key files:** `backendServer/ingestion/views.py`, `backendServer/ingestion/serializers.py`, `backendServer/ingestion/access.py`, `backendServer/ingestion/services.py`, `backendServer/ingestion/tasks.py`
+
+An alternative entry path that bypasses ICS polling. The broadcast SPA fires this call fire-and-forget when the operator clicks "Preview Destinations" — the same event data going to the preview also enters the pipeline immediately, so the host's event appears in the system without waiting for a cron run.
+
+### Auth — JWT or anonymous
+
+The endpoint is decorated with `BearerTokenAuthentication`. A valid **Better Auth JWT** (`Authorization: Bearer <jwt>`) attributes the submission to the resolved `BetterAuthUser` (`submitted_by`). An invalid token is rejected with 401 before the view body runs. No token → `submitted_by=None` (anonymous submission accepted). The previous grant-based code-to-user model has been removed; ownership is now derived solely from the JWT.
+
+### Request / response
+
+```json
+// Request body (JWT optional via Authorization: Bearer header)
+{ "draft_id": "<uuid>", "event": { ...broadcast canonical event shape... } }
+
+// 202 on success
+{ "status": "queued", "draft_id": "..." }
+// 401 — invalid token (rejected by BearerTokenAuthentication before view body)
+// 400 — invalid event payload or missing draft_id
+```
+
+Rate-limited 10/m by IP. The event serializer (`ingestion/serializers.py`) is a **self-contained copy** of the broadcast canonical-event field set — it does not import from `broadcast/`.
+
+### Idempotency via `draft_id`
+
+The endpoint upserts a singleton `EventSource(name="Direct Host Submission", source_type='direct', active=False)`, then calls `RawEvent.objects.update_or_create(source=source, source_uid=draft_id, defaults=...)`. Re-submitting the same `draft_id` (e.g. the host edits the form and clicks Preview again) refreshes the existing `RawEvent` in place rather than creating a duplicate. `source_type='direct'` is a dedicated `EventSource.source_type` choice.
+
+### Pipeline (`ingestion/services.py::ingest_direct_submission`, Celery task `ingest_direct_submission_task`)
+
+1. Loads the `RawEvent`. If a `StagedEvent` already exists for it, remembers its `published_event` FK, then deletes the staged row so re-standardization starts fresh.
+2. `standardize_event` (Gemini) → sets `submitted_by = user`.
+3. Safety-scores via `safety_scorer.score_event`.
+4. `find_duplicate` — if a pending/approved duplicate exists, marks `status='duplicate'` and stops (no publish).
+5. **Safety gate:** `safety_score <= SAFETY_SCORE_THRESHOLD` → publish immediately; otherwise the `StagedEvent` stays `status='pending'` (visible in the host/admin dashboard for manual review) with no live `Event` created.
+6. **Publish (create-or-update):** reuses the `publish_all_approved` field mapping but overrides `source_name = "Direct submission by host"`, sets `created_by = user`, and `is_verified = (user.user_type == 'BUSINESS')`. If a prior published `Event` exists (re-edit path), it is updated in place; otherwise a new `Event` is created and linked.
+7. **StagedEvent retained** — unlike the bulk `publish_all_approved` flow, the `StagedEvent` row is kept so the edit chain survives future re-submissions.
+8. **Town resolution** reuses `Town.objects.filter(slug=...)`. If no matching `Town` exists, the event is logged and held (no `Event` created).
+
+### Isolation
+
+The bridge lives entirely in `ingestion/`. `broadcast/` still imports nothing from `events/` or `ingestion/`; `broadcast/tests/test_isolation.py` remains green. The dependency is one-way: ingestion uses a copied serializer that mirrors the broadcast canonical-event shape, but `broadcast/` is never imported from `ingestion/`.
+
+---
+
 ## Frontend Display
 
 **Files:** `theCommonsWeb/src/services/eventService.ts`, `theCommonsWeb/src/components/EventCard.tsx`
@@ -170,8 +216,8 @@ Approving a staged event immediately creates the corresponding `Event` in the da
 
 | Table | Purpose |
 |---|---|
-| `ingestion_eventsource` | ICS source URLs and polling config |
-| `ingestion_rawevent` | Raw parsed ICS data, one row per event per source |
+| `ingestion_eventsource` | ICS source URLs and polling config; also the singleton `source_type='direct'` row for direct submissions |
+| `ingestion_rawevent` | Raw parsed ICS data, one row per event per source; also direct-submission payloads keyed by `draft_id` |
 | `ingestion_stagedevent` | LLM-cleaned events awaiting admin review |
 | `events_event` | Published events (live on site) |
 | `events_tag` | Tag lookup table |
@@ -216,8 +262,11 @@ backendServer/
 │   ├── standardizer.py               # Phase 2: Gemini LLM standardization
 │   ├── deduplicator.py               # Phase 3: fuzzy duplicate detection
 │   ├── models.py                     # EventSource, RawEvent, StagedEvent
+│   ├── serializers.py                # DirectSubmitEventSerializer (canonical-event copy)
+│   ├── services.py                   # ingest_direct_submission()
+│   ├── tasks.py                      # ingest_direct_submission_task (Celery)
 │   ├── admin.py                      # Admin UI for review + approval
-│   ├── views.py                      # Cron + publish endpoints
+│   ├── views.py                      # Cron + publish + direct_submit endpoints
 │   └── management/commands/
 │       └── ingest_events.py          # Django management command (orchestrator)
 ├── events/

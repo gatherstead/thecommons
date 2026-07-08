@@ -2,9 +2,11 @@ import logging
 
 from django.db import transaction
 
-from events.models import Event, Tag, Town, Category
-from ingestion.models import StagedEvent
-from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD
+from events.models import BetterAuthUser, Event, Tag, Town, Category
+from ingestion.deduplicator import find_duplicate
+from ingestion.models import RawEvent, StagedEvent
+from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD, score_event
+from ingestion.standardizer import standardize_event
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +127,109 @@ def auto_publish_safe_events(source=None, force_town=None):
     )
 
     return {'auto_approved': result['published'], 'held_for_review': held_count}
+
+
+def ingest_direct_submission(raw_event_id, user_id):
+    """
+    Turn a persisted RawEvent into a live Event via Gemini standardize + dedupe +
+    safety gate, attributed to the caller's JWT user when present.  Idempotent: a
+    second call on the same raw_event replaces the staged row and updates the
+    existing Event in place.  user_id may be None for anonymous submissions.
+
+    Returns the Event if published, None if held (pending / duplicate / no-town).
+    """
+    raw_event = RawEvent.objects.get(id=raw_event_id)
+    user = BetterAuthUser.objects.get(id=user_id) if user_id is not None else None
+
+    # Idempotency: tear down any prior staged row so re-standardization is fresh.
+    # Capture the published Event first so we can update it in place on re-edits.
+    prior_event = None
+    try:
+        existing_staged = raw_event.staged
+        prior_event = existing_staged.published_event
+        existing_staged.delete()
+    except StagedEvent.DoesNotExist:
+        pass
+
+    staged = standardize_event(raw_event)
+    staged.submitted_by = user
+    staged.save(update_fields=['submitted_by'])
+
+    score, notes = score_event(staged)
+    staged.safety_score = score
+    staged.safety_notes = notes
+    staged.save(update_fields=['safety_score', 'safety_notes'])
+
+    dup = find_duplicate(staged)
+    if dup is not None:
+        staged.status = 'duplicate'
+        staged.duplicate_of = dup
+        staged.save(update_fields=['status', 'duplicate_of'])
+        return None
+
+    if score > SAFETY_SCORE_THRESHOLD:
+        staged.save(update_fields=['status'])
+        return None
+
+    with transaction.atomic():
+        town_slug = staged.town.lower().replace(' ', '-') if staged.town else None
+        town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
+        if town_obj is None:
+            logger.warning(
+                "Holding direct submission '%s' — no Town matches slug '%s' (gemini town=%r)",
+                staged.title, town_slug, staged.town,
+            )
+            return None
+
+        is_verified = user is not None and user.user_type == 'BUSINESS'
+        source_name = 'Direct submission by host'
+
+        tags = []
+        for t in staged.tags:
+            tag_obj, _ = Tag.objects.get_or_create(name=t.strip().lower())
+            tags.append(tag_obj)
+        category_obj = (
+            Category.objects.filter(slug=staged.category).first()
+            if staged.category else None
+        )
+
+        if prior_event is not None:
+            event = prior_event
+            event.title = staged.title
+            event.town = town_obj
+            event.date = staged.start_datetime
+            event.venue = staged.location_name
+            event.description = staged.description
+            event.price = staged.price
+            event.link = staged.link
+            event.created_by = user
+            event.source_name = source_name
+            event.is_verified = is_verified
+            event.save()
+            event.tags.set(tags)
+            event.categories.clear()
+            if category_obj:
+                event.categories.add(category_obj)
+            staged.published_event = event
+        else:
+            event = Event.objects.create(
+                title=staged.title,
+                town=town_obj,
+                date=staged.start_datetime,
+                venue=staged.location_name,
+                description=staged.description,
+                price=staged.price,
+                link=staged.link,
+                created_by=user,
+                source_name=source_name,
+                is_verified=is_verified,
+            )
+            event.tags.set(tags)
+            if category_obj:
+                event.categories.add(category_obj)
+            staged.published_event = event
+
+        staged.status = 'approved'
+        staged.save(update_fields=['published_event', 'status'])
+
+    return event

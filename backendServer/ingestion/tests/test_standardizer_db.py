@@ -59,3 +59,34 @@ class StandardizerTests(TestCase):
         self.assertFalse(StagedEvent.objects.exists())
         self.raw.refresh_from_db()
         self.assertFalse(self.raw.processed)
+
+    def _minimal_payload(self):
+        return {
+            'title': 'Test Event',
+            'description': 'A test.',
+            'location_name': 'Test Venue',
+            'town': 'Carrboro',
+            'tags': [],
+            'price': 0,
+        }
+
+    def test_no_suffix_prompt_has_no_instructions_label(self):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(
+            text=json.dumps(self._minimal_payload())
+        )
+        with mock.patch('ingestion.standardizer.genai.Client', return_value=client):
+            standardize_event(self.raw)
+        contents = client.models.generate_content.call_args.kwargs['contents']
+        self.assertNotIn('ADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS', contents)
+
+    def test_suffix_appended_to_prompt(self):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(
+            text=json.dumps(self._minimal_payload())
+        )
+        with mock.patch('ingestion.standardizer.genai.Client', return_value=client):
+            standardize_event(self.raw, prompt_suffix='focus on family events')
+        contents = client.models.generate_content.call_args.kwargs['contents']
+        self.assertIn('ADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS', contents)
+        self.assertIn('focus on family events', contents)

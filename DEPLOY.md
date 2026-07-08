@@ -368,8 +368,8 @@ CRON_SECRET=
 THE_COMMONS_API_KEY=
 SAFETY_SCORE_THRESHOLD=0.3             # optional
 INGEST_SHARD_COUNT=3                   # optional — see §3
-BETTER_AUTH_JWKS_URL=https://thecommons.town/api/auth/jwks
-BETTER_AUTH_ISSUER=https://thecommons.town
+BETTER_AUTH_JWKS_URL=https://auth.thecommons.town/api/auth/jwks
+BETTER_AUTH_ISSUER=https://auth.thecommons.town
 BETTER_AUTH_AUDIENCE=
 BREVO_API_KEY=
 DIGEST_FROM_EMAIL=digest@thecommons.town
@@ -377,7 +377,6 @@ SITE_URL=https://thecommons.town
 REDIS_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/0          # Celery broker + results (DB 0)
 REDIS_CACHE_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/1    # read-endpoint cache (DB 1)
 # Broadcast (see backendServer/.env.example for the full annotated block)
-BROADCAST_ACCESS_CODES=
 BROADCAST_HEADLESS=true
 BROADCAST_DRY_RUN_DEFAULT=false
 BROADCAST_MAX_CONCURRENCY=1
@@ -393,8 +392,17 @@ NEXT_PUBLIC_API_BASE_URL=https://api.thecommons.town
 NEXT_PUBLIC_THE_COMMONS_API_KEY=
 DATABASE_URL=                          # same Neon connection string
 BETTER_AUTH_SECRET=
-BETTER_AUTH_URL=https://thecommons.town
-NEXT_PUBLIC_BETTER_AUTH_URL=https://thecommons.town
+BETTER_AUTH_URL=https://auth.thecommons.town
+NEXT_PUBLIC_BETTER_AUTH_URL=https://auth.thecommons.town
+BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town   # enables cross-subdomain sessions (SameSite=None; Secure)
+```
+
+### `broadcastWeb/.env`
+
+```
+VITE_BROADCAST_API_BASE_URL=https://api.thecommons.town
+VITE_BROADCAST_EXTENSION_ID=           # Chrome extension ID for extension autofill
+VITE_BETTER_AUTH_URL=https://auth.thecommons.town
 ```
 
 ## nginx
@@ -443,3 +451,4 @@ Two layers must allow 80/443:
 - `docs/broadcast.md` — broadcast subsystem: routing, adapters, worker, recipe layer, extension, SPA wiring
 - `docs/dev-db-isolation.md` — Neon dev branch setup for local development
 - `docs/ingestion-pipeline.md` — scrape → stage → publish flow
+- `docs/runbook-auth-cutover.md` — Auth-origin cutover (auth.thecommons.town subdomain, .thecommons.town cookie domain, forced re-login)

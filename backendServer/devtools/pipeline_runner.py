@@ -36,7 +36,7 @@ def _event_dict(e):
     }
 
 
-def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True, limit=None):
+def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True, limit=None, prompt_suffix=""):
     ingestion_logger = logging.getLogger('ingestion')
     handler = QueueLoggingHandler(q, threading.get_ident())
     handler.setFormatter(logging.Formatter('%(message)s'))
@@ -89,7 +89,7 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
 
                 # ── STANDARDIZE ───────────────────────────────────────────────
                 q.put(("stage", {"stage": "standardize", "status": "start"}))
-                std_count = standardize_all_unprocessed(source=source)
+                std_count = standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
                 std_records = []
                 for s in StagedEvent.objects.filter(raw_event__source=source):
                     std_records.append({
@@ -136,7 +136,7 @@ def run_pipeline_into_queue(q, *, city_slug, ics_url, source_name, dry_run=True,
 
                 # ── SAFETY ────────────────────────────────────────────────────
                 q.put(("stage", {"stage": "safety", "status": "start"}))
-                safety_count = score_all_unscored(source=source)
+                safety_count = score_all_unscored(source=source, prompt_suffix=prompt_suffix)
                 safety_records = []
                 for s in StagedEvent.objects.filter(raw_event__source=source):
                     safety_records.append({

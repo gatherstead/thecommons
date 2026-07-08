@@ -12,10 +12,11 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
+from broadcast.access import resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
-from broadcast.models import BroadcastSubmission
-from broadcast.permissions import HasBroadcastAccessCode
+from broadcast.models import AccessCodeUse, BroadcastSubmission
+from broadcast.permissions import RequiresBroadcastTier1, RequiresBroadcastTier2, _draft_id_from
 from broadcast.routing import eligible_targets
 from broadcast.serializers import CanonicalEventSerializer
 from broadcast.services import (
@@ -30,11 +31,21 @@ from broadcast.services import (
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def preview(request):
     serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
     if not serializer.is_valid():
         return Response({"event": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    if request.broadcast_access.is_trial:
+        draft_id = _draft_id_from(request)
+        if draft_id is None:
+            return Response({"draft_id": "required"}, status=status.HTTP_400_BAD_REQUEST)
+        AccessCodeUse.objects.get_or_create(
+            access_code=request.broadcast_access.code,
+            draft_id=draft_id,
+        )
+
     ev = serializer.to_canonical()
     eligible, excluded = eligible_targets(ev, enabled_adapters())
     return Response({
@@ -45,7 +56,7 @@ def preview(request):
 
 @ratelimit(key="ip", rate="3/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def submit(request):
     serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
     if not serializer.is_valid():
@@ -74,7 +85,7 @@ def submit(request):
 
 
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_detail(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
@@ -85,7 +96,7 @@ def job_detail(request, job_id):
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_retry(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
@@ -101,7 +112,7 @@ def job_retry(request, job_id):
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_submit_real(request, job_id):
     """Promote dry-run targets to a real submission within an existing job."""
     try:
@@ -118,7 +129,7 @@ def job_submit_real(request, job_id):
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_cancel(request, job_id):
     """Stop a job — skip pending targets and mark the submission canceled."""
     try:
@@ -134,7 +145,7 @@ def job_cancel(request, job_id):
 
 
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_screenshot(request, job_id, site_key):
     """Operator-gated screenshot access — never expose the directory publicly."""
     if get_adapter(site_key) is None:
@@ -155,7 +166,7 @@ def job_screenshot(request, job_id, site_key):
 
 @ratelimit(key="ip", rate="30/m", method="GET", block=True)
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_manual_recipe(request, job_id, site_key):
     """Recipe for a needs_manual target — the manual-review extension fills it.
 
@@ -180,7 +191,7 @@ def job_manual_recipe(request, job_id, site_key):
 
 @ratelimit(key="ip", rate="30/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def direct_recipe(request):
     """Return a fill recipe for a site directly from event data — no job required.
 
@@ -201,7 +212,7 @@ def direct_recipe(request):
 
 @ratelimit(key="ip", rate="5/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier2])
 def ai_autofill(request):
     """Extract EventDraft fields from free text via Gemini and return them for human review.
 
@@ -220,6 +231,30 @@ def ai_autofill(request):
         )
 
     return Response({"event": event})
+
+
+@ratelimit(key="ip", rate="30/m", method="GET", block=True)
+@api_view(["GET"])
+def access_info(request):
+    """Return the caller's current access tier and trial metadata.
+
+    No permission class — open to all. Returns 403 only when credentials
+    were supplied but could not be validated (invalid JWT or unknown code).
+    """
+    result = resolve_access(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    code_header = request.headers.get("X-Broadcast-Access-Code", "")
+    credentials_supplied = auth_header.startswith("Bearer ") or bool(code_header)
+
+    if credentials_supplied and result.identity is None:
+        return Response({"detail": "Invalid credentials."}, status=status.HTTP_403_FORBIDDEN)
+
+    return Response({
+        "tier": result.tier,
+        "is_trial": result.is_trial,
+        "uses_remaining": result.uses_remaining,
+    })
 
 
 def mock_form(request):

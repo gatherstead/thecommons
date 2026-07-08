@@ -15,7 +15,7 @@ It spans four places:
 
 ## Design rules (do not break)
 
-- **Isolation from `events/`.** `broadcast/routing.py` must not import from `events` (enforced by `test_isolation.py`). The broadcast app operates on its own denormalized copy of an event (`CanonicalEvent` / `BroadcastSubmission`), never on `events.Event`.
+- **Isolation from `events/`.** `broadcast/routing.py` must not import from `events` (enforced by `test_isolation.py`). The broadcast app operates on its own denormalized copy of an event (`CanonicalEvent` / `BroadcastSubmission`), never on `events.Event`. The ingestion bridge (`POST /api/events/direct-submit`) that fires alongside preview preserves this contract: its code lives entirely in `ingestion/`, and `broadcast/` still imports nothing from `events/` or `ingestion/`.
 - **No Django ORM inside `sync_playwright`.** `runner.py` fetches everything into plain objects first, then drives the browser. Playwright must never run inside gunicorn.
 - **Not Celery.** Broadcast has its own Postgres-backed queue (`SELECT FOR UPDATE SKIP LOCKED`), independent of the Celery/Redis stack.
 - **Adapters never invent content, never call an LLM at runtime, and never solve captchas.** Missing required field / captcha / login wall → the target ends `needs_manual`.
@@ -55,7 +55,7 @@ SPA.sendFill(extensionId, recipe) ───────────────�
 [Client reviews, solves captcha, clicks Submit]
 ```
 
-1. **Preview** (`views.preview`) — serializes the event into a `CanonicalEvent` (`schema.py`, ORM-decoupled; converts UTC → `America/New_York`), then `routing.eligible_targets()` matches each adapter's eligibility (locality ∩ category sets) and returns eligible vs excluded-with-reason. Deterministic, no side effects.
+1. **Preview** (`views.preview`) — serializes the event into a `CanonicalEvent` (`schema.py`, ORM-decoupled; converts UTC → `America/New_York`), then `routing.eligible_targets()` matches each adapter's eligibility (locality ∩ category sets) and returns eligible vs excluded-with-reason. Deterministic, no side effects. **The SPA also fires `POST /api/events/direct-submit` (fire-and-forget, non-blocking) on the same click** — this is the ingestion bridge that routes the event into the standardization pipeline without waiting for the next cron run. A failure of the direct-submit call never blocks or affects the preview result.
 2. **Direct recipe** (`views.direct_recipe`, `POST /broadcast/direct-recipe`) — takes event data + `site_key`, validates via `CanonicalEventSerializer`, calls `adapter.recipe()`, and returns the recipe JSON. No `BroadcastSubmission` row created; pure read-through. 404 if site unknown or login-gated (no recipe). Rate-limited 30/m.
 3. **Extension fill** — SPA calls `sendFill(extensionId, recipe)` for each site. The extension opens a tab at `recipe.url`, injects `content.js`, which fills all non-captcha fields and shows a sticky review banner. Never clicks submit.
 4. **Oneshot worker path** (disabled in SPA) — `views.submit` → `services.create_submission` creates `BroadcastSubmission` + `BroadcastTarget` rows, status `queued`. Worker (`run_broadcast_worker`) claims them, calls `adapter.fill_and_submit`, screenshots, and records status. Review & submit-real flow promotes dry-run targets to real. See below for details.
@@ -66,6 +66,9 @@ SPA.sendFill(extensionId, recipe) ───────────────�
 
 - **`BroadcastSubmission`** — `uuid` PK, `client_label`, a full denormalized copy of the event (title, datetimes, venue/address, locality JSON, categories JSON, urls, price, organizer, contacts), `status` ∈ `queued / running / done / failed / canceled`, timestamps.
 - **`BroadcastTarget`** — `uuid` PK, FK→submission, `site_key`, `status` ∈ `pending / in_progress / succeeded / failed / needs_manual / skipped`, `attempts`, `external_url`, `error`, `screenshot_path`, `dry_run`. `UniqueConstraint(submission, site_key)`.
+- **`BroadcastAccess`** — `email` (unique, lowercased), `tier` (0/1/2, default 0). Maps a logged-in user's email to a feature tier. No row = tier 0.
+- **`AccessCode`** — `code_hash` (SHA-256 hex; raw code shown once at generation, never stored), `label`, `tier` (default 2), `max_uses` (null = unlimited, default 3), `is_active`, `expires_at`. Trial/operator codes. `related_name="uses"`.
+- **`AccessCodeUse`** — FK→`AccessCode` (`related_name="uses"`), `draft_id`, `unique_together(access_code, draft_id)`. A trial "use" = one distinct `draft_id`; re-submitting the same `draft_id` (edits) is free.
 
 Lifecycle ops are idempotent and reuse existing target rows: `retry_targets`, `submit_real_targets` (flip dry-run→real, clear error/url/screenshot, re-queue), `cancel_submission` (skip every still-`pending` target, mark submission `canceled` — `claim_next` only picks `queued`, so a canceled job never starts).
 
@@ -120,25 +123,44 @@ Extension internals: buildless MV3, no static content scripts (dormant until mes
 
 ## Access control
 
-**Key file:** `broadcast/access.py`. All `/broadcast/` endpoints require the `X-Broadcast-Access-Code` header (`HasBroadcastAccessCode`). `access.py` resolves a code → client label via constant-time comparison against the `BROADCAST_ACCESS_CODES` env var (`label:code,label2:code2,...`). The SPA also has a client-only **Verify** stub — there is no `verify` endpoint yet.
+**Key files:** `broadcast/access.py`, `broadcast/permissions.py`, `broadcast/models.py`.
+
+`resolve_access(request, draft_id=None) -> AccessResult(tier, identity, is_trial, uses_remaining, client_label, code)` resolves access in order:
+
+1. **Bearer JWT** (`Authorization: Bearer <jwt>`) — verified statelessly via `backend/jwt_auth.py` (JWKS); `email` claim → `BroadcastAccess.tier` (default 0 if no row). A JWT header present but invalid → 403; does **not** fall through to the code path.
+2. **Access code** (`X-Broadcast-Access-Code` header or body `access_code`) → SHA-256 constant-time match against active `AccessCode` rows.
+3. **No credentials** → tier 0, 200 (not an error).
+
+| Tier | Who | Fill + broadcast | AI autofill |
+|---|---|---|---|
+| **0** | Logged-in user with no grant; or unauthenticated | ✗ | ✗ |
+| **1** | Dev-granted tier 1 via `set_broadcast_access` | ✓ | ✗ |
+| **2** | Dev-granted tier 2, or a valid trial access code | ✓ | ✓ |
+
+Permission classes: `RequiresBroadcastTier1` (preview / submit / recipe / job endpoints) and `RequiresBroadcastTier2` (ai-autofill only). Both stamp `request.broadcast_access` (`AccessResult`) and `request.broadcast_client_label` for downstream views.
+
+**Metering:** trial users are metered **only at `POST /broadcast/preview`** — `AccessCodeUse.objects.get_or_create(code, draft_id)` (idempotent). Trial callers must include `draft_id` in the preview body; missing → 400. Re-submitting the same `draft_id` (edits) is free. Logged-in users are never metered.
+
+**`client_label`** on `BroadcastSubmission`: email for JWT users; `AccessCode.label` for code users. Access codes are stored only in the database — there is no env-var code list. `GET /broadcast/access` lets the SPA query the caller's tier and remaining trial uses.
 
 ## API endpoints
 
-All gated by `X-Broadcast-Access-Code`; mutating endpoints are rate-limited.
+Auth: Bearer JWT or `X-Broadcast-Access-Code` header/body (resolved as a tier). Most endpoints require tier ≥ 1; `ai-autofill` requires tier ≥ 2. `GET /broadcast/access` is open — returns tier 0 for unauthenticated callers, 403 for invalid credentials.
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/broadcast/preview` | Eligible/excluded target sites for an event (10/m) |
-| POST | `/broadcast/ai-autofill` | LLM-extract event fields from pasted text into the form draft (5/m) |
-| **POST** | **`/broadcast/direct-recipe`** | **Recipe JSON for a site from event data — no job required (30/m)** |
-| POST | `/broadcast/submit` | Create submission + targets, enqueue (3/m) — oneshot path |
-| GET | `/broadcast/jobs/<uuid>` | Job status + per-target detail |
-| POST | `/broadcast/jobs/<uuid>/retry` | Re-queue selected targets (10/m) |
-| POST | `/broadcast/jobs/<uuid>/submit-real` | Promote dry-run targets to real (10/m) |
-| POST | `/broadcast/jobs/<uuid>/cancel` | Cancel job, skip pending (10/m) |
-| GET | `/broadcast/jobs/<uuid>/screenshots/<site_key>` | Serve gated screenshot PNG |
-| GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | Recipe JSON for a `needs_manual` target (30/m) |
-| GET | `/broadcast/mock-form` | Dev-only (`DEBUG`) mock submission form |
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/broadcast/access` | open (30/m) | Caller's tier + trial metadata — drives the SPA's access UI |
+| POST | `/broadcast/preview` | tier ≥ 1 (10/m) | Eligible/excluded target sites for an event; meters trial use by `draft_id` |
+| POST | `/broadcast/ai-autofill` | tier ≥ 2 (5/m) | LLM-extract event fields from pasted text into the form draft |
+| **POST** | **`/broadcast/direct-recipe`** | **tier ≥ 1 (30/m)** | **Recipe JSON for a site from event data — no job required** |
+| POST | `/broadcast/submit` | tier ≥ 1 (3/m) | Create submission + targets, enqueue — oneshot path |
+| GET | `/broadcast/jobs/<uuid>` | tier ≥ 1 | Job status + per-target detail |
+| POST | `/broadcast/jobs/<uuid>/retry` | tier ≥ 1 (10/m) | Re-queue selected targets |
+| POST | `/broadcast/jobs/<uuid>/submit-real` | tier ≥ 1 (10/m) | Promote dry-run targets to real |
+| POST | `/broadcast/jobs/<uuid>/cancel` | tier ≥ 1 (10/m) | Cancel job, skip pending |
+| GET | `/broadcast/jobs/<uuid>/screenshots/<site_key>` | tier ≥ 1 | Serve gated screenshot PNG |
+| GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | tier ≥ 1 (30/m) | Recipe JSON for a `needs_manual` target |
+| GET | `/broadcast/mock-form` | — (`DEBUG` only) | Dev-only mock submission form |
 
 `direct-recipe` gating: 404 (unknown site / no recipe for login-gated sites), 400 (invalid event data), 200 (recipe JSON).
 
@@ -155,12 +177,15 @@ All gated by `X-Broadcast-Access-Code`; mutating endpoints are rate-limited.
 | `capture_broadcast_form <site>` | Capture a live form's HTML/PNG for selector picking |
 | `check_recipes [--live]` | Audit recipe selectors offline; `--live` loads each real form (hits third-party sites — run deliberately) |
 | `scaffold_adapter --url --key` | Capture a new site's form controls into `adapters/_scaffold/` |
+| `set_broadcast_access <email> <0\|1\|2>` | Grant or change a logged-in user's broadcast tier |
+| `generate_access_code [--tier {0,1,2}=2] [--label TEXT] [--expires ISO8601] [--uses N=3 \| --unlimited]` | Create an access code row; prints the raw code once (never stored) |
+| `list_access_codes` | List all codes (label, tier, uses, active, expiry — never the raw code) |
+| `revoke_access_code <label\|id>` | Set `is_active=False` on a code |
 
 ## Environment variables (`BROADCAST_*`)
 
 | Var | Meaning |
 |-----|---------|
-| `BROADCAST_ACCESS_CODES` | `label:code,...` — access codes → client labels |
 | `BROADCAST_AUTOSPAWN_WORKER` | Spawn a one-shot worker on submit/retry (**true in dev**, false in prod) |
 | `BROADCAST_ENABLE_MOCK` | Add the mock adapter to the registry (CI/dev) |
 | `BROADCAST_HEADLESS` | Run Chromium headless (default true) |
@@ -169,7 +194,7 @@ All gated by `X-Broadcast-Access-Code`; mutating endpoints are rate-limited.
 | `BROADCAST_SCREENSHOT_DIR` / `BROADCAST_DOWNLOAD_DIR` | Artifact dirs |
 | `BROADCAST_TIMEOUT_MS` | Per-action Playwright timeout |
 
-SPA env (`broadcastWeb/.env`): `VITE_BROADCAST_API_BASE_URL` (Django API), `VITE_BROADCAST_EXTENSION_ID` (required — enables the extension autofill primary flow).
+SPA env (`broadcastWeb/.env`): `VITE_BROADCAST_API_BASE_URL` (Django API), `VITE_BROADCAST_EXTENSION_ID` (required — enables the extension autofill primary flow), `VITE_BETTER_AUTH_URL` (Better Auth base URL — `https://auth.thecommons.town` in prod, `http://localhost:3000` in dev).
 
 ## Dev vs prod worker
 

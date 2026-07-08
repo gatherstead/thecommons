@@ -8,7 +8,7 @@ from ingestion.models import EventSource, RawEvent, StagedEvent
 
 @admin.register(EventSource)
 class EventSourceAdmin(ModelAdmin):
-    list_display = ['name', 'source_type', 'active', 'last_polled', 'event_count']
+    list_display = ['name', 'source_type', 'active', 'last_polled', 'event_count', 'prompt_suffix_preview']
     list_filter = ['source_type', 'active']
     search_fields = ['name', 'url']
     readonly_fields = ['last_polled', 'created_at', 'updated_at']
@@ -17,6 +17,10 @@ class EventSourceAdmin(ModelAdmin):
     def event_count(self, obj):
         return obj.raw_events.count()
     event_count.short_description = '# Events'
+
+    def prompt_suffix_preview(self, obj):
+        return obj.prompt_suffix[:40] if obj.prompt_suffix else "—"
+    prompt_suffix_preview.short_description = 'Prompt Suffix'
 
     @admin.action(description="Run ingestion pipeline (poll → standardize → dedup)")
     def run_ingestion_pipeline(self, request, queryset):

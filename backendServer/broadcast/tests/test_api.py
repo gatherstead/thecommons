@@ -1,13 +1,11 @@
-import os
 from unittest import mock
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings, tag
 from rest_framework.test import APIClient
 
-from broadcast.models import BroadcastSubmission
-
-CODES = {"BROADCAST_ACCESS_CODES": "makrs:SECRET1,theplant:SECRET2"}
+from broadcast.access import hash_code
+from broadcast.models import AccessCode, BroadcastAccess, BroadcastSubmission
 
 EVENT = {
     "title": "International Dance Night @ The Plant",
@@ -23,19 +21,40 @@ EVENT = {
 }
 
 
+def _patch_jwt(email):
+    return mock.patch("broadcast.access.verify_better_auth_jwt", return_value={"email": email})
+
+
+def _make_code(label="makrs", tier=1, max_uses=None, raw="SECRET1"):
+    return AccessCode.objects.create(
+        code_hash=hash_code(raw),
+        label=label,
+        tier=tier,
+        max_uses=max_uses,
+    )
+
+
 @override_settings(RATELIMIT_ENABLE=False)
 @tag("db")
 class PreviewTest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
+
+    def _post(self, extra=None, email="makrs@example.com"):
+        body = {"event": EVENT}
+        if extra:
+            body.update(extra)
+        with _patch_jwt(email):
+            return self.client.post(
+                "/broadcast/preview",
+                body,
+                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
 
     def test_preview_returns_eligible_and_excluded(self):
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post(
-                "/broadcast/preview",
-                {"access_code": "SECRET1", "event": EVENT},
-                format="json",
-            )
+        resp = self._post()
         self.assertEqual(resp.status_code, 200)
         eligible = {e["site_key"] for e in resp.json()["eligible"]}
         excluded = {e["site_key"]: e["reason"] for e in resp.json()["excluded"]}
@@ -43,37 +62,27 @@ class PreviewTest(TestCase):
         self.assertIn("chatham_arts", excluded)
         self.assertIn("visit_raleigh", excluded)
 
-    def test_preview_rejects_bad_code(self):
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post(
-                "/broadcast/preview",
-                {"access_code": "WRONG", "event": EVENT},
-                format="json",
-            )
+    def test_preview_rejects_no_credentials(self):
+        resp = self.client.post("/broadcast/preview", {"event": EVENT}, format="json")
         self.assertEqual(resp.status_code, 403)
 
-    def test_preview_rejects_missing_code(self):
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post("/broadcast/preview", {"event": EVENT}, format="json")
+    def test_preview_rejects_invalid_jwt(self):
+        with mock.patch("broadcast.access.verify_better_auth_jwt", return_value=None):
+            resp = self.client.post(
+                "/broadcast/preview",
+                {"event": EVENT},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer badtoken",
+            )
         self.assertEqual(resp.status_code, 403)
 
     def test_preview_validates_event(self):
         bad = dict(EVENT, locality=["asheville"])
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post(
-                "/broadcast/preview",
-                {"access_code": "SECRET1", "event": bad},
-                format="json",
-            )
+        resp = self._post({"event": bad})
         self.assertEqual(resp.status_code, 400)
 
     def test_preview_writes_nothing(self):
-        with mock.patch.dict(os.environ, CODES):
-            self.client.post(
-                "/broadcast/preview",
-                {"access_code": "SECRET1", "event": EVENT},
-                format="json",
-            )
+        self._post()
         self.assertEqual(BroadcastSubmission.objects.count(), 0)
 
 
@@ -82,14 +91,16 @@ class PreviewTest(TestCase):
 class SubmitAndJobTest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
+        BroadcastAccess.objects.create(email="theplant@example.com", tier=1)
 
-    def _submit(self, site_keys, dry_run=True):
-        with mock.patch.dict(os.environ, CODES):
+    def _submit(self, site_keys, dry_run=True, email="makrs@example.com"):
+        with _patch_jwt(email):
             return self.client.post(
                 "/broadcast/submit",
-                {"access_code": "SECRET1", "event": EVENT,
-                 "site_keys": site_keys, "dry_run": dry_run},
+                {"event": EVENT, "site_keys": site_keys, "dry_run": dry_run},
                 format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
 
     def test_submit_creates_one_target_per_site(self):
@@ -98,9 +109,21 @@ class SubmitAndJobTest(TestCase):
         self.assertEqual(resp.status_code, 201)
         submission = BroadcastSubmission.objects.get(id=resp.json()["job_id"])
         self.assertEqual(submission.status, "queued")
-        self.assertEqual(submission.client_label, "makrs")
+        self.assertEqual(submission.client_label, "makrs@example.com")
         self.assertEqual(submission.targets.count(), 2)
         self.assertTrue(all(t.dry_run for t in submission.targets.all()))
+
+    def test_submit_stores_code_label_for_code_path(self):
+        code = _make_code(label="makrs", raw="SECRET1")
+        resp = self.client.post(
+            "/broadcast/submit",
+            {"access_code": "SECRET1", "event": EVENT,
+             "site_keys": ["explore_pittsboro"], "dry_run": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        submission = BroadcastSubmission.objects.get(id=resp.json()["job_id"])
+        self.assertEqual(submission.client_label, code.label)
 
     def test_submit_rejects_unknown_site(self):
         resp = self._submit(["not_a_site"])
@@ -112,10 +135,10 @@ class SubmitAndJobTest(TestCase):
 
     def test_job_detail_via_header_code(self):
         job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
-        with mock.patch.dict(os.environ, CODES):
+        with _patch_jwt("theplant@example.com"):
             resp = self.client.get(
                 f"/broadcast/jobs/{job_id}",
-                HTTP_X_BROADCAST_ACCESS_CODE="SECRET2",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -133,11 +156,12 @@ class SubmitAndJobTest(TestCase):
         submission.status = "done"
         submission.save()
 
-        with mock.patch.dict(os.environ, CODES):
+        with _patch_jwt("makrs@example.com"):
             resp = self.client.post(
                 f"/broadcast/jobs/{job_id}/retry",
-                {"access_code": "SECRET1", "site_keys": ["explore_pittsboro"]},
+                {"site_keys": ["explore_pittsboro"]},
                 format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["requeued"], 1)
@@ -154,23 +178,24 @@ class SubmitAndJobTest(TestCase):
 class SubmitRealTest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
 
     def _submit(self, site_keys, dry_run=True):
-        with mock.patch.dict(os.environ, CODES):
+        with _patch_jwt("makrs@example.com"):
             return self.client.post(
                 "/broadcast/submit",
-                {"access_code": "SECRET1", "event": EVENT,
-                 "site_keys": site_keys, "dry_run": dry_run},
+                {"event": EVENT, "site_keys": site_keys, "dry_run": dry_run},
                 format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
 
-    def _submit_real(self, job_id, site_keys, code="SECRET1"):
-        with mock.patch.dict(os.environ, CODES):
-            body = {"site_keys": site_keys}
-            if code:
-                body["access_code"] = code
+    def _submit_real(self, job_id, site_keys):
+        with _patch_jwt("makrs@example.com"):
             return self.client.post(
-                f"/broadcast/jobs/{job_id}/submit-real", body, format="json",
+                f"/broadcast/jobs/{job_id}/submit-real",
+                {"site_keys": site_keys},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
 
     def _finish_dry(self, submission):
@@ -209,15 +234,17 @@ class SubmitRealTest(TestCase):
         resp = self._submit_real(job_id, [])
         self.assertEqual(resp.status_code, 400)
 
-    def test_rejects_bad_code(self):
+    def test_rejects_no_credentials(self):
         job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
-        resp = self._submit_real(job_id, ["explore_pittsboro"], code=None)
+        resp = self.client.post(
+            f"/broadcast/jobs/{job_id}/submit-real",
+            {"site_keys": ["explore_pittsboro"]},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 403)
 
     def test_unknown_job_not_found(self):
-        resp = self._submit_real(
-            "00000000-0000-0000-0000-000000000000", ["explore_pittsboro"]
-        )
+        resp = self._submit_real("00000000-0000-0000-0000-000000000000", ["explore_pittsboro"])
         self.assertEqual(resp.status_code, 404)
 
 
@@ -226,22 +253,26 @@ class SubmitRealTest(TestCase):
 class CancelJobTest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
 
     def _submit(self, site_keys, dry_run=True):
-        with mock.patch.dict(os.environ, CODES):
+        with _patch_jwt("makrs@example.com"):
             return self.client.post(
                 "/broadcast/submit",
-                {"access_code": "SECRET1", "event": EVENT,
-                 "site_keys": site_keys, "dry_run": dry_run},
+                {"event": EVENT, "site_keys": site_keys, "dry_run": dry_run},
                 format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
 
-    def _cancel(self, job_id, code="SECRET1"):
-        with mock.patch.dict(os.environ, CODES):
-            body = {"access_code": code} if code else {}
-            return self.client.post(
-                f"/broadcast/jobs/{job_id}/cancel", body, format="json",
-            )
+    def _cancel(self, job_id, authed=True):
+        if authed:
+            with _patch_jwt("makrs@example.com"):
+                return self.client.post(
+                    f"/broadcast/jobs/{job_id}/cancel",
+                    format="json",
+                    HTTP_AUTHORIZATION="Bearer faketoken",
+                )
+        return self.client.post(f"/broadcast/jobs/{job_id}/cancel", format="json")
 
     def test_cancel_skips_pending_and_marks_canceled(self):
         job_id = self._submit(["explore_pittsboro", "triangle_on_the_cheap"]).json()["job_id"]
@@ -276,9 +307,9 @@ class CancelJobTest(TestCase):
         self.assertEqual(resp.json()["skipped"], 0)
         self.assertEqual(resp.json()["status"], "done")
 
-    def test_cancel_rejects_bad_code(self):
+    def test_cancel_rejects_no_credentials(self):
         job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
-        resp = self._cancel(job_id, code=None)
+        resp = self._cancel(job_id, authed=False)
         self.assertEqual(resp.status_code, 403)
 
     def test_cancel_unknown_job_not_found(self):
@@ -291,8 +322,9 @@ class CancelJobTest(TestCase):
 class ManualRecipeTest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
         self.submission = BroadcastSubmission.objects.create(
-            client_label="makrs",
+            client_label="makrs@example.com",
             title="Jazz Night",
             description="An evening of jazz.",
             start_datetime="2026-07-10T19:00:00-04:00",
@@ -309,12 +341,16 @@ class ManualRecipeTest(TestCase):
     def _target(self, site_key, status):
         return self.submission.targets.create(site_key=site_key, status=status, dry_run=False)
 
-    def _get(self, site_key, code="SECRET1"):
-        with mock.patch.dict(os.environ, CODES):
-            headers = {"HTTP_X_BROADCAST_ACCESS_CODE": code} if code else {}
-            return self.client.get(
-                f"/broadcast/jobs/{self.submission.id}/manual/{site_key}", **headers
-            )
+    def _get(self, site_key, authed=True):
+        if authed:
+            with _patch_jwt("makrs@example.com"):
+                return self.client.get(
+                    f"/broadcast/jobs/{self.submission.id}/manual/{site_key}",
+                    HTTP_AUTHORIZATION="Bearer faketoken",
+                )
+        return self.client.get(
+            f"/broadcast/jobs/{self.submission.id}/manual/{site_key}"
+        )
 
     def test_needs_manual_returns_recipe(self):
         self._target("triangle_on_the_cheap", "needs_manual")
@@ -330,9 +366,9 @@ class ManualRecipeTest(TestCase):
         resp = self._get("triangle_on_the_cheap")
         self.assertEqual(resp.status_code, 409)
 
-    def test_missing_access_code_forbidden(self):
+    def test_missing_credentials_forbidden(self):
         self._target("triangle_on_the_cheap", "needs_manual")
-        resp = self._get("triangle_on_the_cheap", code=None)
+        resp = self._get("triangle_on_the_cheap", authed=False)
         self.assertEqual(resp.status_code, 403)
 
     def test_unknown_site_not_found(self):
@@ -356,22 +392,26 @@ class RateLimitTest(TestCase):
     def setUp(self):
         self.client = APIClient()
         cache.clear()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
 
     def tearDown(self):
         cache.clear()
 
     def test_preview_rate_limit_trips(self):
-        with mock.patch.dict(os.environ, CODES):
-            for _ in range(10):
+        for _ in range(10):
+            with _patch_jwt("makrs@example.com"):
                 resp = self.client.post(
                     "/broadcast/preview",
-                    {"access_code": "SECRET1", "event": EVENT},
+                    {"event": EVENT},
                     format="json",
+                    HTTP_AUTHORIZATION="Bearer faketoken",
                 )
-                self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.status_code, 200)
+        with _patch_jwt("makrs@example.com"):
             resp = self.client.post(
                 "/broadcast/preview",
-                {"access_code": "SECRET1", "event": EVENT},
+                {"event": EVENT},
                 format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
         self.assertEqual(resp.status_code, 403)

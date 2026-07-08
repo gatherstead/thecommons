@@ -32,7 +32,5 @@ BETTER_AUTH_JWKS_URL = 'http://test/jwks'
 CRON_SECRET = 'test'
 THE_COMMONS_API_KEY = 'test'
 
-# These two are read from os.environ directly (not via settings), so stub the
-# env: BREVO in events/email_service.py, access codes in broadcast/access.py.
+# BREVO_API_KEY is read from os.environ directly in events/email_service.py.
 os.environ['BREVO_API_KEY'] = 'test'
-os.environ['BROADCAST_ACCESS_CODES'] = 'test:testcode'

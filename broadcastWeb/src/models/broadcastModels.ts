@@ -26,6 +26,7 @@ export const CATEGORIES = [
 ] as const;
 
 export interface EventDraft {
+  draft_id: string;
   title: string;
   description: string;
   start_datetime: string;

@@ -12,6 +12,7 @@ Deep-dive guides beyond the root-level docs. Each file is a focused reference on
 | [redis-celery-handoff.md](redis-celery-handoff.md) | Redis + Celery setup: broker/cache, worker + beat, task conventions | Adding async tasks, scheduled jobs, or touching the worker |
 | [dev-db-isolation.md](dev-db-isolation.md) | Neon dev-branch setup — isolating local dev from the prod DB | Setting up a dev environment or running migrations |
 | [review-playbook.md](review-playbook.md) | Reusable multi-agent repo review: prod-wiring, tests, backend architecture, frontend/styling, docs — fan-out subagents → triaged findings + Apply Queue | Running a full-repo review (`/repo-review`) |
+| [runbook-auth-cutover.md](runbook-auth-cutover.md) | Auth-origin cutover — moving Better Auth to `auth.thecommons.town`, setting `.thecommons.town` cookie domain, one-time forced re-login | Deploying the centralized auth origin or debugging cross-subdomain session issues |
 
 ## Root-level docs
 

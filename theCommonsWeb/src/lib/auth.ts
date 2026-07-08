@@ -7,9 +7,25 @@ import { db } from './db';
 import * as schema from './auth-schema';
 import { lazyAuth } from './lazy-auth-plugin';
 
+const BASE_TRUSTED_ORIGINS = [
+    'https://thecommons.town',
+    'https://www.thecommons.town',
+    'https://broadcast.thecommons.town',
+    'http://localhost:3000',
+    'http://localhost:5173',
+];
+
+const extraOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+const cookieDomain = process.env.BETTER_AUTH_COOKIE_DOMAIN;
+
 export const auth = betterAuth({
     baseURL: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
     secret: process.env.BETTER_AUTH_SECRET,
+    trustedOrigins: [...BASE_TRUSTED_ORIGINS, ...extraOrigins],
     database: drizzleAdapter(db, {
         provider: 'pg',
         schema: {
@@ -22,7 +38,17 @@ export const auth = betterAuth({
     }),
     // Neon pre-creates neon_auth.user.id as a real UUID column. Better Auth's
     // ID generator only reads advanced.database.generateId (not advanced.generateId).
-    advanced: { database: { generateId: 'uuid' } },
+    // cookieDomain is only set in prod (.thecommons.town); in dev it is unset so
+    // cookies remain localhost-scoped and SameSite=Lax (the better-auth default).
+    advanced: {
+        database: { generateId: 'uuid' },
+        ...(cookieDomain
+            ? {
+                  crossSubDomainCookies: { enabled: true, domain: cookieDomain },
+                  defaultCookieAttributes: { sameSite: 'none', secure: true, partitioned: false },
+              }
+            : {}),
+    },
     emailAndPassword: { enabled: true, autoSignIn: true },
     // Google sign-in temporarily disabled — revisit later. It returned
     // `invalid_code` and bypassed user-type selection during signup.

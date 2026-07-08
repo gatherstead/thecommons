@@ -36,7 +36,7 @@ Event location: {location}
 """
 
 
-def score_event(staged: StagedEvent) -> tuple[float, str]:
+def score_event(staged: StagedEvent, prompt_suffix: str = "") -> tuple[float, str]:
     """Call Gemini to score a StagedEvent for problematic content. Returns (score, notes)."""
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro']
@@ -47,6 +47,8 @@ def score_event(staged: StagedEvent) -> tuple[float, str]:
         description=staged.description[:2000],
         location=staged.location_name,
     )
+    if prompt_suffix:
+        prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
 
     response = None
     for model in models_to_try:
@@ -81,8 +83,12 @@ def score_event(staged: StagedEvent) -> tuple[float, str]:
     return score, notes
 
 
-def score_all_unscored(source=None):
+def score_all_unscored(source=None, prompt_suffix=None):
     """Score all pending StagedEvents that have not yet been safety-scored."""
+    if prompt_suffix is None and source is not None:
+        prompt_suffix = source.prompt_suffix
+    prompt_suffix = prompt_suffix or ""
+
     unscored = StagedEvent.objects.filter(status='pending', safety_score__isnull=True)
     if source:
         unscored = unscored.filter(raw_event__source=source)
@@ -90,7 +96,7 @@ def score_all_unscored(source=None):
 
     for staged in unscored:
         try:
-            score, notes = score_event(staged)
+            score, notes = score_event(staged, prompt_suffix=prompt_suffix)
             staged.safety_score = score
             staged.safety_notes = notes
             staged.save(update_fields=['safety_score', 'safety_notes'])

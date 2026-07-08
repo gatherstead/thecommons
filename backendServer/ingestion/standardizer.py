@@ -92,7 +92,7 @@ def fetch_page_text(url: str, max_chars: int = 6000) -> str:
         return ''
 
 
-def standardize_event(raw_event: RawEvent) -> StagedEvent:
+def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:
     """
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """
@@ -114,6 +114,8 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         end=raw_event.raw_end.isoformat() if raw_event.raw_end else "Not specified",
         page_text=page_text or "No webpage available",
     )
+    if prompt_suffix:
+        prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
 
     response = None
     for model in models_to_try:
@@ -187,8 +189,12 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
     return staged
 
 
-def standardize_all_unprocessed(source=None):
+def standardize_all_unprocessed(source=None, prompt_suffix=None):
     """Process all RawEvents that haven't been standardized yet."""
+    if prompt_suffix is None and source is not None:
+        prompt_suffix = source.prompt_suffix
+    prompt_suffix = prompt_suffix or ""
+
     unprocessed = RawEvent.objects.filter(processed=False)
     if source:
         unprocessed = unprocessed.filter(source=source)
@@ -196,7 +202,7 @@ def standardize_all_unprocessed(source=None):
 
     for raw_event in unprocessed:
         try:
-            standardize_event(raw_event)
+            standardize_event(raw_event, prompt_suffix=prompt_suffix)
             count += 1
         except Exception as e:
             logger.error(f"Failed to standardize '{raw_event.raw_title}': {e}")

@@ -67,6 +67,7 @@ def run_stream(request):
     source_name = request.GET.get('source_name', '').strip()
     limit_raw = request.GET.get('limit', '').strip()
     limit = int(limit_raw) if limit_raw.isdigit() else None
+    prompt_suffix = request.GET.get('prompt_suffix', '').strip()
 
     def _error_stream(message):
         yield sse_frame('error', {'message': message, 'traceback': ''})
@@ -89,6 +90,7 @@ def run_stream(request):
             'source_name': source_name,
             'dry_run': True,
             'limit': limit,
+            'prompt_suffix': prompt_suffix,
         },
         daemon=True,
     )
@@ -118,6 +120,7 @@ def save_and_publish(request):
     city = request.POST.get('city', '').strip()
     ics_url = request.POST.get('ics_url', '').strip()
     source_name = request.POST.get('source_name', '').strip()
+    prompt_suffix = request.POST.get('prompt_suffix', '').strip()
 
     try:
         _validate_url(ics_url)
@@ -135,18 +138,23 @@ def save_and_publish(request):
                     'name': effective_name,
                     'source_type': 'ics',
                     'active': True,
+                    'prompt_suffix': prompt_suffix,
                 },
             )
 
+            # Always refresh prompt_suffix so updates on existing rows take effect
+            source.prompt_suffix = prompt_suffix
+            source.save(update_fields=['prompt_suffix'])
+
             fetch_ics_feed(source)
-            standardize_all_unprocessed(source=source)
+            standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
 
             for staged in StagedEvent.objects.filter(raw_event__source=source):
                 staged.town = town.name
                 staged.save(update_fields=['town'])
 
             dedup_all_pending(source=source)
-            score_all_unscored(source=source)
+            score_all_unscored(source=source, prompt_suffix=prompt_suffix)
             counts = auto_publish_safe_events(source=source, force_town=town)
 
             published = [
@@ -163,3 +171,36 @@ def save_and_publish(request):
         return JsonResponse({'error': f"Town '{city}' not found"}, status=400)
     except Exception as exc:
         return JsonResponse({'error': str(exc)}, status=400)
+
+
+@csrf_protect
+def add_source(request):
+    if not settings.DEBUG:
+        raise Http404
+    if request.method != 'POST':
+        return HttpResponseBadRequest('POST required')
+
+    ics_url = request.POST.get('ics_url', '').strip()
+    source_name = request.POST.get('source_name', '').strip()
+    prompt_suffix = request.POST.get('prompt_suffix', '').strip()
+
+    try:
+        _validate_url(ics_url)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    effective_name = source_name or urlparse(ics_url).hostname
+    source, created = EventSource.objects.update_or_create(
+        url=ics_url,
+        defaults={
+            'name': effective_name,
+            'source_type': 'ics',
+            'active': True,
+            'prompt_suffix': prompt_suffix,
+        },
+    )
+    return JsonResponse({
+        'created': created,
+        'source_id': source.id,
+        'name': source.name,
+    })

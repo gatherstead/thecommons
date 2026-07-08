@@ -171,6 +171,7 @@ def extract_event_fields(text: str) -> dict:
     if response is None:
         raise RuntimeError("AI autofill: all models/retries exhausted")
 
+    assert response.text is not None, "Gemini returned a response with no text"
     raw_text = response.text.strip()
     clean = _strip_fences(raw_text)
 

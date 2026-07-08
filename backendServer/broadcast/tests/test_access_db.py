@@ -27,8 +27,8 @@ def _make_request(
         headers["HTTP_AUTHORIZATION"] = auth_header
     if code_header:
         headers["HTTP_X_BROADCAST_ACCESS_CODE"] = code_header
-    req = factory.post("/", **headers)
-    req.data = data or {}
+    req = factory.post("/", **headers)  # type: ignore[arg-type]
+    req.data = data or {}  # type: ignore[attr-defined]
     return req
 
 

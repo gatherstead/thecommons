@@ -45,10 +45,12 @@ class CanonicalEvent:
 
 def event_from_submission(submission) -> CanonicalEvent:
     """Build a CanonicalEvent from a BroadcastSubmission row."""
+    start_dt = _to_local(submission.start_datetime)
+    assert start_dt is not None, "BroadcastSubmission.start_datetime must not be None"
     return CanonicalEvent(
         title=submission.title,
         description=submission.description,
-        start_datetime=_to_local(submission.start_datetime),
+        start_datetime=start_dt,
         end_datetime=_to_local(submission.end_datetime),
         all_day=submission.all_day,
         venue_name=submission.venue_name,

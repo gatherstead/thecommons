@@ -3,6 +3,7 @@ runner pipeline (Playwright + Chromium) against the local static form.
 Skipped automatically when the Playwright browser is not installed.
 """
 
+import os
 import shutil
 import tempfile
 import unittest
@@ -20,7 +21,7 @@ def _chromium_available() -> bool:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            return bool(p.chromium.executable_path) and shutil.os.path.exists(
+            return bool(p.chromium.executable_path) and os.path.exists(
                 p.chromium.executable_path
             )
     except Exception:
@@ -69,7 +70,7 @@ class MockAdapterEndToEndTest(TestCase):
                         submission_id="test",
                     )
                     result = adapter.fill_and_submit(page, make_event(), ctx)
-                    self.assertTrue(shutil.os.path.exists(result.screenshot_path))
+                    self.assertTrue(os.path.exists(result.screenshot_path))
                 finally:
                     browser.close()
         return result

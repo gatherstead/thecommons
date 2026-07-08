@@ -1,0 +1,30 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (backend)
+        entry: bash -c 'cd backendServer && uv run ruff check .'
+        language: system
+        pass_filenames: false
+        files: ^backendServer/
+
+      - id: ruff-format
+        name: ruff format --check (backend)
+        entry: bash -c 'cd backendServer && uv run ruff format --check .'
+        language: system
+        pass_filenames: false
+        files: ^backendServer/
+
+      - id: mypy
+        name: mypy (backend)
+        entry: bash -c 'cd backendServer && uv run mypy .'
+        language: system
+        pass_filenames: false
+        files: ^backendServer/
+
+      - id: eslint
+        name: eslint (theCommonsWeb)
+        entry: bash -c 'cd theCommonsWeb && pnpm lint'
+        language: system
+        pass_filenames: false
+        files: ^theCommonsWeb/

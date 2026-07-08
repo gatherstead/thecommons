@@ -12,8 +12,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: lint (ruff + mypy + eslint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: theCommonsWeb/pnpm-lock.yaml
+      - name: Install backend dependencies
+        working-directory: backendServer
+        run: uv sync --frozen
+      - name: Install frontend dependencies
+        working-directory: theCommonsWeb
+        run: pnpm install --frozen-lockfile
+      - name: Backend lint (ruff check + ruff format --check + mypy)
+        working-directory: backendServer
+        run: uv run ruff check . && uv run ruff format --check . && uv run mypy .
+      - name: Frontend lint (eslint)
+        working-directory: theCommonsWeb
+        run: pnpm lint
+
   backend:
     name: backend (django)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -53,6 +87,7 @@ jobs:
 
   frontend-commons:
     name: frontend (theCommonsWeb)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -94,6 +129,7 @@ jobs:
 
   frontend-broadcast:
     name: frontend (broadcastWeb)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -133,3 +133,6 @@ Runs daily (Celery beat, 04:00 ET) or via `POST /api/cron/ingest` (`CRON_SECRET`
 | [backendServer/AGENTS.md](backendServer/AGENTS.md) | Backend directory map |
 | [theCommonsWeb/AGENTS.md](theCommonsWeb/AGENTS.md) | Main frontend directory map |
 | [broadcastWeb/AGENTS.md](broadcastWeb/AGENTS.md) | Broadcast operator SPA map |
+| [docs/validated-patterns.md](docs/validated-patterns.md) | Session-confirmed gotchas (confirmed in real sessions, not speculative) |
+
+See @docs/validated-patterns.md for session-confirmed gotchas not covered elsewhere.

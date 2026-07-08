@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Any
 
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
@@ -149,7 +150,7 @@ BETTER_AUTH_JWKS_URL = os.environ.get("BETTER_AUTH_JWKS_URL", "")
 BETTER_AUTH_ISSUER = os.environ.get("BETTER_AUTH_ISSUER", "")
 BETTER_AUTH_AUDIENCE = os.environ.get("BETTER_AUTH_AUDIENCE", "")
 
-UNFOLD = {
+UNFOLD: dict[str, Any] = {
     "SITE_TITLE": "The Commons Admin",
     "SITE_HEADER": "The Commons Admin",
     "SITE_SUBHEADER": None,

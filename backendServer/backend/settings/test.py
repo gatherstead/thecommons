@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 from .dev import *  # noqa: F403  # Django settings override files use star imports by convention
 
@@ -10,7 +11,7 @@ from .dev import *  # noqa: F403  # Django settings override files use star impo
 # drop fails at teardown with "database is being accessed by other users". The
 # direct endpoint is the pooler host minus the "-pooler" suffix; rewrite to it
 # so the throwaway test_<dbname> can be created and dropped cleanly.
-DATABASES["default"]["HOST"] = DATABASES["default"]["HOST"].replace("-pooler", "")  # noqa: F405  # star import is intentional
+DATABASES["default"]["HOST"] = cast(str, DATABASES["default"]["HOST"]).replace("-pooler", "")  # noqa: F405  # star import is intentional
 
 # Central neon_auth handling: the managed=False BetterAuth mirrors aren't built
 # by the normal test-DB setup, so a custom runner creates the schema + table.

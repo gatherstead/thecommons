@@ -4,7 +4,6 @@ Skipped automatically when the Playwright browser is not installed.
 """
 
 import os
-import shutil
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -21,9 +20,7 @@ def _chromium_available() -> bool:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            return bool(p.chromium.executable_path) and os.path.exists(
-                p.chromium.executable_path
-            )
+            return bool(p.chromium.executable_path) and os.path.exists(p.chromium.executable_path)
     except Exception:
         return False
 

@@ -6,7 +6,9 @@ from .models import BusinessProfile, Category, Event, Tag, Town
 class EventSerializer(serializers.ModelSerializer):
     # Tags: write_only list of strings, read_only tag_names
     tags = serializers.ListField(child=serializers.CharField(max_length=50), write_only=True)
-    tag_names: serializers.Field = serializers.StringRelatedField(many=True, source="tags", read_only=True)
+    tag_names: serializers.Field = serializers.StringRelatedField(
+        many=True, source="tags", read_only=True
+    )
 
     # Town: accepts/returns the slug string (e.g. 'carrboro')
     town = serializers.SlugRelatedField(
@@ -76,7 +78,9 @@ class BusinessProfileSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
-    tag_names: serializers.Field = serializers.StringRelatedField(many=True, source="tags", read_only=True)
+    tag_names: serializers.Field = serializers.StringRelatedField(
+        many=True, source="tags", read_only=True
+    )
 
     service_area = serializers.SlugRelatedField(
         slug_field="slug",

@@ -44,7 +44,7 @@ export function Header() {
 
                 {/* ── Tagline — floats above the banner row ─────────────── */}
                 <p className="text-center text-[12px] uppercase tracking-[0.22em] text-(--color-text-muted) pb-1.5">
-                    Your Town's Digital Gathering Place
+                    Your Town&apos;s Digital Gathering Place
                 </p>
 
                 {/* ── Rule ─────────────────────────────────────────────── */}

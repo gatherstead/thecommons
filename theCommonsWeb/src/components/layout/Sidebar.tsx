@@ -212,7 +212,7 @@ export function Sidebar({
                     The Commons Digest
                 </p>
                 <p className="text-sm font-serif font-bold text-[var(--color-text)] leading-snug mb-[0.8rem]">
-                    Every week's events, delivered to your inbox.
+                    Every week&apos;s events, delivered to your inbox.
                 </p>
                 <p className="text-xs text-[var(--color-text-muted)] leading-snug mb-6">
                     The weekly digest lands every Sunday — a curated roundup of upcoming happenings in Chapel Hill &amp; Carrboro, no algorithm required.

@@ -293,19 +293,10 @@ class AutofillViewTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("event", resp.json())
 
-    def test_tier1_access_code_denied_on_ai_autofill(self):
-        AccessCode.objects.create(
-            code_hash=hash_code("TIER1CODE"),
-            label="tier1client",
-            tier=1,
-            max_uses=None,
-        )
-        resp = self.client.post(
-            "/broadcast/ai-autofill",
-            {"access_code": "TIER1CODE", "text": "some event"},
-            format="json",
-        )
-        self.assertEqual(resp.status_code, 403)
+    # No "tier1 access code denied" case anymore — trial (anonymous) AccessCode
+    # rows are always tier 2 (AccessCode.save() forces it). A below-tier-2
+    # anonymous code can't be constructed; see test_tier1_jwt_denied_on_ai_autofill
+    # for the equivalent denial via a permanent tier-1 BroadcastAccess grant.
 
     @override_settings(GEMINI_API_KEY="test")
     def test_happy_path_returns_event_dict(self):

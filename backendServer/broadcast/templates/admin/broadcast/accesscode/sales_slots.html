@@ -1,0 +1,101 @@
+{% load i18n %}
+<div class="sales-slots-panel" style="margin-bottom:1.5rem;">
+  <p style="margin:0 0 .75rem; color:#666; font-size:.9em;">
+    {% trans "Copy a code below to hand to a prospect. Copying automatically rotates in a fresh code for next time — codes already handed out keep working." %}
+  </p>
+  <div style="display:flex; flex-wrap:wrap; gap:1rem;">
+    {% for s in sales_slots %}
+    <div style="flex:1 1 240px; min-width:240px; border:1px solid #ccc; border-radius:8px; padding:1rem; background:#fff;">
+      <h3 style="margin:0 0 .5rem; font-size:1em;">{{ s.get_slot_display }}</h3>
+      <div style="display:flex; gap:.5rem;">
+        <input
+          type="text"
+          readonly
+          value="{{ s.raw_code }}"
+          data-slot-input="{{ s.slot }}"
+          style="flex:1; min-width:0; font-family:monospace; padding:.4rem .5rem; border:1px solid #ccc; border-radius:4px;"
+        >
+        <button
+          type="button"
+          class="button"
+          data-copy-slot="{{ s.slot }}"
+          data-rotate-url="{% url 'admin:broadcast_accesscode_rotate_slot' s.slot %}"
+        >
+          {% trans "Copy" %}
+        </button>
+      </div>
+      <p style="margin:.5rem 0 0; font-size:.8em; color:#888;">
+        {% if s.slot == "trial" %}
+          {% trans "No login required — valid 3 days from when it's copied." %}
+        {% else %}
+          {% trans "Requires login to redeem — permanently upgrades the account." %}
+        {% endif %}
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+  {% csrf_token %}
+</div>
+
+<script>
+(function () {
+  function fallbackCopy(input) {
+    var wasReadOnly = input.hasAttribute("readonly");
+    input.removeAttribute("readonly");
+    input.select();
+    input.setSelectionRange(0, input.value.length);
+    try {
+      document.execCommand("copy");
+    } catch (err) {
+      /* best effort — text is at least selected for manual Ctrl+C */
+    }
+    if (wasReadOnly) input.setAttribute("readonly", "readonly");
+  }
+
+  document.querySelectorAll("[data-copy-slot]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var slot = btn.getAttribute("data-copy-slot");
+      var input = document.querySelector('[data-slot-input="' + slot + '"]');
+      var rotateUrl = btn.getAttribute("data-rotate-url");
+      var csrfInput = btn.closest(".sales-slots-panel").querySelector("[name=csrfmiddlewaretoken]");
+      var text = input.value;
+      var originalLabel = btn.textContent;
+
+      var copyPromise =
+        window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText
+          ? navigator.clipboard.writeText(text)
+          : Promise.reject(new Error("clipboard API unavailable"));
+
+      copyPromise
+        .catch(function () {
+          fallbackCopy(input);
+        })
+        .finally(function () {
+          btn.textContent = "Copied!";
+          btn.disabled = true;
+
+          fetch(rotateUrl, {
+            method: "POST",
+            headers: { "X-CSRFToken": csrfInput ? csrfInput.value : "" },
+          })
+            .then(function (resp) {
+              return resp.json();
+            })
+            .then(function (data) {
+              if (data && data.raw_code) input.value = data.raw_code;
+            })
+            .catch(function () {
+              /* rotation failed silently — the code already copied still works;
+                 the box just won't show a fresh one until the next page load */
+            })
+            .finally(function () {
+              setTimeout(function () {
+                btn.textContent = originalLabel;
+                btn.disabled = false;
+              }, 1200);
+            });
+        });
+    });
+  });
+})();
+</script>

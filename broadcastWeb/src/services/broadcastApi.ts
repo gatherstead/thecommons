@@ -74,6 +74,13 @@ export const getAccess = async (
   return body as { tier: 0 | 1 | 2; is_trial: boolean; uses_remaining: number | null };
 };
 
+// Requires auth.jwt — upgrade codes are only redeemable while logged in.
+export const redeemAccessCode = (
+  auth: ApiAuth,
+  accessCode: string,
+): Promise<{ tier: 0 | 1 | 2 }> =>
+  post<{ tier: 0 | 1 | 2 }>("/broadcast/redeem", auth, { access_code: accessCode });
+
 export const previewBroadcast = (
   auth: ApiAuth,
   event: EventDraft,

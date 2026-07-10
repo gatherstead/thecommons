@@ -25,7 +25,8 @@ def _patch_jwt(email):
     return mock.patch("broadcast.access.verify_better_auth_jwt", return_value={"email": email})
 
 
-def _make_code(label="makrs", tier=1, max_uses=None, raw="SECRET1"):
+def _make_code(label="makrs", tier=2, max_uses=None, raw="SECRET1"):
+    # kind defaults to "trial" — AccessCode.save() forces tier=2 for trial codes.
     return AccessCode.objects.create(
         code_hash=hash_code(raw),
         label=label,

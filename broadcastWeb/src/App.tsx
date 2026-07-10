@@ -17,6 +17,7 @@ import {
   getAccess,
   getJob,
   previewBroadcast,
+  redeemAccessCode,
   retryJob,
   submitReal,
 } from "./services/broadcastApi";
@@ -273,6 +274,26 @@ export default function App() {
       }
       setAccessVerified(false);
       setTier(0);
+    }
+  };
+
+  // Same textfield as handleVerify, but only reachable while logged in —
+  // redeems an UPGRADE code and permanently sets this account's tier.
+  const handleRedeem = async () => {
+    if (!accessCode.trim() || !jwt) return;
+    try {
+      const result = await redeemAccessCode({ jwt }, accessCode);
+      setTier(result.tier);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessCode("");
+      setError("");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setError("Access code not recognized, expired, or already used up.");
+      } else {
+        setError("Could not apply access code. Try again.");
+      }
     }
   };
 
@@ -579,7 +600,7 @@ export default function App() {
           </div>
 
           <div className="field access-col">
-            <p className="field-section-label">Access Code</p>
+            <p className="field-section-label">{jwt ? "Upgrade Account" : "Access Code"}</p>
             <div className="verify-row">
               <input
                 id="access-code"
@@ -587,8 +608,10 @@ export default function App() {
                 value={accessCode}
                 onChange={(e) => {
                   setAccessCode(e.target.value);
-                  setAccessVerified(false);
-                  if (!jwt) setTier(0);
+                  if (!jwt) {
+                    setAccessVerified(false);
+                    setTier(0);
+                  }
                 }}
                 autoComplete="off"
                 disabled={busy || job !== null || locked}
@@ -597,19 +620,24 @@ export default function App() {
               <button
                 type="button"
                 className={accessVerified && !jwt ? "verify is-verified" : "verify"}
-                onClick={handleVerify}
-                disabled={accessVerified && !jwt || accessCode.trim() === "" || !!jwt}
+                onClick={jwt ? handleRedeem : handleVerify}
+                disabled={(accessVerified && !jwt) || accessCode.trim() === ""}
               >
-                {accessVerified && !jwt ? "✓ Verified" : "Verify"}
+                {accessVerified && !jwt ? "✓ Verified" : jwt ? "Upgrade" : "Verify"}
               </button>
             </div>
-            {isTrial && hasAccess && usesRemaining !== null && (
+            {!jwt && isTrial && hasAccess && usesRemaining !== null && (
               <p className="hint">
                 {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining —
                 one use per event previewed; edits are free.
               </p>
             )}
-            <p className="hint">Remembered on this device — you stay signed in across events.</p>
+            {jwt && hasAccess && (
+              <p className="hint">This account has permanent Tier {tier} access.</p>
+            )}
+            {!jwt && (
+              <p className="hint">Remembered on this device — you stay signed in across events.</p>
+            )}
           </div>
         </div>
 

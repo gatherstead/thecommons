@@ -96,8 +96,22 @@ class BroadcastAccess(models.Model):
 
 
 class AccessCode(models.Model):
+    """Two independent code pools, distinguished by `kind`.
+
+    TRIAL codes are redeemed anonymously (no account) — see resolve_access()
+    in access.py — and are always tier 2, time-boxed via expires_at rather
+    than metered by uses. UPGRADE codes are redeemed only by a logged-in user
+    via POST /broadcast/redeem and permanently set that account's
+    BroadcastAccess.tier; they never touch the anonymous path.
+    """
+
+    KIND_TRIAL = "trial"
+    KIND_UPGRADE = "upgrade"
+    KIND_CHOICES = [(KIND_TRIAL, "Trial (anonymous)"), (KIND_UPGRADE, "Upgrade (account)")]
+
     code_hash = models.CharField(max_length=64, unique=True)
     label = models.CharField(max_length=64)
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=KIND_TRIAL)
     tier = models.IntegerField(choices=_TIER_CHOICES, default=2)
     max_uses = models.IntegerField(null=True, blank=True, default=3)
     is_active = models.BooleanField(default=True)
@@ -106,10 +120,19 @@ class AccessCode(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.label} (tier {self.tier})"
+        return f"{self.label} ({self.kind}, tier {self.tier})"
+
+    def save(self, *args, **kwargs):
+        # Trial codes are always tier 2 — enforced here as the safety net
+        # regardless of caller (admin form, management command, tests).
+        if self.kind == self.KIND_TRIAL:
+            self.tier = 2
+        super().save(*args, **kwargs)
 
 
 class AccessCodeUse(models.Model):
+    """Meters a TRIAL code's anonymous preview usage, keyed by draft_id."""
+
     access_code = models.ForeignKey(AccessCode, related_name="uses", on_delete=models.CASCADE)
     draft_id = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -119,3 +142,58 @@ class AccessCodeUse(models.Model):
 
     def __str__(self):
         return f"{self.access_code.label} / {self.draft_id}"
+
+
+class AccessCodeRedemption(models.Model):
+    """One row per email that has redeemed an UPGRADE code — meters max_uses."""
+
+    access_code = models.ForeignKey(
+        AccessCode, related_name="redemptions", on_delete=models.CASCADE
+    )
+    email = models.CharField(max_length=254)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("access_code", "email")]
+
+    def __str__(self):
+        return f"{self.access_code.label} / {self.email}"
+
+    def save(self, *args, **kwargs):
+        self.email = self.email.lower()
+        super().save(*args, **kwargs)
+
+
+class SalesCodeSlot(models.Model):
+    """One evergreen, always-visible code per tier for the admin sales dashboard.
+
+    Deliberately stores the raw code in plaintext (unlike AccessCode.code_hash
+    elsewhere, which is hash-only and shown once) — these three slots exist so
+    a salesperson can open the admin and always see a live, copyable code with
+    no CLI involved. See broadcast/sales_codes.py for rotation.
+    """
+
+    SLOT_TRIAL = "trial"
+    SLOT_TIER1 = "tier1"
+    SLOT_TIER2 = "tier2"
+    SLOT_CHOICES = [
+        (SLOT_TRIAL, "Free trial"),
+        (SLOT_TIER1, "Tier 1"),
+        (SLOT_TIER2, "Tier 2"),
+    ]
+    # slot -> (AccessCode.kind, tier)
+    SLOT_KIND_TIER = {
+        SLOT_TRIAL: (AccessCode.KIND_TRIAL, 2),
+        SLOT_TIER1: (AccessCode.KIND_UPGRADE, 1),
+        SLOT_TIER2: (AccessCode.KIND_UPGRADE, 2),
+    }
+
+    slot = models.CharField(max_length=10, choices=SLOT_CHOICES, unique=True)
+    access_code = models.OneToOneField(
+        AccessCode, related_name="sales_slot", on_delete=models.PROTECT
+    )
+    raw_code = models.CharField(max_length=64)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.get_slot_display()} → {self.raw_code[:6]}…"

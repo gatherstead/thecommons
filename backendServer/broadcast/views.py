@@ -13,11 +13,16 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from broadcast.access import resolve_access
+from broadcast.access import redeem_upgrade_code, resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
 from broadcast.models import AccessCodeUse, BroadcastSubmission
-from broadcast.permissions import RequiresBroadcastTier1, RequiresBroadcastTier2, _draft_id_from
+from broadcast.permissions import (
+    RequiresBroadcastLogin,
+    RequiresBroadcastTier1,
+    RequiresBroadcastTier2,
+    _draft_id_from,
+)
 from broadcast.routing import eligible_targets
 from broadcast.serializers import CanonicalEventSerializer
 from broadcast.services import (
@@ -267,6 +272,28 @@ def access_info(request):
             "uses_remaining": result.uses_remaining,
         }
     )
+
+
+@ratelimit(key="ip", rate="10/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([RequiresBroadcastLogin])
+def redeem(request):
+    """Redeem an UPGRADE access code, permanently setting the caller's tier.
+
+    Requires login (JWT) — TRIAL codes are not accepted here, and this never
+    grants a per-request tier the way the anonymous code path does.
+    """
+    raw_code = request.data.get("access_code") if isinstance(request.data, dict) else None
+    if not raw_code or not isinstance(raw_code, str):
+        return Response({"access_code": "required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    new_tier = redeem_upgrade_code(request.broadcast_email, raw_code)
+    if new_tier is None:
+        return Response(
+            {"detail": "Access code not recognized, expired, or already used up."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response({"tier": new_tier})
 
 
 def mock_form(request):

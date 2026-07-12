@@ -38,7 +38,9 @@ If it's ambiguous whether a bullet is a ticket or a detail, make a call, split t
 
 5. **Mark uncertainty.** Where you're guessing — an acceptance criterion you inferred, a file you couldn't confirm, an ambiguous scope split, a design decision the user didn't specify — put your best guess and flag it inline with `⚠️ ASSUMPTION:` or `⚠️ CONFIRM:` so the user knows exactly what to review. Never silently invent requirements.
 
-6. **Carry the ticket ID.** If the source backlog numbers items (this repo uses forms like `10.2`, `T12` — see `CLAUDE.md`), reuse those IDs. Otherwise assign sequential `T1, T2, …`.
+6. **Carry the ticket ID.** If the source backlog numbers items (this repo uses forms like `10.2`, `T12` — see `CLAUDE.md`), reuse those IDs. Otherwise mint a **new suite**: read `Next suite number` from `notion-sync/STATE.md`, use it as the suite `N`, and number tickets `N.1, N.2, …`.
+
+7. **Offer to queue the suite for Notion — but ask first.** After emitting the tickets, do **not** write anything yet. Ask the user whether the tickets are good enough to go to the outbox (e.g. "Ready to queue Suite N to the Notion outbox, or want to revise first?"). Keep iterating on the tickets until they give an explicit go-ahead. **Only on their approval**, append a `NEW SUITE` block to `notion-sync/OUTBOX.md → Pending changes` (formats defined in that file's preamble), then update `notion-sync/STATE.md`: bump `Next suite number` and add the suite to the ledger in the `Open` column. The suite card body is a tight **Why / Outcomes / QA** summary distilled from the tickets; each ticket becomes a subpage carrying its **full** text. Never touch Notion directly — the desktop app does that. Per `CLAUDE.md`.
 
 ## Ticket template
 
@@ -88,4 +90,5 @@ Close with a short **"Review these"** list linking every `⚠️` marker, so the
 - Tickets are ordered by necessity and grouped into parallel waves.
 - Non-software work is expressed as an AI prompt, not invented steps.
 - Every assumption or gap is marked with `⚠️` and collected in "Review these".
+- The user was asked whether to queue the suite; the outbox/`STATE.md` were written **only after** an explicit go-ahead (counter bumped, ledger row added). No approval → nothing written.
 - **No feature code was written** — this skill only produces tickets.

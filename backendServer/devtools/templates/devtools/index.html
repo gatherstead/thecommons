@@ -1,0 +1,59 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Dev Tools{% endblock %}
+
+{% block content %}
+<style>
+  .devtools-index { max-width: 800px; }
+  .devtools-index h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .devtools-index .description { color: #6b7280; margin: 0.5rem 0 1.5rem; line-height: 1.65; }
+  .devtools-index .warning {
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    padding: 0.6rem 1rem;
+    border-radius: 0 4px 4px 0;
+    margin: 0 0 1.5rem;
+    font-size: 0.9rem;
+  }
+  .devtools-index .tool-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  .devtools-index .tool-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    background: #fff;
+    transition: border-color 0.1s;
+    position: relative;
+    cursor: pointer;
+  }
+  .devtools-index .tool-item:hover { border-color: #2563eb; background: #f9fafb; }
+  .devtools-index .tool-name { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; }
+  .devtools-index .tool-name a {
+    color: #1d4ed8;
+    text-decoration: none;
+  }
+  /* Stretch the link to cover the whole card */
+  .devtools-index .tool-name a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .devtools-index .tool-item:hover .tool-name a { text-decoration: underline; }
+  .devtools-index .tool-desc { color: #6b7280; font-size: 0.875rem; margin: 0; line-height: 1.55; }
+</style>
+
+<div class="devtools-index">
+  <h1>Dev Tools</h1>
+  <p class="description">Internal development utilities. Only available in <code>DEBUG</code> mode.</p>
+
+  <ul class="tool-list">
+    <li class="tool-item">
+      <p class="tool-name"><a href="/devtools/ingestion-playground">Ingestion Playground</a></p>
+      <p class="tool-desc">
+        Test the full ICS ingestion pipeline — fetch, standardize, dedup, safety score, publish — with dry-run mode.
+        Preview events as they appear on the site before committing anything to the database.
+      </p>
+    </li>
+  </ul>
+</div>
+{% endblock %}

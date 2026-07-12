@@ -1,9 +1,19 @@
+import json
+from pathlib import Path
 from unittest import mock
 
 from celery.exceptions import Retry
 from django.test import TestCase, override_settings, tag
 
+from events.models import Event, Town
+from ingestion.importers.scraper_importer import fetch_scraper_source
+from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.safety_scorer import score_all_unscored
+from ingestion.services import auto_publish_safe_events
+from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.tasks import run_ingestion_pipeline
+
+SCRAPER_FIXTURE = Path(__file__).parent / "fixtures" / "visitpittsboro_month.html"
 
 
 @tag("db")
@@ -53,3 +63,108 @@ class RunIngestionPipelineTests(TestCase):
                 run_ingestion_pipeline.delay()
 
         self.assertEqual(standardize.call_count, 1)
+
+
+@tag("db")
+class ScraperToPublishedEventTests(TestCase):
+    """Proves a scraped RawEvent flows all the way to a published Event.
+
+    Only the browser render (`render_page`, called from both the scraper
+    importer and the standardizer's detail-page fetch) and the Gemini calls
+    (standardizer + safety scorer) are mocked — everything else runs for
+    real, including the ORM writes.
+    """
+
+    def setUp(self):
+        self.town, _ = Town.objects.get_or_create(slug="pittsboro", defaults={"name": "Pittsboro"})
+        self.source = EventSource.objects.create(
+            name="VisitPittsboro",
+            source_type="scraper",
+            url="https://visitpittsboro.com/events/month/",
+            scraper_key="visitpittsboro",
+        )
+        self.html = SCRAPER_FIXTURE.read_text(encoding="utf-8")
+
+    def _standardized_payload(self, raw_event):
+        return {
+            "title": raw_event.raw_title,
+            "description": "A lovely community event in Pittsboro.",
+            "location_name": raw_event.raw_location,
+            "town": "Pittsboro",
+            "tags": ["arts-and-culture"],
+            "price": 0,
+        }
+
+    def _gemini_standardize_client(self):
+        """A genai.Client stand-in whose generate_content echoes back a
+        standardized payload keyed off the RawEvent title embedded in the
+        prompt, so each of the 3 scraped events gets a distinct StagedEvent.
+        """
+        client = mock.Mock()
+
+        def _generate_content(*, model, contents):
+            raw = next(c for c in RawEvent.objects.all() if c.raw_title in contents)
+            payload = self._standardized_payload(raw)
+            return mock.Mock(text=json.dumps(payload))
+
+        client.models.generate_content.side_effect = _generate_content
+        return client
+
+    def _gemini_safety_client(self, score=0.0):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(
+            text=json.dumps({"score": score, "notes": "looks fine"})
+        )
+        return client
+
+    def test_scraped_raw_event_reaches_published_event(self):
+        # 1. Scrape: render_page mocked, real XPath/JSON-LD extraction runs.
+        with mock.patch("ingestion.importers.scraper_importer.render_page", return_value=self.html):
+            created = fetch_scraper_source(self.source)
+        self.assertEqual(len(created), 3)
+        self.assertEqual(RawEvent.objects.count(), 3)
+
+        # 2. Standardize: Gemini mocked; render_page mocked again because the
+        # standardizer re-renders each event's detail page (use_browser=True
+        # for scraper sources).
+        with (
+            mock.patch("ingestion.standardizer.render_page", return_value=self.html),
+            mock.patch(
+                "ingestion.standardizer.genai.Client",
+                return_value=self._gemini_standardize_client(),
+            ),
+        ):
+            standardized_count = standardize_all_unprocessed(source=self.source)
+        self.assertEqual(standardized_count, 3)
+        self.assertEqual(StagedEvent.objects.count(), 3)
+
+        # 3. Safety score: Gemini mocked to a safe score for every event.
+        with mock.patch(
+            "ingestion.safety_scorer.genai.Client",
+            return_value=self._gemini_safety_client(score=0.0),
+        ):
+            scored_count = score_all_unscored(source=self.source)
+        self.assertEqual(scored_count, 3)
+
+        # 4. Auto-publish: all 3 are safe and below threshold, so all publish.
+        result = auto_publish_safe_events(source=self.source)
+        self.assertEqual(result["auto_approved"], 3)
+        self.assertEqual(result["held_for_review"], 0)
+
+        self.assertEqual(Event.objects.count(), 3)
+        # `publish_all_approved` deletes approved StagedEvents once published, so
+        # lineage back to the scraped RawEvents is asserted via `source_name`
+        # (set from `staged.raw_event.source.name` at publish time — see
+        # ingestion/services.py) rather than the now-gone StagedEvent rows.
+        published_titles = set(
+            Event.objects.filter(source_name=self.source.name).values_list("title", flat=True)
+        )
+        self.assertEqual(
+            published_titles,
+            {
+                "Loose Watercolor Floral Postcards",
+                "Live Music: Too Much Fun! at City Tap",
+                "The City Tap’s 18th Birthday Party",
+            },
+        )
+        self.assertFalse(StagedEvent.objects.filter(raw_event__source=self.source).exists())

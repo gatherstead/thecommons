@@ -276,8 +276,8 @@ jobs:
               exit 1
             fi
 
-            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker
-            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker
+            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
+            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
       - name: Post-deploy smoke test
         uses: appleboy/ssh-action@v1
         with:

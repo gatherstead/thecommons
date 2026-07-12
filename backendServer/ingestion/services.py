@@ -3,7 +3,12 @@ import logging
 from django.db import transaction
 
 from events.models import BetterAuthUser, Category, Event, Tag, Town
-from ingestion.deduplicator import find_duplicate
+from ingestion.deduplicator import (
+    BROADCAST_LOCATION_SIMILARITY_THRESHOLD,
+    BROADCAST_TIME_WINDOW_HOURS,
+    BROADCAST_TITLE_SIMILARITY_THRESHOLD,
+    find_duplicate,
+)
 from ingestion.models import RawEvent, StagedEvent
 from ingestion.safety_scorer import SAFETY_SCORE_THRESHOLD, score_event
 from ingestion.standardizer import standardize_event
@@ -162,7 +167,12 @@ def ingest_direct_submission(raw_event_id, user_id):
     staged.safety_notes = notes
     staged.save(update_fields=["safety_score", "safety_notes"])
 
-    dup = find_duplicate(staged)
+    dup = find_duplicate(
+        staged,
+        title_threshold=BROADCAST_TITLE_SIMILARITY_THRESHOLD,
+        location_threshold=BROADCAST_LOCATION_SIMILARITY_THRESHOLD,
+        time_window_hours=BROADCAST_TIME_WINDOW_HOURS,
+    )
     if dup is not None:
         staged.status = "duplicate"
         staged.duplicate_of = dup

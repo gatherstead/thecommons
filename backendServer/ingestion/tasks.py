@@ -7,6 +7,7 @@ from django.core.management import call_command
 
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import poll_all_ics_sources
+from ingestion.importers.scraper_importer import poll_all_scraper_sources
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import (
     auto_publish_safe_events,
@@ -91,6 +92,16 @@ def run_ingestion_pipeline(self):
         raise self.retry(exc=first_error)
 
     logger.info("run_ingestion_pipeline: complete")
+
+
+@shared_task
+def scrape_all_sources_task():
+    """Poll scraper-type EventSources (renders headless Chromium). Routed to the
+    dedicated `scrape` queue so browser memory stays off the default worker."""
+    shard = _resolve_env_shard()
+    new_count = poll_all_scraper_sources(shard=shard)
+    logger.info("scrape_all_sources_task: %s new raw events", new_count)
+    return new_count
 
 
 @shared_task

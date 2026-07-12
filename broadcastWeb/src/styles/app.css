@@ -168,26 +168,77 @@ a:hover {
   grid-column: 1 / -1;
 }
 
-/* Access section: two auth columns (Account | Access Code) */
-.field-grid .access-col {
-  align-self: start;
+/* Access section: three numbered steps, one active at a time. Done steps
+   collapse to a summary line; upcoming steps stay visible but dimmed so a
+   first-time user can see the whole path without being asked for it all. */
+.access-steps {
+  list-style: none;
+  counter-reset: access-step;
+  margin: 0.25rem 0 0;
+  padding: 0;
 }
-
-/* Sub-label above each auth column (not a real <label>) */
-.field-section-label {
+.access-step {
+  counter-increment: access-step;
+  position: relative;
+  padding: 0.6rem 0 0.6rem 2.4rem;
+}
+.access-step + .access-step {
+  border-top: 1px dotted var(--color-border-light);
+}
+.access-step::before {
+  content: counter(access-step);
+  position: absolute;
+  left: 0;
+  top: 0.7rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  line-height: 1.4rem;
+  text-align: center;
   font-family: var(--font-headline);
   font-weight: 700;
   font-size: 0.85rem;
+  border: 1px solid var(--color-border);
+  background: white;
+}
+.access-step-done::before {
+  content: "✓";
+  background: var(--color-submitted-bg);
+  border-color: var(--color-submitted-bg);
+  color: var(--color-submitted-fg);
+}
+.access-step-active::before {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+.access-step-todo {
+  opacity: 0.55;
+}
+.access-step .step-label {
+  font-family: var(--font-headline);
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 0.2rem;
+}
+.access-step .step-summary {
+  margin: 0;
+  font-size: 0.92rem;
+}
+.access-step .hint {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
   margin: 0 0 0.4rem;
 }
-
-/* Email shown when signed in */
-.account-email {
-  margin: 0 0 0.25rem;
-  font-size: 0.95rem;
+.access-step .verify-row {
+  max-width: 26rem;
+}
+.access-step button:not(.linklike):not(.verify) {
+  margin-top: 0.25rem;
 }
 
-/* Contact row below the auth grid — three fields side by side */
+/* Contact row (access step 3) — three fields side by side */
 .contact-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -244,6 +295,7 @@ a:hover {
 .field input[type="url"],
 .field input[type="email"],
 .field input[type="tel"],
+.field input[type="password"],
 .field input[type="datetime-local"],
 .field select,
 .field textarea {
@@ -311,8 +363,6 @@ fieldset.category-set legend {
 .section-title-row h2 {
   margin-bottom: 0;
 }
-/* Reset button sits just to the right of the section header, always active
-   (never inherits the form-dim greying). */
 .reset-form-inline {
   margin-left: 8px;
 }
@@ -389,6 +439,7 @@ button.linklike:hover {
 }
 .verify-row input {
   flex: 1;
+  font-family: var(--font-body);
 }
 button.verify {
   white-space: nowrap;
@@ -554,6 +605,28 @@ a.btn.dark:hover {
 .greyed-out {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/* Modal backdrop */
+.auth-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(26, 26, 26, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+
+/* Modal card */
+.auth-modal {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  padding: 1.5rem;
+  width: min(480px, 92vw);
+  position: relative;
+}
+
+.auth-modal-close {
+  position: absolute;
+  top: 0.75rem; right: 0.75rem;
 }
 
 .footer-rule {

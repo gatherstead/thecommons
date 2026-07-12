@@ -122,6 +122,13 @@ BROADCAST_TIMEOUT_MS = int(os.getenv("BROADCAST_TIMEOUT_MS", "30000"))
 # Off in prod (the systemd broadcast-worker handles it); dev turns it on.
 BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "false").lower() == "true"
 
+# ── Ingestion scraper (Playwright page render) ───────────────────────────────
+INGEST_SCRAPER_HEADLESS = os.getenv("INGEST_SCRAPER_HEADLESS", "true").lower() != "false"
+INGEST_SCRAPER_TIMEOUT_MS = int(os.getenv("INGEST_SCRAPER_TIMEOUT_MS", "30000"))
+INGEST_SCRAPER_USER_AGENT = os.getenv(
+    "INGEST_SCRAPER_USER_AGENT", "Mozilla/5.0 (compatible; TheCommons/1.0)"
+)
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
 THE_COMMONS_API_KEY = os.environ.get("THE_COMMONS_API_KEY", "")
@@ -136,6 +143,13 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TASK_ALWAYS_EAGER = False  # tests override via @override_settings
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_TIMEZONE = "UTC"
+
+# Headless-Chrome scraping is memory-heavy — pin it to its own queue drained by a
+# dedicated, memory-capped worker (deploy/scrape-worker.service) so it never shares
+# the default worker with digests/ingestion.
+CELERY_TASK_ROUTES = {
+    "ingestion.tasks.scrape_all_sources_task": {"queue": "scrape"},
+}
 
 # Read-endpoint cache on Redis DB 1 (broker is DB 0). dev.py swaps this for a
 # local-memory backend during tests so the suite needs no running Redis.

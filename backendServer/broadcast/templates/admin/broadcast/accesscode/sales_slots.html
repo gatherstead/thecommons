@@ -1,30 +1,38 @@
 {% load i18n %}
 <div class="sales-slots-panel" style="margin-bottom:1.5rem;">
-  <p style="margin:0 0 .75rem; color:#666; font-size:.9em;">
+  <p style="margin:0 0 .75rem; color:var(--color-base-500); font-size:.9em;">
     {% trans "Copy a code below to hand to a prospect. Copying automatically rotates in a fresh code for next time — codes already handed out keep working." %}
   </p>
   <div style="display:flex; flex-wrap:wrap; gap:1rem;">
     {% for s in sales_slots %}
-    <div style="flex:1 1 240px; min-width:240px; border:1px solid #ccc; border-radius:8px; padding:1rem; background:#fff;">
-      <h3 style="margin:0 0 .5rem; font-size:1em;">{{ s.get_slot_display }}</h3>
-      <div style="display:flex; gap:.5rem;">
+    <div style="flex:1 1 240px; min-width:240px; border:1px solid var(--color-base-200); border-radius:8px; padding:1rem; background:var(--color-base-100);">
+      <h3 style="margin:0 0 .5rem; font-size:1em; color:var(--color-base-700);">{{ s.get_slot_display }}</h3>
+      <div style="position:relative;">
+        <code
+          data-slot-display="{{ s.slot }}"
+          style="display:block; font-family:var(--font-mono); font-size:.9em; letter-spacing:.06em; word-break:break-all; line-height:1.6; padding:.5rem 2.4rem .5rem .6rem; background:var(--color-base-200); border:1px solid var(--color-base-300); border-radius:4px; color:var(--color-base-700); user-select:all; cursor:text;"
+        >{{ s.raw_code }}</code>
         <input
-          type="text"
-          readonly
+          type="hidden"
           value="{{ s.raw_code }}"
           data-slot-input="{{ s.slot }}"
-          style="flex:1; min-width:0; font-family:monospace; padding:.4rem .5rem; border:1px solid #ccc; border-radius:4px;"
         >
         <button
           type="button"
-          class="button"
           data-copy-slot="{{ s.slot }}"
           data-rotate-url="{% url 'admin:broadcast_accesscode_rotate_slot' s.slot %}"
+          title="{% trans 'Copy' %}"
+          style="position:absolute; top:50%; right:.45rem; transform:translateY(-50%); background:none; border:none; padding:.25rem; cursor:pointer; color:var(--color-base-400); line-height:0; border-radius:3px; transition:color .15s;"
+          onmouseover="this.style.color='var(--color-base-700)'"
+          onmouseout="this.style.color='var(--color-base-400)'"
         >
-          {% trans "Copy" %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
         </button>
       </div>
-      <p style="margin:.5rem 0 0; font-size:.8em; color:#888;">
+      <p style="margin:.5rem 0 0; font-size:.8em; color:var(--color-base-400);">
         {% if s.slot == "trial" %}
           {% trans "No login required — valid 3 days from when it's copied." %}
         {% else %}
@@ -39,17 +47,15 @@
 
 <script>
 (function () {
-  function fallbackCopy(input) {
-    var wasReadOnly = input.hasAttribute("readonly");
-    input.removeAttribute("readonly");
-    input.select();
-    input.setSelectionRange(0, input.value.length);
-    try {
-      document.execCommand("copy");
-    } catch (err) {
-      /* best effort — text is at least selected for manual Ctrl+C */
-    }
-    if (wasReadOnly) input.setAttribute("readonly", "readonly");
+  function fallbackCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand("copy"); } catch (err) { /* best effort */ }
+    document.body.removeChild(ta);
   }
 
   document.querySelectorAll("[data-copy-slot]").forEach(function (btn) {
@@ -58,8 +64,10 @@
       var input = document.querySelector('[data-slot-input="' + slot + '"]');
       var rotateUrl = btn.getAttribute("data-rotate-url");
       var csrfInput = btn.closest(".sales-slots-panel").querySelector("[name=csrfmiddlewaretoken]");
+      var display = document.querySelector('[data-slot-display="' + slot + '"]');
       var text = input.value;
-      var originalLabel = btn.textContent;
+      var clipboardSvg = btn.innerHTML;
+      var checkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
 
       var copyPromise =
         window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText
@@ -68,10 +76,11 @@
 
       copyPromise
         .catch(function () {
-          fallbackCopy(input);
+          fallbackCopy(text);
         })
         .finally(function () {
-          btn.textContent = "Copied!";
+          btn.innerHTML = checkSvg;
+          btn.style.color = "var(--color-base-700)";
           btn.disabled = true;
 
           fetch(rotateUrl, {
@@ -82,7 +91,10 @@
               return resp.json();
             })
             .then(function (data) {
-              if (data && data.raw_code) input.value = data.raw_code;
+              if (data && data.raw_code) {
+                input.value = data.raw_code;
+                if (display) display.textContent = data.raw_code;
+              }
             })
             .catch(function () {
               /* rotation failed silently — the code already copied still works;
@@ -90,7 +102,8 @@
             })
             .finally(function () {
               setTimeout(function () {
-                btn.textContent = originalLabel;
+                btn.innerHTML = clipboardSvg;
+                btn.style.color = "var(--color-base-400)";
                 btn.disabled = false;
               }, 1200);
             });

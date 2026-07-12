@@ -62,14 +62,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AI Autofill tier gate", () => {
-  it("does not render the AI Autofill section when tier is 0 (no auth)", async () => {
+  it("shows the section as a disabled preview when tier is 0 (no auth)", async () => {
     render(<App />);
     // Let any async effects settle
     await act(async () => {});
-    expect(screen.queryByRole("heading", { name: /AI Autofill/i })).toBeNull();
+    expect(screen.getByRole("heading", { name: /AI Autofill/i })).toBeInTheDocument();
+    expect(screen.getByText(/Available with Tier 2 access/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate from text/i })).toBeDisabled();
+    expect(
+      screen.getByPlaceholderText(/Paste an event description/i),
+    ).toBeDisabled();
   });
 
-  it("does not render the AI Autofill section when tier is 1", async () => {
+  it("shows the section as a disabled preview when tier is 1", async () => {
     useSessionMock.mockReturnValue({
       data: { user: { email: "trial@example.com" } },
       isPending: false,
@@ -79,11 +84,16 @@ describe("AI Autofill tier gate", () => {
 
     render(<App />);
 
-    await act(async () => {});
-    expect(screen.queryByRole("heading", { name: /AI Autofill/i })).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText(/Available with Tier 2 access/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /Generate from text/i })).toBeDisabled();
+    expect(
+      screen.getByPlaceholderText(/Paste an event description/i),
+    ).toBeDisabled();
   });
 
-  it("renders the AI Autofill section when session yields tier 2", async () => {
+  it("enables AI Autofill when session yields tier 2", async () => {
     useSessionMock.mockReturnValue({
       data: { user: { email: "operator@thecommons.town" } },
       isPending: false,
@@ -94,8 +104,11 @@ describe("AI Autofill tier gate", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /AI Autofill/i })).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText(/Paste an event description/i),
+      ).toBeEnabled();
     });
+    expect(screen.queryByText(/Available with Tier 2 access/i)).toBeNull();
   });
 });
 

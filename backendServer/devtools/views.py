@@ -13,6 +13,7 @@ from django.views.decorators.csrf import csrf_protect
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
+from ingestion.importers.scraper_importer import fetch_scraper_source
 from ingestion.models import EventSource, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
@@ -51,6 +52,12 @@ def _validate_url(url):
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 
+def index(request):
+    if not settings.DEBUG:
+        raise Http404
+    return render(request, "devtools/index.html")
+
+
 def playground(request):
     if not settings.DEBUG:
         raise Http404
@@ -68,6 +75,8 @@ def run_stream(request):
     limit_raw = request.GET.get("limit", "").strip()
     limit = int(limit_raw) if limit_raw.isdigit() else None
     prompt_suffix = request.GET.get("prompt_suffix", "").strip()
+    source_type = request.GET.get("source_type", "ics").strip()
+    scraper_key = request.GET.get("scraper_key", "").strip()
 
     def _error_stream(message):
         yield sse_frame("error", {"message": message, "traceback": ""})
@@ -91,6 +100,8 @@ def run_stream(request):
             "dry_run": True,
             "limit": limit,
             "prompt_suffix": prompt_suffix,
+            "source_type": source_type,
+            "scraper_key": scraper_key,
         },
         daemon=True,
     )
@@ -121,6 +132,8 @@ def save_and_publish(request):
     ics_url = request.POST.get("ics_url", "").strip()
     source_name = request.POST.get("source_name", "").strip()
     prompt_suffix = request.POST.get("prompt_suffix", "").strip()
+    source_type = request.POST.get("source_type", "ics").strip()
+    scraper_key = request.POST.get("scraper_key", "").strip()
 
     try:
         _validate_url(ics_url)
@@ -136,17 +149,23 @@ def save_and_publish(request):
                 url=ics_url,
                 defaults={
                     "name": effective_name,
-                    "source_type": "ics",
+                    "source_type": source_type,
                     "active": True,
                     "prompt_suffix": prompt_suffix,
+                    "scraper_key": scraper_key if source_type == "scraper" else "",
                 },
             )
 
             # Always refresh prompt_suffix so updates on existing rows take effect
             source.prompt_suffix = prompt_suffix
-            source.save(update_fields=["prompt_suffix"])
+            source.source_type = source_type
+            source.scraper_key = scraper_key if source_type == "scraper" else ""
+            source.save(update_fields=["prompt_suffix", "source_type", "scraper_key"])
 
-            fetch_ics_feed(source)
+            if source_type == "scraper":
+                fetch_scraper_source(source)
+            else:
+                fetch_ics_feed(source)
             standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
 
             for staged in StagedEvent.objects.filter(raw_event__source=source):
@@ -183,6 +202,8 @@ def add_source(request):
     ics_url = request.POST.get("ics_url", "").strip()
     source_name = request.POST.get("source_name", "").strip()
     prompt_suffix = request.POST.get("prompt_suffix", "").strip()
+    source_type = request.POST.get("source_type", "ics").strip()
+    scraper_key = request.POST.get("scraper_key", "").strip()
 
     try:
         _validate_url(ics_url)
@@ -194,9 +215,10 @@ def add_source(request):
         url=ics_url,
         defaults={
             "name": effective_name,
-            "source_type": "ics",
+            "source_type": source_type,
             "active": True,
             "prompt_suffix": prompt_suffix,
+            "scraper_key": scraper_key if source_type == "scraper" else "",
         },
     )
     return JsonResponse(

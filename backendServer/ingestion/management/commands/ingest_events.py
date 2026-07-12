@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import poll_all_ics_sources
+from ingestion.importers.scraper_importer import poll_all_scraper_sources
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
@@ -24,6 +25,11 @@ class Command(BaseCommand):
             "--skip-poll",
             action="store_true",
             help="Skip polling sources (only process existing raw events)",
+        )
+        parser.add_argument(
+            "--skip-scrape",
+            action="store_true",
+            help="Skip scraping sources (headless Chromium)",
         )
         parser.add_argument(
             "--skip-standardize", action="store_true", help="Skip LLM standardization"
@@ -98,6 +104,19 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
         else:
             self.stdout.write("Step 1: Skipped (--skip-poll)\n")
+
+        # Step 1b: Scrape sources (headless Chromium)
+        if not options["skip_scrape"]:
+            shard = self._resolve_shard(options.get("shard"))
+            shard_msg = f" (shard {shard[0]}/{shard[1]})" if shard else ""
+            self.stdout.write(f"Step 1b: Scraping sources{shard_msg}...")
+            try:
+                new_count = poll_all_scraper_sources(shard=shard)
+                self.stdout.write(self.style.SUCCESS(f"  → {new_count} new raw events\n"))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
+        else:
+            self.stdout.write("Step 1b: Skipped (--skip-scrape)\n")
 
         # Step 2: LLM Standardization
         if not options["skip_standardize"]:

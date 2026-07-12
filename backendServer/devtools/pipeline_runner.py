@@ -9,6 +9,7 @@ from django.utils.text import slugify
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
+from ingestion.importers.scraper_importer import fetch_scraper_source
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
@@ -22,6 +23,14 @@ class _Rollback(Exception):
         self.final = final
 
 
+def _fetch_source(source):
+    """Dispatch the FETCH stage to the right importer for the source type."""
+    if source.source_type == "scraper":
+        fetch_scraper_source(source)
+    else:
+        fetch_ics_feed(source)
+
+
 def _event_dict(e):
     return {
         "uuid": e.uuid,
@@ -29,6 +38,7 @@ def _event_dict(e):
         "town": e.town.name if e.town else "",
         "date": e.date,
         "venue": e.venue,
+        "description": e.description,
         "source_name": e.source_name,
         "price": e.price,
         "link": e.link,
@@ -36,7 +46,16 @@ def _event_dict(e):
 
 
 def run_pipeline_into_queue(
-    q, *, city_slug, ics_url, source_name, dry_run=True, limit=None, prompt_suffix=""
+    q,
+    *,
+    city_slug,
+    ics_url,
+    source_name,
+    dry_run=True,
+    limit=None,
+    prompt_suffix="",
+    source_type="ics",
+    scraper_key="",
 ):
     ingestion_logger = logging.getLogger("ingestion")
     handler = QueueLoggingHandler(q, threading.get_ident())
@@ -67,13 +86,14 @@ def run_pipeline_into_queue(
                 effective_source_name = source_name or urlparse(ics_url).hostname
                 source = EventSource(
                     name=effective_source_name,
-                    source_type="ics",
+                    source_type=source_type,
                     url=ics_url,
                     active=True,
+                    scraper_key=scraper_key if source_type == "scraper" else "",
                 )
                 source.save()
 
-                fetch_ics_feed(source)
+                _fetch_source(source)
 
                 if limit is not None:
                     keep_ids = list(
@@ -110,6 +130,7 @@ def run_pipeline_into_queue(
                             "town": s.town,
                             "location_name": s.location_name,
                             "start_datetime": s.start_datetime,
+                            "description": s.description,
                             "tags": s.tags,
                             "price": s.price,
                             "link": s.link,
@@ -177,6 +198,7 @@ def run_pipeline_into_queue(
                             "safety_score": s.safety_score,
                             "safety_notes": s.safety_notes,
                             "status": s.status,
+                            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
                         }
                     )
                 q.put(("stage_data", {"stage": "safety", "records": safety_records}))

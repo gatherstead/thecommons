@@ -29,7 +29,7 @@ DISK_FAIL="${DISK_FAIL:-95}"
 UV_BIN="${UV_BIN:-uv}"
 CELERY_TIMEOUT="${CELERY_TIMEOUT:-1.0}"
 
-SERVICES=(redis-server celery celerybeat gunicorn nextjs broadcast-worker)
+SERVICES=(redis-server celery celerybeat gunicorn nextjs broadcast-worker scrape-worker)
 LEGACY_CRON='manage.py (ingest_events|send_weekly_digest)'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

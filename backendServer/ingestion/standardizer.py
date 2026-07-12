@@ -9,6 +9,7 @@ from django.conf import settings
 from google import genai
 
 from ingestion.models import RawEvent, StagedEvent
+from ingestion.scraping.browser import render_page
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +70,29 @@ Additional context scraped from the event webpage (use this to find price, cost,
 """
 
 
-def fetch_page_text(url: str, max_chars: int = 6000) -> str:
-    """Fetch a webpage and extract its visible text. Returns empty string on failure."""
+def fetch_page_text(url: str, max_chars: int = 6000, *, use_browser: bool = False) -> str:
+    """Fetch a webpage and extract its visible text. Returns empty string on failure.
+
+    By default fetches via `requests`. When `use_browser` is True, renders the
+    page with Playwright (via `render_page`) first — for JS-heavy detail pages
+    that come back empty over plain HTTP.
+    """
     if not url or not url.startswith(("http://", "https://")):
         return ""
     try:
-        resp = requests.get(
-            url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (compatible; TheCommons/1.0)"}
-        )
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        if use_browser:
+            html = render_page(url)
+            if not html:
+                return ""
+        else:
+            resp = requests.get(
+                url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TheCommons/1.0)"},
+            )
+            resp.raise_for_status()
+            html = resp.text
+        soup = BeautifulSoup(html, "html.parser")
         # Remove script/style elements
         for tag in soup(["script", "style", "nav"]):
             tag.decompose()
@@ -100,7 +114,10 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
     max_retries = 3
 
     # Fetch the event webpage for additional context (price, details, etc.)
-    page_text = fetch_page_text(raw_event.source_url)
+    # Scraper-type sources are JS-heavy, so render them with Playwright instead
+    # of a plain requests.get (ICS/direct submissions never launch a browser).
+    use_browser = bool(raw_event.source and raw_event.source.source_type == "scraper")
+    page_text = fetch_page_text(raw_event.source_url, use_browser=use_browser)
     if page_text:
         logger.info(f"Fetched {len(page_text)} chars from {raw_event.source_url}")
 

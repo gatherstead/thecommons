@@ -19,6 +19,7 @@ class EventSource(models.Model):
     poll_interval_hours = models.IntegerField(default=24)
     notes = models.TextField(blank=True)
     prompt_suffix = models.TextField(blank=True, default="")
+    scraper_key = models.CharField(max_length=100, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

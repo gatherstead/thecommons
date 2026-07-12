@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import AuthModal from "./components/AuthModal";
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
@@ -153,13 +154,18 @@ export default function App() {
 
   const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
   const [accessVerified, setAccessVerified] = useState(SESSION.verified ?? false);
+  // The code that actually passed verification — the input box is scratch space
+  // until Verify succeeds, so API auth never picks up a half-typed code.
+  const [verifiedCode, setVerifiedCode] = useState(
+    SESSION.verified ? SESSION.accessCode ?? "" : ""
+  );
+  // Which credential granted the current tier: a permanent account tier (jwt)
+  // or a per-request trial code (code). Decides which auth header API calls use.
+  const [accessSource, setAccessSource] = useState<"jwt" | "code" | null>(null);
+  const [accessError, setAccessError] = useState("");
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
 
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginName, setLoginName] = useState("");
-  const [loginMode, setLoginMode] = useState<"signin" | "signup">("signin");
-  const [loginError, setLoginError] = useState("");
-  const [loginLoading, setLoginLoading] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
@@ -180,62 +186,88 @@ export default function App() {
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
-  const auth: ApiAuth = jwt ? { jwt } : { accessCode };
+  // A trial code authenticates per-request via header; a permanent account
+  // tier authenticates via JWT. Whichever granted the tier wins.
+  const auth: ApiAuth =
+    accessSource === "code" && verifiedCode
+      ? { accessCode: verifiedCode }
+      : jwt
+        ? { jwt }
+        : { accessCode: verifiedCode };
 
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
   const locked = Boolean(preview);
-  const hasAccess = tier >= 1;
+  const signedIn = Boolean(session.data);
+  // Access always requires a login; a verified trial code alone is not enough.
+  const hasAccess = signedIn && tier >= 1;
 
   useEffect(() => {
-    if (session.data) {
-      fetchJwt().then(async (token) => {
-        setJwt(token);
-        if (token) {
-          try {
-            const access = await getAccess({ jwt: token });
-            setTier(access.tier);
-            setIsTrial(access.is_trial);
-            setUsesRemaining(access.uses_remaining);
-          } catch {
-            setTier(0);
-            setIsTrial(false);
-            setUsesRemaining(null);
-          }
-        }
-      });
-    } else if (!session.isPending) {
+    if (session.isPending) return;
+    if (!session.data) {
       setJwt(null);
-      if (!accessVerified) {
-        setTier(0);
-        setIsTrial(false);
-        setUsesRemaining(null);
-      }
+      setTier(0);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource(null);
+      return;
     }
+    fetchJwt().then(async (token) => {
+      setJwt(token);
+      if (!token) return;
+      try {
+        const access = await getAccess({ jwt: token });
+        if (access.tier > 0) {
+          setTier(access.tier);
+          setIsTrial(access.is_trial);
+          setUsesRemaining(access.uses_remaining);
+          setAccessSource("jwt");
+          return;
+        }
+      } catch {
+        // account lookup failed — fall through to a previously verified code
+      }
+      // No permanent tier on the account — re-validate a persisted trial code.
+      if (accessVerified && verifiedCode) {
+        try {
+          const access = await getAccess({ accessCode: verifiedCode });
+          setTier(access.tier);
+          setIsTrial(access.is_trial);
+          setUsesRemaining(access.uses_remaining);
+          setAccessSource("code");
+          return;
+        } catch {
+          setAccessVerified(false);
+          setVerifiedCode("");
+        }
+      }
+      setTier(0);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource(null);
+    });
   }, [session.data, session.isPending]);
 
-  // On mount: re-validate a persisted access code so tier info is current.
+  // Prefill the contact fields from the account once access unlocks —
+  // only fills blanks, never overwrites what the user typed.
   useEffect(() => {
-    if (accessVerified && !session.data) {
-      getAccess({ accessCode }).then((access) => {
-        setTier(access.tier);
-        setIsTrial(access.is_trial);
-        setUsesRemaining(access.uses_remaining);
-      }).catch(() => {
-        setAccessVerified(false);
-        setTier(0);
-      });
-    }
-  }, []); // mount only — intentional
+    const user = session.data?.user;
+    if (!hasAccess || !user) return;
+    setDraft((prev) => ({
+      ...prev,
+      organizer_name: prev.organizer_name || user.name || "",
+      contact_email: prev.contact_email || user.email || "",
+    }));
+  }, [hasAccess, session.data]);
 
   useEffect(() => {
     saveSession({
-      accessCode,
+      accessCode: accessVerified && verifiedCode ? verifiedCode : accessCode,
       verified: accessVerified,
       organizer_name: draft.organizer_name,
       contact_email: draft.contact_email,
       contact_phone: draft.contact_phone,
     });
-  }, [accessCode, accessVerified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
+  }, [accessCode, accessVerified, verifiedCode, draft.organizer_name, draft.contact_email, draft.contact_phone]);
 
   useEffect(() => {
     saveDraft({
@@ -246,7 +278,12 @@ export default function App() {
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
-    const authSnap: ApiAuth = jwt ? { jwt } : { accessCode };
+    const authSnap: ApiAuth =
+      accessSource === "code" && verifiedCode
+        ? { accessCode: verifiedCode }
+        : jwt
+          ? { jwt }
+          : { accessCode: verifiedCode };
     const id = setInterval(() => {
       getJob(authSnap, jobIdRef.current!)
         .then(setJob)
@@ -255,72 +292,43 @@ export default function App() {
         });
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [jobActive, accessCode, jwt]);
+  }, [jobActive, verifiedCode, jwt, accessSource]);
 
-  const handleVerify = async () => {
-    if (!accessCode.trim()) return;
-    try {
-      const access = await getAccess({ accessCode });
-      setAccessVerified(true);
-      setTier(access.tier);
-      setIsTrial(access.is_trial);
-      setUsesRemaining(access.uses_remaining);
-      setError("");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        setError("Access code not recognized. Check your code and try again.");
-      } else {
-        setError("Could not verify access code. Try again.");
-      }
-      setAccessVerified(false);
-      setTier(0);
-    }
-  };
-
-  // Same textfield as handleVerify, but only reachable while logged in —
-  // redeems an UPGRADE code and permanently sets this account's tier.
-  const handleRedeem = async () => {
+  // One code box, two code kinds: try it as an UPGRADE code first (permanent,
+  // bound to the account), and if the backend rejects that, as a TRIAL code
+  // (per-request header auth). Either way the user sees a single Verify step.
+  const handleVerifyCode = async () => {
     if (!accessCode.trim() || !jwt) return;
+    setAccessError("");
     try {
       const result = await redeemAccessCode({ jwt }, accessCode);
       setTier(result.tier);
       setIsTrial(false);
       setUsesRemaining(null);
+      setAccessSource("jwt");
+      setAccessVerified(false);
       setAccessCode("");
-      setError("");
+      setShowCodeEntry(false);
+      return;
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        setError("Access code not recognized, expired, or already used up.");
-      } else {
-        setError("Could not apply access code. Try again.");
+      if (!(e instanceof ApiError && e.status === 403)) {
+        setAccessError("Could not verify the access code. Try again.");
+        return;
       }
     }
-  };
-
-  const handleSignIn = async () => {
-    setLoginLoading(true);
-    setLoginError("");
-    const result = await authClient.signIn.email({
-      email: loginEmail,
-      password: loginPassword,
-    });
-    setLoginLoading(false);
-    if (result.error) {
-      setLoginError(result.error.message ?? "Sign in failed.");
-    }
-  };
-
-  const handleSignUp = async () => {
-    setLoginLoading(true);
-    setLoginError("");
-    const result = await authClient.signUp.email({
-      email: loginEmail,
-      password: loginPassword,
-      name: loginName,
-    });
-    setLoginLoading(false);
-    if (result.error) {
-      setLoginError(result.error.message ?? "Account creation failed.");
+    try {
+      const access = await getAccess({ accessCode });
+      if (access.tier === 0) throw new ApiError(403, "code grants no access");
+      setAccessVerified(true);
+      setVerifiedCode(accessCode);
+      setAccessSource("code");
+      setTier(access.tier);
+      setIsTrial(access.is_trial);
+      setUsesRemaining(access.uses_remaining);
+      setShowCodeEntry(false);
+    } catch {
+      setAccessVerified(false);
+      setAccessError("Access code not recognized. Check the code and try again.");
     }
   };
 
@@ -330,6 +338,8 @@ export default function App() {
     setTier(0);
     setIsTrial(false);
     setUsesRemaining(null);
+    setAccessSource(null);
+    setAccessError("");
   };
 
   const handleDraftChange = (next: EventDraft) => {
@@ -481,7 +491,40 @@ export default function App() {
     ? Object.fromEntries(preview.eligible.map((s) => [s.site_key, s.name]))
     : {};
 
-  const loggedInNoAccess = session.data && !session.isPending && tier === 0;
+  // Access flow: one step active at a time; done steps collapse to a summary
+  // line, upcoming steps stay visible but dimmed so the path ahead is clear.
+  const step2: "todo" | "active" | "done" = !signedIn ? "todo" : hasAccess ? "done" : "active";
+  const step3: "todo" | "active" = hasAccess ? "active" : "todo";
+  const stepClass = (state: "todo" | "active" | "done") => `access-step access-step-${state}`;
+
+  const codeEntry = (
+    <>
+      <div className="verify-row">
+        <input
+          id="access-code"
+          type="password"
+          value={accessCode}
+          onChange={(e) => {
+            setAccessCode(e.target.value);
+            setAccessError("");
+          }}
+          autoComplete="off"
+          disabled={busy || job !== null || locked}
+          placeholder="Provided by The Commons"
+          aria-label="Access code"
+        />
+        <button
+          type="button"
+          className="verify"
+          onClick={handleVerifyCode}
+          disabled={accessCode.trim() === ""}
+        >
+          Verify
+        </button>
+      </div>
+      {accessError && <p className="field-error">{accessError}</p>}
+    </>
+  );
 
   return (
     <div className="page">
@@ -501,241 +544,166 @@ export default function App() {
         <div className="rule-double" />
       </header>
 
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+
       <section className={`section${locked ? " form-dim" : ""}`}>
         <h2>Access</h2>
-        <div className="field-grid">
-          <div className="field access-col">
-            <p className="field-section-label">Account</p>
+        <ol className="access-steps">
+          {/* Step 1 — sign in */}
+          <li className={stepClass(signedIn ? "done" : "active")}>
+            <p className="step-label">Sign in</p>
             {session.isPending ? (
               <p className="hint">Checking session…</p>
-            ) : session.data ? (
-              <>
-                <p className="account-email">{session.data.user.email}</p>
-                {loggedInNoAccess && (
-                  <p className="section-note">
-                    This account has no broadcast access yet — contact The Commons.
-                  </p>
-                )}
+            ) : signedIn ? (
+              <p className="step-summary">
+                {session.data!.user.email}{" "}
                 <button type="button" className="linklike" onClick={handleSignOut}>
                   Sign out
                 </button>
-              </>
+              </p>
             ) : (
               <>
-                <div className="field">
-                  <label htmlFor="login-email">Email</label>
-                  <input
-                    id="login-email"
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    autoComplete="email"
-                    disabled={loginLoading}
-                  />
-                </div>
-                {loginMode === "signup" && (
-                  <div className="field">
-                    <label htmlFor="login-name">Name</label>
-                    <input
-                      id="login-name"
-                      type="text"
-                      value={loginName}
-                      onChange={(e) => setLoginName(e.target.value)}
-                      autoComplete="name"
-                      disabled={loginLoading}
-                    />
-                  </div>
-                )}
-                <div className="field">
-                  <label htmlFor="login-password">Password</label>
-                  <input
-                    id="login-password"
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    autoComplete={loginMode === "signin" ? "current-password" : "new-password"}
-                    disabled={loginLoading}
-                  />
-                </div>
-                {loginError && <p className="field-error">{loginError}</p>}
-                <div className="actions">
-                  {loginMode === "signin" ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleSignIn}
-                        disabled={loginLoading || !loginEmail || !loginPassword}
-                      >
-                        {loginLoading ? "Signing in…" : "Sign in"}
-                      </button>
-                      <button
-                        type="button"
-                        className="linklike"
-                        onClick={() => { setLoginMode("signup"); setLoginError(""); }}
-                      >
-                        Create account
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleSignUp}
-                        disabled={loginLoading || !loginEmail || !loginPassword || !loginName}
-                      >
-                        {loginLoading ? "Creating…" : "Create account"}
-                      </button>
-                      <button
-                        type="button"
-                        className="linklike"
-                        onClick={() => { setLoginMode("signin"); setLoginError(""); }}
-                      >
-                        Sign in instead
-                      </button>
-                    </>
-                  )}
-                </div>
+                <p className="hint">Use your account, or create one in a few seconds.</p>
+                <button type="button" onClick={() => setShowAuthModal(true)}>
+                  Sign in / Create account
+                </button>
               </>
             )}
-          </div>
+          </li>
 
-          <div className="field access-col">
-            <p className="field-section-label">{jwt ? "Upgrade Account" : "Access Code"}</p>
-            <div className="verify-row">
-              <input
-                id="access-code"
-                type="password"
-                value={accessCode}
-                onChange={(e) => {
-                  setAccessCode(e.target.value);
-                  if (!jwt) {
-                    setAccessVerified(false);
-                    setTier(0);
-                  }
-                }}
-                autoComplete="off"
-                disabled={busy || job !== null || locked}
-                placeholder="Provided by The Commons"
-              />
-              <button
-                type="button"
-                className={accessVerified && !jwt ? "verify is-verified" : "verify"}
-                onClick={jwt ? handleRedeem : handleVerify}
-                disabled={(accessVerified && !jwt) || accessCode.trim() === ""}
-              >
-                {accessVerified && !jwt ? "✓ Verified" : jwt ? "Upgrade" : "Verify"}
-              </button>
-            </div>
-            {!jwt && isTrial && hasAccess && usesRemaining !== null && (
+          {/* Step 2 — access code */}
+          <li className={stepClass(step2)}>
+            <p className="step-label">Enter your access code</p>
+            {step2 === "todo" && (
+              <p className="hint">The Commons team gives you a code — we verify it on the spot.</p>
+            )}
+            {step2 === "active" && (
+              <>
+                <p className="hint">
+                  This account has no broadcast access yet — enter the code from The
+                  Commons team and we&rsquo;ll verify it on the spot.
+                </p>
+                {codeEntry}
+              </>
+            )}
+            {step2 === "done" && (
+              <>
+                <p className="step-summary">
+                  {accessSource === "code" && isTrial && usesRemaining !== null ? (
+                    <>
+                      Trial access — {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining.
+                      One use per event previewed; edits are free.
+                    </>
+                  ) : (
+                    <>Tier {tier} access on this account.</>
+                  )}{" "}
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => setShowCodeEntry((v) => !v)}
+                  >
+                    Have another code?
+                  </button>
+                </p>
+                {showCodeEntry && codeEntry}
+              </>
+            )}
+          </li>
+
+          {/* Step 3 — contact info */}
+          <li className={stepClass(step3)}>
+            <p className="step-label">Confirm your contact info</p>
+            {step3 === "todo" ? (
               <p className="hint">
-                {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining —
-                one use per event previewed; edits are free.
+                Name, email, and phone shown as the organizer contact on each calendar —
+                prefilled from your account.
               </p>
+            ) : (
+              <div className="contact-row">
+                <div className="field">
+                  <label htmlFor="contact-name">Name</label>
+                  <input
+                    id="contact-name"
+                    type="text"
+                    value={draft.organizer_name ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                    maxLength={200}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="contact-email">Email</label>
+                  <input
+                    id="contact-email"
+                    type="email"
+                    value={draft.contact_email ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="contact-phone">Phone</label>
+                  <input
+                    id="contact-phone"
+                    type="tel"
+                    value={draft.contact_phone ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                    maxLength={40}
+                  />
+                </div>
+
+                <p className="hint contact-hint">
+                  Shown as the organizer contact on every calendar. Remembered on this
+                  device and reused for your next event.
+                </p>
+              </div>
             )}
-            {jwt && hasAccess && (
-              <p className="hint">This account has permanent Tier {tier} access.</p>
-            )}
-            {!jwt && (
-              <p className="hint">Remembered on this device — you stay signed in across events.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="contact-row">
-          <div className="field">
-            <label htmlFor="contact-name">Contact Name</label>
-            <input
-              id="contact-name"
-              type="text"
-              value={draft.organizer_name ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-              disabled={busy || job !== null || !hasAccess || locked}
-              maxLength={200}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="contact-email">Contact Email</label>
-            <input
-              id="contact-email"
-              type="email"
-              value={draft.contact_email ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-              disabled={busy || job !== null || !hasAccess || locked}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="contact-phone">Contact Phone</label>
-            <input
-              id="contact-phone"
-              type="tel"
-              value={draft.contact_phone ?? ""}
-              onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-              disabled={busy || job !== null || !hasAccess || locked}
-              maxLength={40}
-            />
-          </div>
-
-          <p className="hint contact-hint">
-            Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.
-          </p>
-        </div>
+          </li>
+        </ol>
       </section>
 
-      {tier >= 2 && (
-        <section className={`section${locked ? " form-dim" : ""}`}>
-          <h2>AI Autofill</h2>
+      <section className="section">
+        <h2>AI Autofill</h2>
+        <div className={locked || tier < 2 ? "form-dim" : ""}>
           <p className="hint">
             Paste a raw event description, email, or flyer text below and the AI will fill
-            the event fields for you. Works on a blank event form — your saved contact
-            details are fine; reset first if you've already entered event details.
+            the event fields for you.
+            {tier < 2 && <em> Available with Tier 2 access.</em>}
           </p>
-          {!isDraftEmpty(draft) ? (
-            <>
-              <textarea
-                className="ai-autofill-textarea"
-                disabled
-                placeholder="Paste an event description / flyer text / email…"
-                value={aiText}
-              />
-              <div className="actions">
-                <button type="button" disabled>
-                  ✨ Generate from text
-                </button>
-                <span className="section-note">
-                  AI autofill works on a blank event form — click Reset to clear the event details first.
-                </span>
-              </div>
-            </>
-          ) : (
-            <>
-              <textarea
-                className="ai-autofill-textarea"
-                placeholder="Paste an event description / flyer text / email…"
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
-                disabled={aiBusy || job !== null || locked}
-              />
-              <div className="actions">
-                <button
-                  type="button"
-                  onClick={handleAiAutofill}
-                  disabled={
-                    aiText.trim() === "" ||
-                    !isDraftEmpty(draft) ||
-                    aiBusy ||
-                    job !== null ||
-                    locked
-                  }
-                >
-                  {aiBusy ? "Generating…" : "✨ Generate from text"}
-                </button>
-              </div>
-            </>
-          )}
-        </section>
-      )}
+          <textarea
+            className="ai-autofill-textarea"
+            placeholder="Paste an event description / flyer text / email…"
+            value={aiText}
+            onChange={(e) => setAiText(e.target.value)}
+            disabled={tier < 2 || !isDraftEmpty(draft) || aiBusy || job !== null || locked}
+          />
+          <div className="actions">
+            <button
+              type="button"
+              onClick={handleAiAutofill}
+              disabled={
+                tier < 2 ||
+                aiText.trim() === "" ||
+                !isDraftEmpty(draft) ||
+                aiBusy ||
+                job !== null ||
+                locked
+              }
+            >
+              {aiBusy ? "Generating…" : "✨ Generate from text"}
+            </button>
+            {tier >= 2 && !isDraftEmpty(draft) && (
+              <span className="section-note">
+                AI autofill works on a blank event form — click Reset to clear the event
+                details first.
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* ── The Event form ── */}
       <section className="section">
@@ -745,7 +713,7 @@ export default function App() {
             type="button"
             className="reset-form-inline"
             onClick={resetForm}
-            disabled={busy || aiBusy || job !== null}
+            disabled={busy || aiBusy || job !== null || !hasAccess || locked}
             title="Clear the form and start over"
           >
             Reset form
@@ -755,7 +723,7 @@ export default function App() {
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
-          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked} />
+          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked || !hasAccess} />
         </div>
         <div className="actions">
           {preview ? (
@@ -780,7 +748,10 @@ export default function App() {
                 {busy ? "Checking…" : "Preview Destinations"}
               </button>
               {!hasAccess && (
-                <span className="section-note">Verify your access code or sign in to begin.</span>
+                <span className="section-note">
+                  Complete the Access steps above to unlock the form — this is a preview
+                  of what you&rsquo;ll fill in.
+                </span>
               )}
               {hasAccess && !draftValid && (
                 <span className="section-note">Fill the required (*) fields to preview.</span>

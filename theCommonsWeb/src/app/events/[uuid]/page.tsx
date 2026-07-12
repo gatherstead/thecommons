@@ -37,8 +37,35 @@ export default async function EventPage({ params }: EventPageProps) {
 
     if (!event) notFound();
 
+    const ld = {
+        '@context': 'https://schema.org',
+        '@type': 'Event',
+        name: event.title,
+        startDate: event.date.toISOString(),
+        location: { '@type': 'Place', name: event.venue },
+        ...(event.description ? { description: event.description } : {}),
+        url: `https://thecommons.town/events/${event.id}`,
+        ...(event.price && event.price !== 'Not Listed'
+            ? {
+                  offers: {
+                      '@type': 'Offer',
+                      price: event.price === 'Free' ? '0' : event.price.replace('$', ''),
+                      priceCurrency: 'USD',
+                      availability: 'https://schema.org/InStock',
+                  },
+              }
+            : {}),
+        ...(event.sourceName
+            ? { organizer: { '@type': 'Organization', name: event.sourceName } }
+            : {}),
+    };
+
     return (
         <main id="main-content" className="max-w-[720px] mx-auto px-4 py-8">
+            <script
+                type="application/ld+json"
+                dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }}
+            />
             <nav className="mb-6">
                 <Link
                     href="/"

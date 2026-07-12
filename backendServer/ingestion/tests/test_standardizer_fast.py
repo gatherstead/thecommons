@@ -19,3 +19,27 @@ class FetchPageTextTests(unittest.TestCase):
         with mock.patch("ingestion.standardizer.requests.get") as get:
             self.assertEqual(fetch_page_text("ftp://example.com/x"), "")
         get.assert_not_called()
+
+    def test_use_browser_true_renders_via_playwright(self):
+        html = "<html><body><script>ignored</script><p>Hello world</p></body></html>"
+        with (
+            mock.patch("ingestion.standardizer.render_page", return_value=html) as render,
+            mock.patch("ingestion.standardizer.requests.get") as get,
+        ):
+            result = fetch_page_text("https://example.com/event", use_browser=True)
+        render.assert_called_once_with("https://example.com/event")
+        get.assert_not_called()
+        self.assertEqual(result, "Hello world")
+
+    def test_use_browser_false_uses_requests_not_playwright(self):
+        resp = mock.Mock()
+        resp.text = "<html><body><p>Hi there</p></body></html>"
+        resp.raise_for_status = mock.Mock()
+        with (
+            mock.patch("ingestion.standardizer.requests.get", return_value=resp) as get,
+            mock.patch("ingestion.standardizer.render_page") as render,
+        ):
+            result = fetch_page_text("https://example.com/event")
+        self.assertEqual(render.call_count, 0)
+        get.assert_called_once()
+        self.assertEqual(result, "Hi there")

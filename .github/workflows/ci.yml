@@ -40,6 +40,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Backend lint (ruff check + ruff format --check + mypy)
         working-directory: backendServer
+        # DATABASE_URL is a dummy value: mypy only needs backend.settings.dev to
+        # import cleanly (it reads DATABASE_URL at import time), never to connect.
+        env:
+          DATABASE_URL: postgres://user:pass@localhost:5432/dummy
         run: uv run ruff check . && uv run ruff format --check . && uv run mypy .
       - name: Frontend lint (eslint)
         working-directory: theCommonsWeb

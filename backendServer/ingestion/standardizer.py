@@ -32,6 +32,7 @@ VALID_TAGS = [
     "fundraiser",
     "market-or-fair",
     "workshop-or-class",
+    "summer-camp",
 ]
 
 STANDARDIZATION_PROMPT = """You are a data processor for a local community events platform called The Commons.

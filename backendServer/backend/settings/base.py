@@ -142,6 +142,10 @@ CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TASK_ALWAYS_EAGER = False  # tests override via @override_settings
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# Upper bound on beat's sleep between ticks — it still wakes exactly on time for
+# actual due tasks (scrape 3:30am, ingest 4:00am, digest), this only caps how often
+# it re-polls the DB for schedule changes in between, to reduce Neon wake-ups.
+CELERY_BEAT_MAX_LOOP_INTERVAL = 6 * 60 * 60
 CELERY_TIMEZONE = "UTC"
 
 # Headless-Chrome scraping is memory-heavy — pin it to its own queue drained by a

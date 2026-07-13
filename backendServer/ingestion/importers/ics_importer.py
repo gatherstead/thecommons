@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime
 
 import requests
+from django.conf import settings
 from django.utils import timezone
 from icalendar import Calendar
 
@@ -19,7 +20,11 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:  # noqa: C901  # ICS 
     """
     assert source.source_type == "ics", "Source must be ICS type"
 
-    response = requests.get(source.url, timeout=30)
+    response = requests.get(
+        source.url,
+        timeout=30,
+        headers={"User-Agent": settings.INGEST_SCRAPER_USER_AGENT},
+    )
     response.raise_for_status()
 
     cal = Calendar.from_ical(response.text)

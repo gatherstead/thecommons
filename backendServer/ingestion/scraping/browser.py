@@ -37,7 +37,11 @@ def render_page(
             try:
                 context = browser.new_context(user_agent=settings.INGEST_SCRAPER_USER_AGENT)
                 page = context.new_page()
-                page.goto(url, wait_until="networkidle", timeout=effective_timeout)
+                # "domcontentloaded", not "networkidle": ad/analytics-heavy sites
+                # (WordPress especially) keep firing background requests that never
+                # settle, so networkidle reliably times out and we lose the page.
+                # For content that needs JS/XHR, pass `wait_selector` instead.
+                page.goto(url, wait_until="domcontentloaded", timeout=effective_timeout)
                 if wait_selector:
                     page.wait_for_selector(wait_selector, timeout=effective_timeout)
                 return page.content()

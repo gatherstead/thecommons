@@ -41,14 +41,18 @@ write it to the **outbox** — the Claude desktop app applies it to Notion later
 Append a change block to `notion-sync/OUTBOX.md → Pending changes` (and update
 `notion-sync/STATE.md`) when you:
 
-- **Create a suite of tickets** → **ask first.** Present the tickets, and only after the
-  user approves, append a `NEW SUITE` block: the suite card body (Why / Outcomes / QA, a
-  few bullets each) plus one full ticket per subpage. Take the suite number from
-  `STATE.md`'s `Next suite number`, then increment it and add the suite to the ledger in
-  the `Open` column.
-- **Start / QA / stage / ship a ticket** — i.e. its status moves (Open → In Progress →
-  Needs QA → Staged for Prod → In Prod) → append a `MOVE TICKET` block, and a
-  `MOVE SUITE` block if the suite's overall column should change too. Update the ledger.
+- **Plan a suite via `/write-tickets`** (tickets written, no code built) → **ask first.**
+  Present the tickets, and only after the user approves, append a `NEW SUITE` block: the
+  suite card body (Why / Outcomes / QA, a few bullets each) plus one full ticket per
+  subpage, in the **`Open`** column. Take the suite number from `STATE.md`'s
+  `Next suite number`, then increment it and add the suite to the ledger.
+- **Orchestrate/build a whole suite** (e.g. `/orchestrate`, or you just implemented its
+  tickets) → append a `MOVE SUITE` block placing the **whole suite** in **`Needs QA`**
+  (plus `MOVE TICKET` blocks as individual tickets land). If the suite isn't on the board
+  yet, create it (`NEW SUITE`) first, then move it. Update the ledger.
+- **Move a single ticket** — its status changes (Open → In Progress → Needs QA →
+  Staged for Prod → In Prod) → append a `MOVE TICKET` block, and a `MOVE SUITE` block if
+  the suite's overall column should change too. Update the ledger.
 - **Change a ticket's scope or a suite summary** → append an `UPDATE` block.
 
 Use the change formats defined in the OUTBOX preamble. If a change doesn't map to a real

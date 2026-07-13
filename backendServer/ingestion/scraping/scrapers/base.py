@@ -22,6 +22,12 @@ class RawEventData:
 
 class Scraper:
     key: str
+    # The single site this scraper targets. Each scraper is custom-built for one
+    # page's markup, so the URL travels with the module and can auto-fill the UI.
+    url: str = ""
+    # Human-readable English name of the source site, used to attribute published
+    # events (Event.source_name) — e.g. "Visit Pittsboro", not "visitpittsboro.com".
+    name: str = ""
 
     def extract(self, html: str) -> list[RawEventData]:
         raise NotImplementedError

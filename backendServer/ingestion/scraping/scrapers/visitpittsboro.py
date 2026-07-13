@@ -58,6 +58,8 @@ def _iter_event_nodes(blocks: list):
 
 class VisitpittsboroScraper(Scraper):
     key = "visitpittsboro"
+    url = "https://visitpittsboro.com/events/month/"
+    name = "Visit Pittsboro"
 
     def extract(self, html: str) -> list[RawEventData]:
         tree = lxml_html.fromstring(html)

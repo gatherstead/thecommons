@@ -14,12 +14,13 @@ from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
 from ingestion.importers.scraper_importer import fetch_scraper_source
-from ingestion.models import EventSource, StagedEvent
+from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
+from ingestion.scraping.scrapers import list_scrapers
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
 
-from .pipeline_runner import _event_dict, run_pipeline_into_queue
+from .pipeline_runner import _event_dict, _resolve_source_name, run_pipeline_into_queue
 from .sse import sse_frame
 
 # ── SSRF guard ────────────────────────────────────────────────────────────────
@@ -49,6 +50,13 @@ def _validate_url(url):
         raise ValueError(f"Resolved IP {resolved} is not a public address")
 
 
+def _apply_limit(source, limit):
+    if limit is None:
+        return
+    keep_ids = list(RawEvent.objects.filter(source=source).values_list("id", flat=True)[:limit])
+    RawEvent.objects.filter(source=source).exclude(id__in=keep_ids).delete()
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 
@@ -62,7 +70,16 @@ def playground(request):
     if not settings.DEBUG:
         raise Http404
     towns = list(Town.objects.order_by("name").values("slug", "name"))
-    return render(request, "devtools/playground.html", {"towns": towns})
+    sources = list(
+        EventSource.objects.order_by("name").values(
+            "id", "name", "url", "source_type", "scraper_key", "prompt_suffix", "active"
+        )
+    )
+    return render(
+        request,
+        "devtools/playground.html",
+        {"towns": towns, "scrapers": list_scrapers(), "sources": sources},
+    )
 
 
 def run_stream(request):
@@ -77,6 +94,7 @@ def run_stream(request):
     prompt_suffix = request.GET.get("prompt_suffix", "").strip()
     source_type = request.GET.get("source_type", "ics").strip()
     scraper_key = request.GET.get("scraper_key", "").strip()
+    skip_dedup = request.GET.get("skip_dedup", "").strip() == "1"
 
     def _error_stream(message):
         yield sse_frame("error", {"message": message, "traceback": ""})
@@ -102,6 +120,7 @@ def run_stream(request):
             "prompt_suffix": prompt_suffix,
             "source_type": source_type,
             "scraper_key": scraper_key,
+            "skip_dedup": skip_dedup,
         },
         daemon=True,
     )
@@ -134,6 +153,9 @@ def save_and_publish(request):
     prompt_suffix = request.POST.get("prompt_suffix", "").strip()
     source_type = request.POST.get("source_type", "ics").strip()
     scraper_key = request.POST.get("scraper_key", "").strip()
+    limit_raw = request.POST.get("limit", "").strip()
+    limit = int(limit_raw) if limit_raw.isdigit() else None
+    skip_dedup = request.POST.get("skip_dedup", "").strip() == "1"
 
     try:
         _validate_url(ics_url)
@@ -144,7 +166,7 @@ def save_and_publish(request):
         town = Town.objects.get(slug=city)
 
         with transaction.atomic():
-            effective_name = source_name or urlparse(ics_url).hostname
+            effective_name = _resolve_source_name(source_name, source_type, scraper_key, ics_url)
             source, _ = EventSource.objects.get_or_create(
                 url=ics_url,
                 defaults={
@@ -156,23 +178,104 @@ def save_and_publish(request):
                 },
             )
 
-            # Always refresh prompt_suffix so updates on existing rows take effect
+            # Always refresh these fields so updates on existing rows take effect
+            source.name = effective_name
             source.prompt_suffix = prompt_suffix
             source.source_type = source_type
             source.scraper_key = scraper_key if source_type == "scraper" else ""
-            source.save(update_fields=["prompt_suffix", "source_type", "scraper_key"])
+            source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
 
             if source_type == "scraper":
-                fetch_scraper_source(source)
+                fetch_scraper_source(source, limit=limit)
             else:
                 fetch_ics_feed(source)
+            _apply_limit(source, limit)
             standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
 
             for staged in StagedEvent.objects.filter(raw_event__source=source):
                 staged.town = town.name
                 staged.save(update_fields=["town"])
 
-            dedup_all_pending(source=source)
+            if not skip_dedup:
+                dedup_all_pending(source=source)
+            score_all_unscored(source=source, prompt_suffix=prompt_suffix)
+            counts = auto_publish_safe_events(source=source, force_town=town)
+
+            published = [
+                _event_dict(e)
+                for e in Event.objects.filter(
+                    town=town,
+                    staged_source__raw_event__source=source,
+                ).distinct()
+            ]
+
+        return JsonResponse({"published": published, "counts": counts})
+
+    except Town.DoesNotExist:
+        return JsonResponse({"error": f"Town '{city}' not found"}, status=400)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@csrf_protect
+def publish_events_only(request):
+    """Publish events now without registering the source for daily cron (active=False)."""
+    if not settings.DEBUG:
+        raise Http404
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
+
+    city = request.POST.get("city", "").strip()
+    ics_url = request.POST.get("ics_url", "").strip()
+    source_name = request.POST.get("source_name", "").strip()
+    prompt_suffix = request.POST.get("prompt_suffix", "").strip()
+    source_type = request.POST.get("source_type", "ics").strip()
+    scraper_key = request.POST.get("scraper_key", "").strip()
+    limit_raw = request.POST.get("limit", "").strip()
+    limit = int(limit_raw) if limit_raw.isdigit() else None
+    skip_dedup = request.POST.get("skip_dedup", "").strip() == "1"
+
+    try:
+        _validate_url(ics_url)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    try:
+        town = Town.objects.get(slug=city)
+
+        with transaction.atomic():
+            effective_name = _resolve_source_name(source_name, source_type, scraper_key, ics_url)
+            # get_or_create but never flip an existing source to active=False
+            source, created = EventSource.objects.get_or_create(
+                url=ics_url,
+                defaults={
+                    "name": effective_name,
+                    "source_type": source_type,
+                    "active": False,
+                    "prompt_suffix": prompt_suffix,
+                    "scraper_key": scraper_key if source_type == "scraper" else "",
+                },
+            )
+            if not created:
+                source.name = effective_name
+                source.prompt_suffix = prompt_suffix
+                source.source_type = source_type
+                source.scraper_key = scraper_key if source_type == "scraper" else ""
+                source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
+
+            if source_type == "scraper":
+                fetch_scraper_source(source, limit=limit)
+            else:
+                fetch_ics_feed(source)
+            _apply_limit(source, limit)
+            standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
+
+            for staged in StagedEvent.objects.filter(raw_event__source=source):
+                staged.town = town.name
+                staged.save(update_fields=["town"])
+
+            if not skip_dedup:
+                dedup_all_pending(source=source)
             score_all_unscored(source=source, prompt_suffix=prompt_suffix)
             counts = auto_publish_safe_events(source=source, force_town=town)
 
@@ -210,7 +313,7 @@ def add_source(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    effective_name = source_name or urlparse(ics_url).hostname
+    effective_name = _resolve_source_name(source_name, source_type, scraper_key, ics_url)
     source, created = EventSource.objects.update_or_create(
         url=ics_url,
         defaults={

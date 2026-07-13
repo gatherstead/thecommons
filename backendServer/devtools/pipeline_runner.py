@@ -9,9 +9,10 @@ from django.utils.text import slugify
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
-from ingestion.importers.scraper_importer import fetch_scraper_source
+from ingestion.importers.scraper_importer import fetch_http_source, fetch_scraper_source
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
+from ingestion.scraping.scrapers import get_scraper
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
 
@@ -23,25 +24,47 @@ class _Rollback(Exception):
         self.final = final
 
 
-def _fetch_source(source):
+def _fetch_source(source, *, limit=None):
     """Dispatch the FETCH stage to the right importer for the source type."""
     if source.source_type == "scraper":
-        fetch_scraper_source(source)
+        fetch_scraper_source(source, limit=limit)
+    elif source.source_type == "http":
+        fetch_http_source(source, limit=limit)
     else:
         fetch_ics_feed(source)
 
 
+def _resolve_source_name(source_name, source_type, scraper_key, ics_url):
+    """Pick the attribution label stored on EventSource.name (→ Event.source_name).
+
+    Prefer an explicit label; else the scraper's English name ("Visit Pittsboro");
+    else the raw hostname as a last resort.
+    """
+    if source_name:
+        return source_name
+    if source_type in ("scraper", "http"):
+        scraper = get_scraper(scraper_key)
+        if scraper is not None and scraper.name:
+            return scraper.name
+    return urlparse(ics_url).hostname
+
+
 def _event_dict(e):
     return {
-        "uuid": e.uuid,
+        "uuid": str(e.uuid),
         "title": e.title,
         "town": e.town.name if e.town else "",
-        "date": e.date,
+        "date": e.date.isoformat() if e.date else None,
         "venue": e.venue,
         "description": e.description,
         "source_name": e.source_name,
-        "price": e.price,
+        "price": str(e.price) if e.price is not None else None,
         "link": e.link,
+        "tags": list(e.tags.values_list("name", flat=True)),
+        "categories": list(e.categories.values_list("display_name", flat=True)),
+        "is_verified": e.is_verified,
+        "created_by": str(e.created_by_id) if e.created_by_id else None,
+        "photo": bool(e.photo),
     }
 
 
@@ -56,6 +79,7 @@ def run_pipeline_into_queue(
     prompt_suffix="",
     source_type="ics",
     scraper_key="",
+    skip_dedup=False,
 ):
     ingestion_logger = logging.getLogger("ingestion")
     handler = QueueLoggingHandler(q, threading.get_ident())
@@ -83,17 +107,19 @@ def run_pipeline_into_queue(
                 # ── FETCH ─────────────────────────────────────────────────────
                 q.put(("stage", {"stage": "fetch", "status": "start"}))
 
-                effective_source_name = source_name or urlparse(ics_url).hostname
+                effective_source_name = _resolve_source_name(
+                    source_name, source_type, scraper_key, ics_url
+                )
                 source = EventSource(
                     name=effective_source_name,
                     source_type=source_type,
                     url=ics_url,
                     active=True,
-                    scraper_key=scraper_key if source_type == "scraper" else "",
+                    scraper_key=scraper_key if source_type in ("scraper", "http") else "",
                 )
                 source.save()
 
-                _fetch_source(source)
+                _fetch_source(source, limit=limit)
 
                 if limit is not None:
                     keep_ids = list(
@@ -174,14 +200,17 @@ def run_pipeline_into_queue(
 
                 # ── DEDUP ─────────────────────────────────────────────────────
                 q.put(("stage", {"stage": "dedup", "status": "start"}))
-                dedup_count = dedup_all_pending(source=source)
+                if skip_dedup:
+                    dedup_count = 0
+                else:
+                    dedup_count = dedup_all_pending(source=source)
                 q.put(
                     (
                         "stage",
                         {
                             "stage": "dedup",
                             "status": "end",
-                            "summary": {"count": dedup_count},
+                            "summary": {"count": dedup_count, "skipped": skip_dedup},
                         },
                     )
                 )
@@ -241,6 +270,7 @@ def run_pipeline_into_queue(
                 final = {
                     "dry_run": dry_run,
                     "town": town.name,
+                    "source_name": effective_source_name,
                     "counts": counts,
                     "published": published,
                 }

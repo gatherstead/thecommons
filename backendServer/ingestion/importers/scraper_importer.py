@@ -1,8 +1,11 @@
 import ipaddress
 import logging
 import socket
+from collections.abc import Callable
 from urllib.parse import urlparse
 
+import requests
+from django.conf import settings
 from django.utils import timezone
 
 from ingestion.models import EventSource, RawEvent
@@ -39,14 +42,49 @@ def _is_public_url(url: str) -> bool:
     return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
 
 
-def fetch_scraper_source(source: EventSource) -> list[RawEvent]:
+def _fetch_via_http(url: str) -> str:
+    """Fetch a page's raw HTML over plain HTTP. Returns "" on any error.
+
+    Same failure contract as `render_page` so the two fetch strategies are
+    interchangeable. Used by HTTP-type sources whose events are already present
+    in the server-rendered HTML (e.g. schema.org JSON-LD) and so need no browser.
     """
-    Render a scraper-type source's page, extract events with its registered
-    per-site scraper, and save as RawEvent records.
-    Returns list of newly created RawEvents.
+    try:
+        resp = requests.get(
+            url,
+            timeout=settings.INGEST_SCRAPER_TIMEOUT_MS / 1000,
+            headers={"User-Agent": settings.INGEST_SCRAPER_USER_AGENT},
+        )
+        resp.raise_for_status()
+        return resp.text
+    except requests.RequestException:
+        logger.exception("HTTP fetch failed for %s", url)
+        return ""
+
+
+def fetch_scraper_source(source: EventSource, *, limit: int | None = None) -> list[RawEvent]:
+    """Render a scraper-type source's page with a headless browser, then extract
+    and save events. See `_ingest_with_scraper` for the shared body.
     """
     assert source.source_type == "scraper", "Source must be scraper type"
+    return _ingest_with_scraper(source, render_page, limit=limit)
 
+
+def fetch_http_source(source: EventSource, *, limit: int | None = None) -> list[RawEvent]:
+    """Fetch an HTTP-type source's page over plain HTTP (no browser), then
+    extract and save events. See `_ingest_with_scraper` for the shared body.
+    """
+    assert source.source_type == "http", "Source must be http type"
+    return _ingest_with_scraper(source, _fetch_via_http, limit=limit)
+
+
+def _ingest_with_scraper(source: EventSource, fetch_html: Callable[[str], str], *, limit: int | None = None) -> list[RawEvent]:
+    """Fetch → extract → save, shared by the browser and HTTP fetch strategies.
+
+    Only PHASE 1 (how the HTML is obtained) differs between source types; the
+    per-site scraper, extraction, and ORM writes are identical. Returns the list
+    of newly created RawEvents.
+    """
     if not _is_public_url(source.url):
         logger.warning(f"Refusing to poll non-public URL for {source.name}: {source.url}")
         return []
@@ -56,13 +94,20 @@ def fetch_scraper_source(source: EventSource) -> list[RawEvent]:
         logger.warning(f"Unknown or blank scraper_key for {source.name}: {source.scraper_key!r}")
         return []
 
-    # PHASE 1: browser render (no ORM).
-    html = render_page(source.url)
+    # PHASE 1: fetch HTML (no ORM). Both fetchers return "" on any error.
+    html = fetch_html(source.url)
+    if not html:
+        # Bail before extract() — feeding empty HTML to a parser just raises a
+        # cryptic "Document is empty" far from the real cause.
+        logger.warning(f"Empty fetch for {source.name}: {source.url}")
+        return []
 
     # PHASE 2: pure extraction (no ORM, no browser).
     items = scraper.extract(html)
+    if limit is not None:
+        items = items[:limit]
 
-    # PHASE 3: ORM writes, after the browser phase is done.
+    # PHASE 3: ORM writes, after the fetch phase is done.
     new_events = []
     for item in items:
         raw_event, created = RawEvent.objects.get_or_create(
@@ -91,15 +136,23 @@ def fetch_scraper_source(source: EventSource) -> list[RawEvent]:
     return new_events
 
 
+# Both source types run a per-site scraper's extract(); they differ only in how
+# the page HTML is fetched. Map each type to its fetch-and-save entrypoint.
+_SCRAPER_FETCHERS = {
+    "scraper": fetch_scraper_source,
+    "http": fetch_http_source,
+}
+
+
 def poll_all_scraper_sources(shard: tuple[int, int] | None = None):
-    """Poll all active scraper sources that are due for a refresh.
+    """Poll all active scraper- and http-type sources that are due for a refresh.
 
     If `shard=(n, m)` is supplied, only sources where `id % m == n` are considered.
     This lets cron spread polling across `m` days so each run only touches ~1/m of
     the sources — load is even across the week and the per-source `poll_interval_hours`
     throttle still guards against accidental double-polls.
     """
-    sources = EventSource.objects.filter(source_type="scraper", active=True)
+    sources = EventSource.objects.filter(source_type__in=_SCRAPER_FETCHERS, active=True)
     if shard is not None:
         n, m = shard
         sources = sources.extra(where=["id %% %s = %s"], params=[m, n])
@@ -114,7 +167,7 @@ def poll_all_scraper_sources(shard: tuple[int, int] | None = None):
                 continue
 
         try:
-            new_events = fetch_scraper_source(source)
+            new_events = _SCRAPER_FETCHERS[source.source_type](source)
             total_new += len(new_events)
         except Exception as e:
             logger.error(f"Error polling {source.name}: {e}")

@@ -25,6 +25,7 @@ TAGS = [
     "Tech",
     "Wellness",
     "Nightlife",
+    "Summer Camp",
 ]
 
 CATEGORIES = [

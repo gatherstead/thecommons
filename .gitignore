@@ -38,5 +38,4 @@ backendServer/broadcast/captures/
 
 # TypeScript incremental build cache (generated, diverges on every build)
 *.tsbuildinfo
-# Notion sync outbox — disposable handoff queue, regenerated per session (STATE.md/README.md stay tracked)
-notion-sync/OUTBOX.md
+

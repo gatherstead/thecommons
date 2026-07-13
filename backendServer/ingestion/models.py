@@ -7,6 +7,7 @@ class EventSource(models.Model):
     SOURCE_TYPES = [
         ("ics", "ICS/iCal Feed"),
         ("scraper", "Web Scraper"),
+        ("http", "HTTP Fetch"),
         ("email", "Email Inbox"),
         ("direct", "Direct Host Submission"),
     ]

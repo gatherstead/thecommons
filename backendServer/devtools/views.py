@@ -13,7 +13,7 @@ from django.views.decorators.csrf import csrf_protect
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import fetch_ics_feed
-from ingestion.importers.scraper_importer import fetch_scraper_source
+from ingestion.importers.scraper_importer import fetch_http_source, fetch_scraper_source
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.scraping.scrapers import list_scrapers
@@ -174,7 +174,7 @@ def save_and_publish(request):
                     "source_type": source_type,
                     "active": True,
                     "prompt_suffix": prompt_suffix,
-                    "scraper_key": scraper_key if source_type == "scraper" else "",
+                    "scraper_key": scraper_key if source_type in ("scraper", "http") else "",
                 },
             )
 
@@ -182,11 +182,13 @@ def save_and_publish(request):
             source.name = effective_name
             source.prompt_suffix = prompt_suffix
             source.source_type = source_type
-            source.scraper_key = scraper_key if source_type == "scraper" else ""
+            source.scraper_key = scraper_key if source_type in ("scraper", "http") else ""
             source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
 
             if source_type == "scraper":
                 fetch_scraper_source(source, limit=limit)
+            elif source_type == "http":
+                fetch_http_source(source, limit=limit)
             else:
                 fetch_ics_feed(source)
             _apply_limit(source, limit)
@@ -253,18 +255,20 @@ def publish_events_only(request):
                     "source_type": source_type,
                     "active": False,
                     "prompt_suffix": prompt_suffix,
-                    "scraper_key": scraper_key if source_type == "scraper" else "",
+                    "scraper_key": scraper_key if source_type in ("scraper", "http") else "",
                 },
             )
             if not created:
                 source.name = effective_name
                 source.prompt_suffix = prompt_suffix
                 source.source_type = source_type
-                source.scraper_key = scraper_key if source_type == "scraper" else ""
+                source.scraper_key = scraper_key if source_type in ("scraper", "http") else ""
                 source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
 
             if source_type == "scraper":
                 fetch_scraper_source(source, limit=limit)
+            elif source_type == "http":
+                fetch_http_source(source, limit=limit)
             else:
                 fetch_ics_feed(source)
             _apply_limit(source, limit)
@@ -295,6 +299,21 @@ def publish_events_only(request):
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+def sources_api(request):
+    if not settings.DEBUG:
+        raise Http404
+    db = request.GET.get("db", "default")
+    available_dbs = settings.DATABASES
+    if db not in ("default", "prod_readonly") or db not in available_dbs:
+        db = "default"
+    sources = list(
+        EventSource.objects.using(db).order_by("name").values(
+            "id", "name", "url", "source_type", "scraper_key", "prompt_suffix", "active"
+        )
+    )
+    return JsonResponse({"sources": sources, "db": db})
+
+
 @csrf_protect
 def add_source(request):
     if not settings.DEBUG:
@@ -321,7 +340,7 @@ def add_source(request):
             "source_type": source_type,
             "active": True,
             "prompt_suffix": prompt_suffix,
-            "scraper_key": scraper_key if source_type == "scraper" else "",
+            "scraper_key": scraper_key if source_type in ("scraper", "http") else "",
         },
     )
     return JsonResponse(

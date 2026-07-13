@@ -16,8 +16,12 @@ class Command(BaseCommand):
             help="Source type (default: ics)",
         )
         parser.add_argument("--name", required=True, help="Human-readable source name")
-        parser.add_argument("--scraper-key", default="", help="Scraper key (scraper/http types only)")
-        parser.add_argument("--prompt-suffix", default="", help="Optional suffix appended to Gemini prompts")
+        parser.add_argument(
+            "--scraper-key", default="", help="Scraper key (scraper/http types only)"
+        )
+        parser.add_argument(
+            "--prompt-suffix", default="", help="Optional suffix appended to Gemini prompts"
+        )
 
     def handle(self, *args, **options):
         url = options["url"]

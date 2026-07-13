@@ -57,6 +57,35 @@ def _apply_limit(source, limit):
     RawEvent.objects.filter(source=source).exclude(id__in=keep_ids).delete()
 
 
+def _ingest_and_publish(source, town, source_type, limit, prompt_suffix, skip_dedup):
+    if source_type == "scraper":
+        fetch_scraper_source(source, limit=limit)
+    elif source_type == "http":
+        fetch_http_source(source, limit=limit)
+    else:
+        fetch_ics_feed(source)
+    _apply_limit(source, limit)
+    standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
+
+    for staged in StagedEvent.objects.filter(raw_event__source=source):
+        staged.town = town.name
+        staged.save(update_fields=["town"])
+
+    if not skip_dedup:
+        dedup_all_pending(source=source)
+    score_all_unscored(source=source, prompt_suffix=prompt_suffix)
+    counts = auto_publish_safe_events(source=source, force_town=town)
+
+    published = [
+        _event_dict(e)
+        for e in Event.objects.filter(
+            town=town,
+            staged_source__raw_event__source=source,
+        ).distinct()
+    ]
+    return published, counts
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 
@@ -185,31 +214,9 @@ def save_and_publish(request):
             source.scraper_key = scraper_key if source_type in ("scraper", "http") else ""
             source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
 
-            if source_type == "scraper":
-                fetch_scraper_source(source, limit=limit)
-            elif source_type == "http":
-                fetch_http_source(source, limit=limit)
-            else:
-                fetch_ics_feed(source)
-            _apply_limit(source, limit)
-            standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
-
-            for staged in StagedEvent.objects.filter(raw_event__source=source):
-                staged.town = town.name
-                staged.save(update_fields=["town"])
-
-            if not skip_dedup:
-                dedup_all_pending(source=source)
-            score_all_unscored(source=source, prompt_suffix=prompt_suffix)
-            counts = auto_publish_safe_events(source=source, force_town=town)
-
-            published = [
-                _event_dict(e)
-                for e in Event.objects.filter(
-                    town=town,
-                    staged_source__raw_event__source=source,
-                ).distinct()
-            ]
+            published, counts = _ingest_and_publish(
+                source, town, source_type, limit, prompt_suffix, skip_dedup
+            )
 
         return JsonResponse({"published": published, "counts": counts})
 
@@ -265,31 +272,9 @@ def publish_events_only(request):
                 source.scraper_key = scraper_key if source_type in ("scraper", "http") else ""
                 source.save(update_fields=["name", "prompt_suffix", "source_type", "scraper_key"])
 
-            if source_type == "scraper":
-                fetch_scraper_source(source, limit=limit)
-            elif source_type == "http":
-                fetch_http_source(source, limit=limit)
-            else:
-                fetch_ics_feed(source)
-            _apply_limit(source, limit)
-            standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
-
-            for staged in StagedEvent.objects.filter(raw_event__source=source):
-                staged.town = town.name
-                staged.save(update_fields=["town"])
-
-            if not skip_dedup:
-                dedup_all_pending(source=source)
-            score_all_unscored(source=source, prompt_suffix=prompt_suffix)
-            counts = auto_publish_safe_events(source=source, force_town=town)
-
-            published = [
-                _event_dict(e)
-                for e in Event.objects.filter(
-                    town=town,
-                    staged_source__raw_event__source=source,
-                ).distinct()
-            ]
+            published, counts = _ingest_and_publish(
+                source, town, source_type, limit, prompt_suffix, skip_dedup
+            )
 
         return JsonResponse({"published": published, "counts": counts})
 
@@ -307,9 +292,9 @@ def sources_api(request):
     if db not in ("default", "prod_readonly") or db not in available_dbs:
         db = "default"
     sources = list(
-        EventSource.objects.using(db).order_by("name").values(
-            "id", "name", "url", "source_type", "scraper_key", "prompt_suffix", "active"
-        )
+        EventSource.objects.using(db)
+        .order_by("name")
+        .values("id", "name", "url", "source_type", "scraper_key", "prompt_suffix", "active")
     )
     return JsonResponse({"sources": sources, "db": db})
 

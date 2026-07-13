@@ -4,47 +4,68 @@ The locality / category vocabularies here are deliberately independent of
 events.Town and events.Category — broadcast/ must not import from events/
 (isolation contract). Do not DRY this up.
 """
+
 from dataclasses import dataclass
 
 from broadcast.schema import CanonicalEvent
 
-LOCALITIES = frozenset({
-    "pittsboro", "chatham", "chapel-hill", "carrboro", "durham",
-    "raleigh", "cary", "wake", "triangle",
-})
+LOCALITIES = frozenset(
+    {
+        "pittsboro",
+        "chatham",
+        "chapel-hill",
+        "carrboro",
+        "durham",
+        "raleigh",
+        "cary",
+        "wake",
+        "triangle",
+    }
+)
 
-CATEGORIES = frozenset({
-    "music", "arts", "family-kids", "wellness", "food-drink", "festival",
-    "market", "literary", "community", "nightlife", "education",
-})
+CATEGORIES = frozenset(
+    {
+        "music",
+        "arts",
+        "family-kids",
+        "wellness",
+        "food-drink",
+        "festival",
+        "market",
+        "literary",
+        "community",
+        "nightlife",
+        "education",
+    }
+)
 
 TRIANGLE = LOCALITIES  # region-wide sites accept every Triangle locality
 
 # Deliberately local — do NOT import from events/.
 _LOCALITY_LABELS: dict[str, str] = {
-    "pittsboro":   "Pittsboro",
-    "chatham":     "Chatham County",
+    "pittsboro": "Pittsboro",
+    "chatham": "Chatham County",
     "chapel-hill": "Chapel Hill",
-    "carrboro":    "Carrboro",
-    "durham":      "Durham",
-    "raleigh":     "Raleigh",
-    "cary":        "Cary",
-    "wake":        "Wake County",
-    "triangle":    "the Triangle",
+    "carrboro": "Carrboro",
+    "durham": "Durham",
+    "raleigh": "Raleigh",
+    "cary": "Cary",
+    "wake": "Wake County",
+    "triangle": "the Triangle",
 }
 
 _CATEGORY_LABELS: dict[str, str] = {
-    "music":       "music",
-    "arts":        "arts",
+    "music": "music",
+    "arts": "arts",
     "family-kids": "family/kids",
-    "wellness":    "wellness",
-    "food-drink":  "food & drink",
-    "festival":    "festival",
-    "market":      "market",
-    "literary":    "literary",
-    "community":   "community",
-    "nightlife":   "nightlife",
-    "education":   "education",
+    "wellness": "wellness",
+    "food-drink": "food & drink",
+    "festival": "festival",
+    "market": "market",
+    "literary": "literary",
+    "community": "community",
+    "nightlife": "nightlife",
+    "education": "education",
 }
 
 
@@ -70,16 +91,11 @@ class Eligibility:
             else:
                 labels = [_LOCALITY_LABELS.get(s, s) for s in sorted(self.localities)]
                 loc_desc = _join_labels(labels)
-            return False, (
-                f"Covers {loc_desc} only — "
-                "check one of those localities to include it."
-            )
+            return False, (f"Covers {loc_desc} only — check one of those localities to include it.")
         if self.categories and not (set(ev.categories) & self.categories):
             labels = [_CATEGORY_LABELS.get(s, s) for s in sorted(self.categories)]
             cat_desc = _join_labels(labels)
-            return False, (
-                f"Only accepts {cat_desc} events — add a matching category."
-            )
+            return False, (f"Only accepts {cat_desc} events — add a matching category.")
         return True, ""
 
 

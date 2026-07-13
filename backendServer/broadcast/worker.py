@@ -3,6 +3,7 @@
 Runs as its own systemd service (broadcast-worker) via the
 run_broadcast_worker management command — never inside gunicorn.
 """
+
 import logging
 import os
 import subprocess
@@ -47,8 +48,7 @@ def claim_next() -> BroadcastSubmission | None:
     """Atomically claim the oldest queued submission, or None."""
     with transaction.atomic():
         submission = (
-            BroadcastSubmission.objects
-            .select_for_update(skip_locked=True)
+            BroadcastSubmission.objects.select_for_update(skip_locked=True)
             .filter(status="queued")
             .order_by("created_at")
             .first()
@@ -69,9 +69,7 @@ def recover_orphans() -> int:
     """
     with transaction.atomic():
         orphans = list(
-            BroadcastSubmission.objects
-            .select_for_update(skip_locked=True)
-            .filter(status="running")
+            BroadcastSubmission.objects.select_for_update(skip_locked=True).filter(status="running")
         )
         for submission in orphans:
             submission.targets.filter(status="in_progress").update(status="pending")

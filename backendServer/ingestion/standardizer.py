@@ -5,11 +5,11 @@ import time
 
 import requests
 from bs4 import BeautifulSoup
+from django.conf import settings
 from google import genai
 
-from django.conf import settings
-
 from ingestion.models import RawEvent, StagedEvent
+from ingestion.scraping.browser import render_page
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ VALID_TAGS = [
     "fundraiser",
     "market-or-fair",
     "workshop-or-class",
+    "summer-camp",
 ]
 
 STANDARDIZATION_PROMPT = """You are a data processor for a local community events platform called The Commons.
@@ -70,38 +71,54 @@ Additional context scraped from the event webpage (use this to find price, cost,
 """
 
 
-def fetch_page_text(url: str, max_chars: int = 6000) -> str:
-    """Fetch a webpage and extract its visible text. Returns empty string on failure."""
-    if not url or not url.startswith(('http://', 'https://')):
-        return ''
+def fetch_page_text(url: str, max_chars: int = 6000, *, use_browser: bool = False) -> str:
+    """Fetch a webpage and extract its visible text. Returns empty string on failure.
+
+    By default fetches via `requests`. When `use_browser` is True, renders the
+    page with Playwright (via `render_page`) first — for JS-heavy detail pages
+    that come back empty over plain HTTP.
+    """
+    if not url or not url.startswith(("http://", "https://")):
+        return ""
     try:
-        resp = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (compatible; TheCommons/1.0)'
-        })
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        if use_browser:
+            html = render_page(url)
+            if not html:
+                return ""
+        else:
+            resp = requests.get(
+                url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TheCommons/1.0)"},
+            )
+            resp.raise_for_status()
+            html = resp.text
+        soup = BeautifulSoup(html, "html.parser")
         # Remove script/style elements
-        for tag in soup(['script', 'style', 'nav']):
+        for tag in soup(["script", "style", "nav"]):
             tag.decompose()
-        text = soup.get_text(separator='\n', strip=True)
+        text = soup.get_text(separator="\n", strip=True)
         # Collapse blank lines but keep structure
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         return text[:max_chars]
     except Exception as e:
         logger.debug(f"Could not fetch {url}: {e}")
-        return ''
+        return ""
 
 
-def standardize_event(raw_event: RawEvent) -> StagedEvent:
+def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:  # noqa: C901  # LLM standardization with fallbacks; complexity is inherent
     """
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro']
+    models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
     max_retries = 3
 
     # Fetch the event webpage for additional context (price, details, etc.)
-    page_text = fetch_page_text(raw_event.source_url)
+    # Scraper-type sources are JS-heavy, so render them with Playwright instead
+    # of a plain requests.get (ICS/direct submissions never launch a browser).
+    use_browser = bool(raw_event.source and raw_event.source.source_type == "scraper")
+    page_text = fetch_page_text(raw_event.source_url, use_browser=use_browser)
     if page_text:
         logger.info(f"Fetched {len(page_text)} chars from {raw_event.source_url}")
 
@@ -114,6 +131,8 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         end=raw_event.raw_end.isoformat() if raw_event.raw_end else "Not specified",
         page_text=page_text or "No webpage available",
     )
+    if prompt_suffix:
+        prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
 
     response = None
     for model in models_to_try:
@@ -125,8 +144,8 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
                 )
                 break  # success
             except Exception as e:
-                if '503' in str(e) or 'UNAVAILABLE' in str(e):
-                    wait = 2 ** attempt  # 1s, 2s, 4s
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    wait = 2**attempt  # 1s, 2s, 4s
                     logger.warning(
                         f"[{model}] 503 on attempt {attempt + 1}/{max_retries}, "
                         f"retrying in {wait}s..."
@@ -142,10 +161,11 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         raise RuntimeError(f"All models failed for '{raw_event.raw_title}'")
 
     try:
+        assert response.text is not None, "Gemini returned a response with no text"
         text = response.text.strip()
-        if text.startswith('```'):
-            text = text.split('\n', 1)[1]
-            text = text.rsplit('```', 1)[0]
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            text = text.rsplit("```", 1)[0]
 
         data = json.loads(text)
     except json.JSONDecodeError as e:
@@ -153,42 +173,46 @@ def standardize_event(raw_event: RawEvent) -> StagedEvent:
         logger.error(f"Raw response: {response.text}")
         raise
 
-    valid_tags = [t for t in data.get('tags', []) if t in VALID_TAGS]
+    valid_tags = [t for t in data.get("tags", []) if t in VALID_TAGS]
 
     # Parse price: -1 means N/A (displayed as "N/A" on frontend)
-    price = data.get('price', -1)
+    price = data.get("price", -1)
 
     # Prefer the ICS source URL if it's a real webpage, fall back to Gemini's extraction
-    if raw_event.source_url and raw_event.source_url.startswith(('http://', 'https://')):
+    if raw_event.source_url and raw_event.source_url.startswith(("http://", "https://")):
         link = raw_event.source_url
     else:
-        link = data.get('link', '') or ''
-        if not link.startswith(('http://', 'https://')):
-            link = ''
+        link = data.get("link", "") or ""
+        if not link.startswith(("http://", "https://")):
+            link = ""
 
     staged = StagedEvent.objects.create(
         raw_event=raw_event,
-        title=data.get('title', raw_event.raw_title)[:500],
-        description=data.get('description', ''),
-        location_name=data.get('location_name', raw_event.raw_location)[:255],
-        town=data.get('town', '')[:100],
+        title=data.get("title", raw_event.raw_title)[:500],
+        description=data.get("description", ""),
+        location_name=data.get("location_name", raw_event.raw_location)[:255],
+        town=data.get("town", "")[:100],
         start_datetime=raw_event.raw_start,
         end_datetime=raw_event.raw_end,
         tags=valid_tags,
         price=price,
         link=link[:500],
-        status='pending',
+        status="pending",
     )
 
     raw_event.processed = True
-    raw_event.save(update_fields=['processed'])
+    raw_event.save(update_fields=["processed"])
 
     logger.info(f"Standardized: {staged.title}")
     return staged
 
 
-def standardize_all_unprocessed(source=None):
+def standardize_all_unprocessed(source=None, prompt_suffix=None):
     """Process all RawEvents that haven't been standardized yet."""
+    if prompt_suffix is None and source is not None:
+        prompt_suffix = source.prompt_suffix
+    prompt_suffix = prompt_suffix or ""
+
     unprocessed = RawEvent.objects.filter(processed=False)
     if source:
         unprocessed = unprocessed.filter(source=source)
@@ -196,7 +220,7 @@ def standardize_all_unprocessed(source=None):
 
     for raw_event in unprocessed:
         try:
-            standardize_event(raw_event)
+            standardize_event(raw_event, prompt_suffix=prompt_suffix)
             count += 1
         except Exception as e:
             logger.error(f"Failed to standardize '{raw_event.raw_title}': {e}")

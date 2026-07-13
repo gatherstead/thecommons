@@ -1,6 +1,7 @@
 """Direct service-level transition tests for the broadcast state machine.
 Covers branches the API tests don't already assert."""
-from datetime import datetime, timezone as dt_timezone
+
+from datetime import UTC, datetime
 
 from django.test import TestCase, tag
 
@@ -11,10 +12,15 @@ from broadcast.services import cancel_submission, retry_targets, submit_real_tar
 def make_submission(status="queued"):
     return BroadcastSubmission.objects.create(
         client_label="test",
-        title="T", description="D",
-        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=dt_timezone.utc),
-        venue_name="V", address_line1="1 Main St", city="Pittsboro",
-        zip="27312", locality=["pittsboro"], categories=["music"],
+        title="T",
+        description="D",
+        start_datetime=datetime(2026, 7, 10, 19, 0, tzinfo=UTC),
+        venue_name="V",
+        address_line1="1 Main St",
+        city="Pittsboro",
+        zip="27312",
+        locality=["pittsboro"],
+        categories=["music"],
         status=status,
     )
 

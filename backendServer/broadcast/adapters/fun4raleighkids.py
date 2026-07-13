@@ -20,6 +20,7 @@ site, checks for a Joomla login wall (visible password input or
 needs_manual with a clear error.  recipe_fields is intentionally left unset
 so check_recipes stays green.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import SiteAdapter, TargetResult
 from broadcast.routing import Eligibility

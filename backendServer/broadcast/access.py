@@ -1,36 +1,171 @@
-"""Access-code gate.
+"""DB-backed broadcast access resolution.
 
-Codes live in env: BROADCAST_ACCESS_CODES="label1:CODE1,label2:CODE2".
-Validated server-side with a constant-time compare. Never log or persist
-the code itself — only the resolved label.
+JWT path: Authorization: Bearer → email claim → BroadcastAccess tier.
+Code path: X-Broadcast-Access-Code header or body access_code → TRIAL AccessCode
+row only (anonymous, no account). UPGRADE AccessCode rows are never resolved
+here — they're redeemed by a logged-in user via redeem_upgrade_code(), which
+permanently sets BroadcastAccess.tier instead of granting a per-request tier.
+No credentials → tier 0. resolve_access is read-only; callers write AccessCodeUse.
 """
+
+import hashlib
 import hmac
-import os
+from dataclasses import dataclass, field
+
+from django.utils import timezone
+
+from backend.jwt_auth import verify_better_auth_jwt
+from broadcast.models import AccessCode, AccessCodeRedemption, BroadcastAccess
+
+# ---------------------------------------------------------------------------
+# DB-backed access layer
+# ---------------------------------------------------------------------------
 
 
-def _parse_codes(raw: str) -> dict[str, str]:
-    codes = {}
-    for pair in raw.split(","):
-        pair = pair.strip()
-        if not pair or ":" not in pair:
-            continue
-        label, code = pair.split(":", 1)
-        if label.strip() and code.strip():
-            codes[label.strip()] = code.strip()
-    return codes
+@dataclass(frozen=True)
+class AccessResult:
+    tier: int
+    identity: str | None
+    is_trial: bool
+    uses_remaining: int | None
+    client_label: str | None
+    code: AccessCode | None = field(default=None)
 
 
-def resolve_client_label(access_code: str | None) -> str | None:
-    """Return the client label for a valid code, else None.
+def hash_code(raw: str) -> str:
+    """SHA-256 hexdigest of a raw access code (never store raw)."""
+    return hashlib.sha256(raw.encode()).hexdigest()
 
-    Compares against every configured code (constant-time per compare) so
-    timing does not reveal which labels exist.
+
+def authenticated_email(request) -> str | None:
+    """Verify an Authorization: Bearer JWT and return its lowercased email claim.
+
+    Returns None on any failure (no header, invalid token, missing claim) —
+    callers that need to distinguish "no JWT" from "invalid JWT" should check
+    the Authorization header themselves first.
     """
-    if not access_code or not isinstance(access_code, str):
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
         return None
-    codes = _parse_codes(os.environ.get("BROADCAST_ACCESS_CODES", ""))
+    claims = verify_better_auth_jwt(auth_header[7:])
+    if claims is None:
+        return None
+    email = claims.get("email")
+    return email.lower() if email else None
+
+
+def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noqa: C901  # tiered auth resolution; complexity is inherent
+    """Resolve tiered access from a request.
+
+    Resolution order:
+      1. Authorization: Bearer <jwt>  → JWT path (verify claims, BroadcastAccess lookup)
+      2. X-Broadcast-Access-Code header or request.data["access_code"] → TRIAL code path
+      3. No credentials → tier 0, no identity
+
+    Read-only — never creates AccessCodeUse rows.
+    """
+    # ------------------------------------------------------------------
+    # Step 1: JWT path
+    # ------------------------------------------------------------------
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        email = authenticated_email(request)
+        if email:
+            try:
+                grant = BroadcastAccess.objects.get(email=email)
+                tier = grant.tier
+            except BroadcastAccess.DoesNotExist:
+                tier = 0
+            return AccessResult(
+                tier=tier,
+                identity=email,
+                is_trial=False,
+                uses_remaining=None,
+                client_label=email,
+                code=None,
+            )
+        # JWT present (valid or invalid) but unusable → no access, skip code path
+        return AccessResult(0, None, False, None, None, None)
+
+    # ------------------------------------------------------------------
+    # Step 2: Access code path — TRIAL codes only (anonymous, no account)
+    # ------------------------------------------------------------------
+    raw_code = request.headers.get("X-Broadcast-Access-Code")
+    if raw_code is None:
+        data = getattr(request, "data", None)
+        if isinstance(data, dict):
+            raw_code = data.get("access_code")
+
+    if raw_code and isinstance(raw_code, str):
+        incoming_hash = hash_code(raw_code)
+        now = timezone.now()
+
+        matched = None
+        for code in AccessCode.objects.filter(is_active=True, kind=AccessCode.KIND_TRIAL):
+            if hmac.compare_digest(code.code_hash, incoming_hash):
+                matched = code
+
+        if matched is not None:
+            if matched.expires_at is not None and matched.expires_at < now:
+                return AccessResult(0, None, False, None, None, None)
+
+            used = matched.uses.count()
+            if matched.max_uses is not None:
+                uses_remaining = max(matched.max_uses - used, 0)
+                if used >= matched.max_uses:
+                    already_counted = (
+                        draft_id is not None and matched.uses.filter(draft_id=draft_id).exists()
+                    )
+                    if not already_counted:
+                        return AccessResult(0, None, False, None, None, None)
+            else:
+                uses_remaining = None
+
+            label = matched.label
+            return AccessResult(
+                tier=matched.tier,
+                identity=label,
+                is_trial=True,
+                uses_remaining=uses_remaining,
+                client_label=label,
+                code=matched,
+            )
+
+    # ------------------------------------------------------------------
+    # Step 3: No usable credentials
+    # ------------------------------------------------------------------
+    return AccessResult(0, None, False, None, None, None)
+
+
+def redeem_upgrade_code(email: str, raw_code: str) -> int | None:
+    """Redeem an UPGRADE-kind code against a logged-in user's permanent tier.
+
+    Always overwrites BroadcastAccess.tier with the code's tier (last code
+    entered wins — deliberately simple so support/sales can just say "enter
+    this code" without worrying about downgrade edge cases). Redemption is
+    idempotent per email: re-entering the same code doesn't consume another
+    max_uses slot. TRIAL codes are never accepted here.
+
+    Returns the new tier, or None if the code is invalid/inactive/expired/exhausted.
+    """
+    incoming_hash = hash_code(raw_code)
+    now = timezone.now()
+
     matched = None
-    for label, code in codes.items():
-        if hmac.compare_digest(code.encode(), access_code.encode()):
-            matched = label
-    return matched
+    for code in AccessCode.objects.filter(is_active=True, kind=AccessCode.KIND_UPGRADE):
+        if hmac.compare_digest(code.code_hash, incoming_hash):
+            matched = code
+
+    if matched is None:
+        return None
+    if matched.expires_at is not None and matched.expires_at < now:
+        return None
+
+    already_redeemed = matched.redemptions.filter(email=email).exists()
+    if not already_redeemed and matched.max_uses is not None:
+        if matched.redemptions.count() >= matched.max_uses:
+            return None
+
+    BroadcastAccess.objects.update_or_create(email=email, defaults={"tier": matched.tier})
+    AccessCodeRedemption.objects.get_or_create(access_code=matched, email=email)
+    return matched.tier

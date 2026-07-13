@@ -21,6 +21,7 @@ dependencies = [
     "google-genai>=1.66.0",
     "django-unfold>=0.83.1",
     "beautifulsoup4>=4.14.3",
+    "lxml>=5.3.0",
     "pyjwt[crypto]>=2.10.0",
     # 1.x exposes the `brevo_python` module (TransactionalEmailsApi/SendSmtpEmail API
     # used in email_service.py). 4.x is a Fern rewrite that imports as `brevo` with a
@@ -32,3 +33,36 @@ dependencies = [
     "celery[redis]>=5.6.3",
     "django-celery-beat>=2.9.0",
 ]
+
+[dependency-groups]
+dev = [
+    "django-stubs>=6.0.6",
+    "djangorestframework-stubs>=3.17.0",
+    "mypy>=2.2.0",
+    "ruff>=0.15.20",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = ["*/migrations/*", "vercel.json", "build.sh", "main.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C90", "DJ"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# LLM prompt strings contain lines that cannot be wrapped without changing the prompt
+"ingestion/standardizer.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend", "events", "ingestion", "broadcast"]
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+python_version = "3.13"
+ignore_missing_imports = true
+exclude = ["migrations/"]
+
+[tool.django-stubs]
+django_settings_module = "backend.settings.dev"

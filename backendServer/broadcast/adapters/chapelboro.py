@@ -9,6 +9,7 @@ clear error. recipe_fields is intentionally left unset (no captured selectors)
 so check_recipes stays green; it can become a full recipe adapter once the
 live form is capturable.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
@@ -43,14 +44,16 @@ class ChapelboroAdapter(SiteAdapter):
         h.dismiss_consent(page)
         shot = h.take_screenshot(page, ctx, self.key)
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="needs_manual", error="captcha/bot-check present", screenshot_path=shot
+            )
         if _has_login_wall(page):
-            return TargetResult(status="needs_manual", error="login wall present",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="needs_manual", error="login wall present", screenshot_path=shot
+            )
         return TargetResult(
             status="needs_manual",
             error="chapelboro.com bot-blocks headless submission and no form "
-                  "selectors are captured yet; submit manually.",
+            "selectors are captured yet; submit manually.",
             screenshot_path=shot,
         )

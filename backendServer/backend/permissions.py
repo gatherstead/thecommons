@@ -16,8 +16,8 @@ class BearerTokenAuthentication(BaseAuthentication):
     """
 
     def authenticate(self, request):
-        auth = request.META.get('HTTP_AUTHORIZATION', '').split()
-        if len(auth) != 2 or auth[0].lower() != 'bearer':
+        auth = request.META.get("HTTP_AUTHORIZATION", "").split()
+        if len(auth) != 2 or auth[0].lower() != "bearer":
             return None
 
         token_value = auth[1]
@@ -29,21 +29,21 @@ class BearerTokenAuthentication(BaseAuthentication):
 
         claims = verify_better_auth_jwt(token_value)
         if claims is None:
-            raise AuthenticationFailed('Invalid token')
+            raise AuthenticationFailed("Invalid token")
 
-        user_id = claims.get('sub')
+        user_id = claims.get("sub")
         if not user_id:
-            raise AuthenticationFailed('Token missing subject')
+            raise AuthenticationFailed("Token missing subject")
 
         try:
             user = BetterAuthUser.objects.get(id=user_id)
         except BetterAuthUser.DoesNotExist:
-            raise AuthenticationFailed('Unknown user')
+            raise AuthenticationFailed("Unknown user") from None
 
         return (user, claims)
 
     def authenticate_header(self, request):
-        return 'Bearer'
+        return "Bearer"
 
 
 class HasCommonsAPIKey(BasePermission):
@@ -52,10 +52,11 @@ class HasCommonsAPIKey(BasePermission):
         Authorization: Bearer <THE_COMMONS_API_KEY>
     Apply to any endpoint that should only be callable through the app.
     """
-    message = 'Invalid or missing API key.'
+
+    message = "Invalid or missing API key."
 
     def has_permission(self, request, view):
-        auth = request.headers.get('Authorization', '')
+        auth = request.headers.get("Authorization", "")
         return auth == f"Bearer {settings.THE_COMMONS_API_KEY}"
 
 
@@ -64,10 +65,13 @@ class HasCommonsAPIKeyOrUser(BasePermission):
     Allow either an authenticated user (via BearerTokenAuthentication) or a
     request bearing the shared THE_COMMONS_API_KEY.
     """
-    message = 'Authentication required.'
+
+    message = "Authentication required."
 
     def has_permission(self, request, view):
         if request.user and request.user.is_authenticated:
             return True
-        auth = request.headers.get('Authorization', '')
-        return bool(settings.THE_COMMONS_API_KEY) and auth == f"Bearer {settings.THE_COMMONS_API_KEY}"
+        auth = request.headers.get("Authorization", "")
+        return (
+            bool(settings.THE_COMMONS_API_KEY) and auth == f"Bearer {settings.THE_COMMONS_API_KEY}"
+        )

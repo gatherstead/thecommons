@@ -8,6 +8,7 @@ The flow enforces the hard rules from the design doc §8: captcha/login wall →
 needs_manual; missing required field → needs_manual; dry_run never clicks
 final submit; screenshots before and after submit.
 """
+
 from dataclasses import dataclass
 
 from broadcast.adapters import _helpers as h
@@ -17,7 +18,7 @@ from broadcast.schema import CanonicalEvent
 
 @dataclass(frozen=True)
 class FieldSpec:
-    label: str            # accessible label / placeholder text to locate by
+    label: str  # accessible label / placeholder text to locate by
     required: bool = False
     exact: bool = False
 
@@ -59,7 +60,7 @@ def _try_fill(page, spec: FieldSpec, value: str, timeout_ms: int) -> bool:
             return False
 
 
-def standard_fill_and_submit(
+def standard_fill_and_submit(  # noqa: C901  # generic form fill; complexity is inherent to field-by-field dispatch
     adapter,
     page,
     ev: CanonicalEvent,
@@ -77,8 +78,11 @@ def standard_fill_and_submit(
     h.dismiss_consent(page)
 
     if h.has_captcha(page):
-        return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                            screenshot_path=h.take_screenshot(page, ctx, adapter.key))
+        return TargetResult(
+            status="needs_manual",
+            error="captcha/bot-check present",
+            screenshot_path=h.take_screenshot(page, ctx, adapter.key),
+        )
 
     values = _field_values(ev)
     missing_required = []
@@ -116,18 +120,25 @@ def standard_fill_and_submit(
 
     # re-check: some sites inject a captcha after interaction
     if h.has_captcha(page):
-        return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                            screenshot_path=h.take_screenshot(page, ctx, adapter.key))
+        return TargetResult(
+            status="needs_manual",
+            error="captcha/bot-check present",
+            screenshot_path=h.take_screenshot(page, ctx, adapter.key),
+        )
 
     shot = h.take_screenshot(page, ctx, adapter.key)
     if ctx.dry_run:
-        return TargetResult(status="succeeded", error="[DRY RUN] not submitted",
-                            screenshot_path=shot)
+        return TargetResult(
+            status="succeeded", error="[DRY RUN] not submitted", screenshot_path=shot
+        )
 
     page.get_by_role("button", name=submit_button).first.click(timeout=ctx.timeout_ms)
     if success_locator:
         page.locator(success_locator).first.wait_for(state="visible", timeout=ctx.timeout_ms)
     else:
         page.wait_for_load_state("load", timeout=ctx.timeout_ms)
-    return TargetResult(status="succeeded", external_url=page.url,
-                        screenshot_path=h.take_screenshot(page, ctx, adapter.key, "after"))
+    return TargetResult(
+        status="succeeded",
+        external_url=page.url,
+        screenshot_path=h.take_screenshot(page, ctx, adapter.key, "after"),
+    )

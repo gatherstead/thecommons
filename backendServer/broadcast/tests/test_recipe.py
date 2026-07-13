@@ -1,5 +1,6 @@
 """Recipe shape + conditional-field tests. No DB — pure adapter logic."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from django.test import SimpleTestCase, tag
@@ -11,9 +12,19 @@ from broadcast.schema import CanonicalEvent, event_from_submission
 RECIPE_KEYS = ["triangle_on_the_cheap", "triangle_weekender", "abc11_community", "chatham_arts"]
 
 VALID_TYPES = {
-    "text", "textarea", "date", "time", "select",
-    "radio", "checkbox", "file", "select2", "select2_multi", "react_select",
-    "terms", "manual_widget",
+    "text",
+    "textarea",
+    "date",
+    "time",
+    "select",
+    "radio",
+    "checkbox",
+    "file",
+    "select2",
+    "select2_multi",
+    "react_select",
+    "terms",
+    "manual_widget",
 }
 
 
@@ -86,9 +97,7 @@ class ConditionalFieldsTest(SimpleTestCase):
         with_img = _selectors(get_adapter("triangle_on_the_cheap").recipe(_event()))
         self.assertIn("#input_5_19", with_img)
 
-        without_img = _selectors(
-            get_adapter("triangle_on_the_cheap").recipe(_event(image_url=""))
-        )
+        without_img = _selectors(get_adapter("triangle_on_the_cheap").recipe(_event(image_url="")))
         self.assertNotIn("#input_5_19", without_img)
 
     def test_empty_optional_plain_field_dropped(self):
@@ -107,8 +116,11 @@ class ConditionalFieldsTest(SimpleTestCase):
             _event(categories=["music", "arts", "festival"])
         )
         cat = next(
-            (f for f in recipe["fields"]
-             if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"),
+            (
+                f
+                for f in recipe["fields"]
+                if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"
+            ),
             None,
         )
         self.assertIsNotNone(cat, "weekender category select2_multi field missing")
@@ -119,12 +131,13 @@ class ConditionalFieldsTest(SimpleTestCase):
         self.assertIn("Festival", cat["value"])
 
     def test_weekender_tag_field_emitted_when_categories_present(self):
-        recipe = get_adapter("triangle_weekender").recipe(
-            _event(categories=["music"])
-        )
+        recipe = get_adapter("triangle_weekender").recipe(_event(categories=["music"]))
         tag = next(
-            (f for f in recipe["fields"]
-             if f["selector"] == "select[name='tax_input[post_tag][]']"),
+            (
+                f
+                for f in recipe["fields"]
+                if f["selector"] == "select[name='tax_input[post_tag][]']"
+            ),
             None,
         )
         self.assertIsNotNone(tag, "weekender tag select2_multi field missing")
@@ -140,12 +153,13 @@ class ConditionalFieldsTest(SimpleTestCase):
         self.assertNotIn("select[name='tax_input[post_tag][]']", selectors)
 
     def test_chatham_arts_category_field_emitted_when_categories_present(self):
-        recipe = get_adapter("chatham_arts").recipe(
-            _event(categories=["arts", "literary"])
-        )
+        recipe = get_adapter("chatham_arts").recipe(_event(categories=["arts", "literary"]))
         cat = next(
-            (f for f in recipe["fields"]
-             if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"),
+            (
+                f
+                for f in recipe["fields"]
+                if f["selector"] == "select[name='tax_input[tribe_events_cat][]']"
+            ),
             None,
         )
         self.assertIsNotNone(cat, "chatham_arts category select2_multi field missing")
@@ -157,12 +171,25 @@ class ConditionalFieldsTest(SimpleTestCase):
 def _submission(start_utc, end_utc=None, all_day=False):
     """Minimal duck-typed submission row for event_from_submission."""
     return SimpleNamespace(
-        title="t", description="d",
-        start_datetime=start_utc, end_datetime=end_utc, all_day=all_day,
-        venue_name="V", address_line1="A", state="NC", zip="27312",
-        locality=["pittsboro"], categories=[], event_url="", ticket_url="",
-        price="", is_free=True, image_url="", organizer_name="",
-        contact_email="", contact_phone="",
+        title="t",
+        description="d",
+        start_datetime=start_utc,
+        end_datetime=end_utc,
+        all_day=all_day,
+        venue_name="V",
+        address_line1="A",
+        state="NC",
+        zip="27312",
+        locality=["pittsboro"],
+        categories=[],
+        event_url="",
+        ticket_url="",
+        price="",
+        is_free=True,
+        image_url="",
+        organizer_name="",
+        contact_email="",
+        contact_phone="",
     )
 
 
@@ -170,20 +197,20 @@ def _submission(start_utc, end_utc=None, all_day=False):
 class TimezoneTest(SimpleTestCase):
     def test_utc_storage_formats_as_eastern_wall_clock(self):
         # 4pm Eastern (EDT) is stored as 20:00 UTC; it must render as 4:00 PM.
-        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=UTC))
         ev = event_from_submission(sub)
         self.assertEqual(h.format_time(ev.start_datetime), "4:00 PM")
 
     def test_eastern_conversion_can_shift_the_date(self):
         # 11pm Eastern on the 10th is 03:00 UTC on the 11th — the date must
         # follow the local day, not the UTC day.
-        sub = _submission(datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 11, 3, 0, tzinfo=UTC))
         ev = event_from_submission(sub)
         self.assertEqual(h.format_date(ev.start_datetime), "07/10/2026")
         self.assertEqual(h.format_time(ev.start_datetime), "11:00 PM")
 
     def test_recipe_time_value_is_local(self):
-        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc))
+        sub = _submission(datetime(2026, 7, 10, 20, 0, tzinfo=UTC))
         recipe = get_adapter("triangle_on_the_cheap").recipe(event_from_submission(sub))
         start = next(f for f in recipe["fields"] if f["selector"] == "#input_5_10")
         self.assertEqual(start["value"], "4:00 PM")

@@ -1,7 +1,8 @@
 import os
 import sys
-from urllib.parse import urlparse, parse_qsl
-from .base import *
+from urllib.parse import parse_qsl, urlparse
+
+from .base import *  # noqa: F403  # Django settings override files use star imports by convention
 
 DEBUG = True
 
@@ -22,14 +23,14 @@ if not _db_url:
     )
 _db = urlparse(_db_url)
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': _db.path.replace('/', ''),
-        'USER': _db.username,
-        'PASSWORD': _db.password,
-        'HOST': _db.hostname,
-        'PORT': 5432,
-        'OPTIONS': dict(parse_qsl(_db.query)),
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _db.path.replace("/", ""),
+        "USER": _db.username,
+        "PASSWORD": _db.password,
+        "HOST": _db.hostname,
+        "PORT": 5432,
+        "OPTIONS": dict(parse_qsl(_db.query)),
     }
 }
 
@@ -40,4 +41,4 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 # BROADCAST_AUTOSPAWN_WORKER=false to use a manual `run_broadcast_worker`.
 BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "true").lower() == "true"
 
-INSTALLED_APPS = [*INSTALLED_APPS, 'devtools.apps.DevtoolsConfig']
+INSTALLED_APPS = [*INSTALLED_APPS, "devtools.apps.DevtoolsConfig"]  # noqa: F405  # star import is intentional

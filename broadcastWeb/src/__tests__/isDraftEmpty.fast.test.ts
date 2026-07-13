@@ -4,6 +4,7 @@ import { isDraftEmpty } from "../App";
 import type { EventDraft } from "../models/broadcastModels";
 
 const EMPTY: EventDraft = {
+  draft_id: "",
   title: "",
   description: "",
   start_datetime: "",
@@ -104,6 +105,7 @@ describe("isDraftEmpty", () => {
 
   it("returns true when optional fields are undefined (as EventDraft allows)", () => {
     const draft: EventDraft = {
+      draft_id: "",
       title: "",
       description: "",
       start_datetime: "",
@@ -121,6 +123,7 @@ describe("isDraftEmpty", () => {
 
   it("returns false for a fully populated DEV_FIXTURE-style draft", () => {
     const filled: EventDraft = {
+      draft_id: "",
       title: "Bull City BOOs Fest",
       description: "Join The MAKRS Society...",
       start_datetime: "2026-10-17T16:00",

@@ -22,6 +22,7 @@ Form structure (notable details):
 Submitter identity comes from the user-entered Contact block on the canonical
 event: ev.organizer_name / ev.contact_email / ev.contact_phone.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
@@ -29,22 +30,22 @@ from broadcast.routing import Eligibility
 # Map our canonical category slugs to the site's real option strings.
 # Options captured from the select-multiple#categories field.
 _CAT_MAP: dict[str, str] = {
-    "music":       "Concerts",
-    "arts":        "Arts",
+    "music": "Concerts",
+    "arts": "Arts",
     "family-kids": "Family",
-    "food-drink":  "Culinary",
-    "festival":    "Festival",
-    "market":      "Shopping",
-    "literary":    "Arts",
-    "community":   "Annual Event",
-    "nightlife":   "Nightlife",
-    "wellness":    "Wellness",
-    "education":   "Education Outreach",
-    "sports":      "Sports",
-    "film":        "Film",
-    "dance":       "Dance",
-    "comedy":      "Comedy",
-    "theatre":     "Theatre",
+    "food-drink": "Culinary",
+    "festival": "Festival",
+    "market": "Shopping",
+    "literary": "Arts",
+    "community": "Annual Event",
+    "nightlife": "Nightlife",
+    "wellness": "Wellness",
+    "education": "Education Outreach",
+    "sports": "Sports",
+    "film": "Film",
+    "dance": "Dance",
+    "comedy": "Comedy",
+    "theatre": "Theatre",
 }
 
 _SUBMIT_SELECTOR = "input[name='submitevent']"
@@ -76,51 +77,63 @@ def _map_categories(ev) -> list[str]:
 # Fields driven imperatively (categories select-multiple, image file upload) are
 # recipe_only so apply_specs skips them on the server path.
 _RECIPE_FIELDS = [
-    RecipeField("#postname", "text", lambda ev: ev.organizer_name,
-                required=True, label="Submitter Name"),
-    RecipeField("#postemail", "text", lambda ev: ev.contact_email,
-                required=True, label="Submitter Email"),
-    RecipeField("#postphone", "text", lambda ev: ev.contact_phone,
-                label="Submitter Phone"),
-
-    RecipeField("#title", "text", lambda ev: ev.title,
-                required=True, label="Event Title"),
-    RecipeField("#description", "textarea", lambda ev: ev.description,
-                required=True, label="Event Description"),
-    RecipeField("#startdate", "text", lambda ev: _vr_date(ev.start_datetime),
-                required=True, label="Start Date",
-                hint="plain text field — enter mm/dd/yyyy"),
-
-    RecipeField("#location", "text", lambda ev: ev.venue_name,
-                label="Venue / Location"),
-    RecipeField("#addr1", "text", lambda ev: ev.address_line1,
-                label="Address 1"),
-    RecipeField("#city", "text", lambda ev: ev.city,
-                label="City"),
-    RecipeField("#zip", "text", lambda ev: ev.zip,
-                label="Zip"),
-
-    RecipeField("#phone", "text", lambda ev: ev.contact_phone,
-                label="Event Phone"),
-    RecipeField("#email", "text", lambda ev: ev.contact_email,
-                label="Event Email"),
-
-    RecipeField("#linkurl", "text", lambda ev: ev.event_url,
-                label="Event Website"),
-    RecipeField("#admission", "text",
-                lambda ev: "Free" if ev.is_free else ev.price,
-                label="Admission"),
-
-    RecipeField("#categories", "select", lambda ev: ", ".join(_map_categories(ev)),
-                recipe_only=True, label="Event Category",
-                hint="select-multiple; pick matching options from the list"),
-    RecipeField("#primarycatId", "select", lambda ev: (_map_categories(ev) or [""])[0],
-                recipe_only=True, label="Primary Category",
-                hint="select the single best-matching primary category"),
-
-    RecipeField("#mediafile", "file", lambda ev: ev.image_url,
-                recipe_only=True, label="Upload Image",
-                hint="download image from event_url and upload manually"),
+    RecipeField(
+        "#postname", "text", lambda ev: ev.organizer_name, required=True, label="Submitter Name"
+    ),
+    RecipeField(
+        "#postemail", "text", lambda ev: ev.contact_email, required=True, label="Submitter Email"
+    ),
+    RecipeField("#postphone", "text", lambda ev: ev.contact_phone, label="Submitter Phone"),
+    RecipeField("#title", "text", lambda ev: ev.title, required=True, label="Event Title"),
+    RecipeField(
+        "#description",
+        "textarea",
+        lambda ev: ev.description,
+        required=True,
+        label="Event Description",
+    ),
+    RecipeField(
+        "#startdate",
+        "text",
+        lambda ev: _vr_date(ev.start_datetime),
+        required=True,
+        label="Start Date",
+        hint="plain text field — enter mm/dd/yyyy",
+    ),
+    RecipeField("#location", "text", lambda ev: ev.venue_name, label="Venue / Location"),
+    RecipeField("#addr1", "text", lambda ev: ev.address_line1, label="Address 1"),
+    RecipeField("#city", "text", lambda ev: ev.city, label="City"),
+    RecipeField("#zip", "text", lambda ev: ev.zip, label="Zip"),
+    RecipeField("#phone", "text", lambda ev: ev.contact_phone, label="Event Phone"),
+    RecipeField("#email", "text", lambda ev: ev.contact_email, label="Event Email"),
+    RecipeField("#linkurl", "text", lambda ev: ev.event_url, label="Event Website"),
+    RecipeField(
+        "#admission", "text", lambda ev: "Free" if ev.is_free else ev.price, label="Admission"
+    ),
+    RecipeField(
+        "#categories",
+        "select",
+        lambda ev: ", ".join(_map_categories(ev)),
+        recipe_only=True,
+        label="Event Category",
+        hint="select-multiple; pick matching options from the list",
+    ),
+    RecipeField(
+        "#primarycatId",
+        "select",
+        lambda ev: (_map_categories(ev) or [""])[0],
+        recipe_only=True,
+        label="Primary Category",
+        hint="select the single best-matching primary category",
+    ),
+    RecipeField(
+        "#mediafile",
+        "file",
+        lambda ev: ev.image_url,
+        recipe_only=True,
+        label="Upload Image",
+        hint="download image from event_url and upload manually",
+    ),
 ]
 
 
@@ -138,8 +151,7 @@ class VisitRaleighAdapter(SiteAdapter):
     # textarea (near the bottom of the form) before autofilling so fields exist.
     ready_selector = "#description"
     captcha_hint = (
-        "If a bot-check appears before or after filling the form, "
-        "solve it manually then submit."
+        "If a bot-check appears before or after filling the form, solve it manually then submit."
     )
 
     def recipe_field_specs(self, ev):
@@ -147,17 +159,23 @@ class VisitRaleighAdapter(SiteAdapter):
         specs = list(_RECIPE_FIELDS)
         if not ev.all_day:
             specs.append(
-                RecipeField("#starttime", "text",
-                            lambda ev: _vr_time(ev.start_datetime),
-                            label="Start Time",
-                            hint="free-form text, e.g. '7:00 PM'")
+                RecipeField(
+                    "#starttime",
+                    "text",
+                    lambda ev: _vr_time(ev.start_datetime),
+                    label="Start Time",
+                    hint="free-form text, e.g. '7:00 PM'",
+                )
             )
             if ev.end_datetime:
                 specs.append(
-                    RecipeField("#endtime", "text",
-                                lambda ev: _vr_time(ev.end_datetime),
-                                label="End Time",
-                                hint="free-form text, e.g. '9:00 PM'")
+                    RecipeField(
+                        "#endtime",
+                        "text",
+                        lambda ev: _vr_time(ev.end_datetime),
+                        label="End Time",
+                        hint="free-form text, e.g. '9:00 PM'",
+                    )
                 )
         return specs
 
@@ -198,9 +216,7 @@ class VisitRaleighAdapter(SiteAdapter):
             local = h.download_image(ev.image_url, ctx.download_dir)
             if local:
                 try:
-                    page.locator("#mediafile").first.set_input_files(
-                        local, timeout=ctx.timeout_ms
-                    )
+                    page.locator("#mediafile").first.set_input_files(local, timeout=ctx.timeout_ms)
                 except Exception:
                     pass
 
@@ -238,6 +254,7 @@ class VisitRaleighAdapter(SiteAdapter):
 # ---------------------------------------------------------------------------
 # Widget helpers (imperative, server path only)
 # ---------------------------------------------------------------------------
+
 
 def _select_categories(page, selector: str, labels: list[str], timeout_ms: int) -> None:
     """Select multiple options on a <select multiple> by label, best-effort."""

@@ -9,6 +9,7 @@ screenshots, and returns needs_manual so a human with member credentials can
 post the event. recipe_fields is intentionally left unset (no deterministic
 public selectors to fill) so check_recipes skips it.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
@@ -35,18 +36,19 @@ class ShopPittsboroAdapter(SiteAdapter):
             page.goto(self.submission_url, timeout=ctx.timeout_ms)
             page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         except Exception as exc:
-            return TargetResult(status="needs_manual",
-                                error=f"could not load member-events page: {exc}")
+            return TargetResult(
+                status="needs_manual", error=f"could not load member-events page: {exc}"
+            )
         h.dismiss_consent(page)
         shot = h.take_screenshot(page, ctx, self.key)
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="needs_manual", error="captcha/bot-check present", screenshot_path=shot
+            )
         reason = (
-            "Shop Pittsboro new-event form is behind a member login; sign in "
-            "and submit manually."
+            "Shop Pittsboro new-event form is behind a member login; sign in and submit manually."
             if _has_login_wall(page)
             else "No public Shop Pittsboro event form found (member-events widget "
-                 "is login-gated); submit manually."
+            "is login-gated); submit manually."
         )
         return TargetResult(status="needs_manual", error=reason, screenshot_path=shot)

@@ -5,9 +5,11 @@ class EventSource(models.Model):
     """A URL we poll on a schedule to discover events."""
 
     SOURCE_TYPES = [
-        ('ics', 'ICS/iCal Feed'),
-        ('scraper', 'Web Scraper'),
-        ('email', 'Email Inbox'),
+        ("ics", "ICS/iCal Feed"),
+        ("scraper", "Web Scraper"),
+        ("http", "HTTP Fetch"),
+        ("email", "Email Inbox"),
+        ("direct", "Direct Host Submission"),
     ]
 
     name = models.CharField(max_length=255)
@@ -17,6 +19,8 @@ class EventSource(models.Model):
     last_polled = models.DateTimeField(null=True, blank=True)
     poll_interval_hours = models.IntegerField(default=24)
     notes = models.TextField(blank=True)
+    prompt_suffix = models.TextField(blank=True, default="")
+    scraper_key = models.CharField(max_length=100, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -28,9 +32,7 @@ class EventSource(models.Model):
 class RawEvent(models.Model):
     """Events as scraped, before LLM processing."""
 
-    source = models.ForeignKey(
-        EventSource, on_delete=models.CASCADE, related_name='raw_events'
-    )
+    source = models.ForeignKey(EventSource, on_delete=models.CASCADE, related_name="raw_events")
 
     raw_title = models.CharField(max_length=500)
     raw_description = models.TextField(blank=True)
@@ -45,7 +47,7 @@ class RawEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ['source', 'source_uid']
+        unique_together = ["source", "source_uid"]
 
     def __str__(self):
         return f"[Raw] {self.raw_title} ({self.source.name})"
@@ -55,15 +57,18 @@ class StagedEvent(models.Model):
     """Events after LLM standardization, waiting for admin review."""
 
     STATUS_CHOICES = [
-        ('pending', 'Pending Review'),
-        ('approved', 'Approved'),
-        ('rejected', 'Rejected'),
-        ('duplicate', 'Duplicate'),
+        ("pending", "Pending Review"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("duplicate", "Duplicate"),
     ]
 
     raw_event = models.OneToOneField(
-        RawEvent, on_delete=models.CASCADE, related_name='staged',
-        null=True, blank=True,
+        RawEvent,
+        on_delete=models.CASCADE,
+        related_name="staged",
+        null=True,
+        blank=True,
     )
 
     # LLM-standardized fields
@@ -74,36 +79,41 @@ class StagedEvent(models.Model):
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
     tags = models.JSONField(default=list)
-    category = models.CharField(max_length=100, blank=True, default='')
+    category = models.CharField(max_length=100, blank=True, default="")
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     link = models.URLField(max_length=500, blank=True)
 
     # Review workflow
-    status = models.CharField(
-        max_length=20, choices=STATUS_CHOICES, default='pending'
-    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     reviewer_notes = models.TextField(blank=True)
     duplicate_of = models.ForeignKey(
-        'self', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='duplicates',
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
     )
 
     # Safety scoring
     safety_score = models.FloatField(null=True, blank=True)
-    safety_notes = models.TextField(blank=True, default='')
+    safety_notes = models.TextField(blank=True, default="")
 
     # Link to the real Event once approved
     published_event = models.ForeignKey(
-        'events.Event', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='staged_source',
+        "events.Event",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="staged_source",
     )
 
     # Tracks who submitted this event via the public API; null for pipeline events.
     submitted_by = models.ForeignKey(
-        'events.BetterAuthUser',
-        null=True, blank=True,
+        "events.BetterAuthUser",
+        null=True,
+        blank=True,
         on_delete=models.SET_NULL,
-        related_name='submitted_staged_events',
+        related_name="submitted_staged_events",
         db_constraint=False,
     )
 

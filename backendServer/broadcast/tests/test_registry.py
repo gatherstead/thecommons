@@ -12,9 +12,16 @@ from broadcast.routing import CATEGORIES, LOCALITIES
 class RegistryTest(SimpleTestCase):
     def test_tier1_adapters_registered(self):
         expected = {
-            "triangle_on_the_cheap", "triangle_weekender",
-            "abc11_community", "visit_raleigh", "fun4raleighkids", "chapelboro",
-            "explore_pittsboro", "chatham_chamber", "shop_pittsboro", "chatham_arts",
+            "triangle_on_the_cheap",
+            "triangle_weekender",
+            "abc11_community",
+            "visit_raleigh",
+            "fun4raleighkids",
+            "chapelboro",
+            "explore_pittsboro",
+            "chatham_chamber",
+            "shop_pittsboro",
+            "chatham_arts",
         }
         self.assertEqual(set(registry()), expected)
 
@@ -27,10 +34,12 @@ class RegistryTest(SimpleTestCase):
 
     def test_eligibility_uses_controlled_vocabulary(self):
         for adapter in _TIER1:
-            self.assertTrue(adapter.eligibility.localities <= LOCALITIES,
-                            f"{adapter.key}: bad localities")
-            self.assertTrue(adapter.eligibility.categories <= CATEGORIES,
-                            f"{adapter.key}: bad categories")
+            self.assertTrue(
+                adapter.eligibility.localities <= LOCALITIES, f"{adapter.key}: bad localities"
+            )
+            self.assertTrue(
+                adapter.eligibility.categories <= CATEGORIES, f"{adapter.key}: bad categories"
+            )
             self.assertTrue(adapter.submission_url.startswith("https://"))
 
     def test_mock_only_when_enabled(self):
@@ -41,9 +50,11 @@ class RegistryTest(SimpleTestCase):
 
     def test_no_chrome_channel_anywhere(self):
         import pathlib
+
         root = pathlib.Path(__file__).resolve().parents[1]
         offenders = [
-            str(p) for p in root.rglob("*.py")
+            str(p)
+            for p in root.rglob("*.py")
             if "tests" not in p.parts
             and ('channel="chrome"' in p.read_text() or "channel='chrome'" in p.read_text())
         ]

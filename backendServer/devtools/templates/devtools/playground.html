@@ -15,12 +15,18 @@
   .playground .controls label { font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.25rem; }
   .playground .controls select,
   .playground .controls input[type="url"],
-  .playground .controls input[type="text"] {
+  .playground .controls input[type="text"],
+  .playground .controls textarea {
     width: 100%;
     padding: 0.45rem 0.65rem;
     border: 1px solid #d1d5db;
     border-radius: 4px;
     font-size: 0.9rem;
+  }
+  .playground .controls textarea {
+    min-height: 3.5rem;
+    font-family: inherit;
+    resize: vertical;
   }
   .playground .btn-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; }
   .playground .btn-run {
@@ -49,6 +55,32 @@
   }
   .playground .btn-save:hover { background: #15803d; }
   .playground .btn-save:disabled { background: #86efac; cursor: not-allowed; }
+  .playground .btn-add {
+    display: inline-block;
+    background: #fff;
+    color: #374151;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playground .btn-add:hover { background: #f9fafb; border-color: #9ca3af; }
+  .playground .btn-add:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
+  .playground .btn-publish-only {
+    display: inline-block;
+    background: #7c3aed;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playground .btn-publish-only:hover { background: #6d28d9; }
+  .playground .btn-publish-only:disabled { background: #c4b5fd; cursor: not-allowed; }
 
   /* Warning / info boxes */
   .playground .warning {
@@ -197,11 +229,220 @@
     color: #9ca3af;
     margin: 1.25rem 0 0.4rem;
   }
+
+  /* ── Site Preview panel (newspaper aesthetic) ───────────────
+     Scoped under .preview-* so nothing conflicts with the admin
+     table styles above. Design tokens mirror globals.css.       */
+  .playground .preview-section {
+    background: #faf7f0;
+    border: 1px solid #c8c3b8;
+    border-radius: 6px;
+    padding: 0.75rem 1.1rem;
+    margin-top: 0.75rem;
+    font-family: Georgia, "Times New Roman", Times, serif;
+    color: #1a1a1a;
+  }
+  .playground .preview-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    border-bottom: 1px solid #c8c3b8;
+    padding: 0.85rem 0;
+  }
+  .playground .preview-card:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .playground .preview-card-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .playground .preview-card-town-date {
+    font-size: 0.72rem;
+    font-variant: small-caps;
+    letter-spacing: 0.05em;
+    color: #8b0000;
+    margin-bottom: 0.2rem;
+  }
+  .playground .preview-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #1a1a1a;
+    margin-bottom: 0.25rem;
+  }
+  .playground .preview-card-venue {
+    font-size: 0.82rem;
+    color: #555555;
+    margin-bottom: 0.3rem;
+  }
+  .playground .preview-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+  }
+  .playground .preview-card-tag {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-variant: small-caps;
+    letter-spacing: 0.04em;
+    color: #8b0000;
+    border: 1px solid #c8c3b8;
+    border-radius: 3px;
+    padding: 0.1rem 0.4rem;
+  }
+  .playground .preview-card-price {
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #1a1a1a;
+    text-align: right;
+    white-space: nowrap;
+    align-self: center;
+  }
+  .playground .preview-card { cursor: pointer; }
+  .playground .preview-card:hover { background: rgba(139,0,0,0.03); }
+  .playground .preview-card-desc {
+    font-size: 0.8rem;
+    color: #555;
+    line-height: 1.55;
+    margin: 0.2rem 0 0.25rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .playground .preview-section-hint {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    font-family: sans-serif;
+    text-align: center;
+    margin-top: 0.6rem;
+    font-style: italic;
+  }
+
+  /* ── Preview detail modal (approximates EventDetailContent) ─── */
+  .playground .preview-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(26,26,26,0.55);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+  .playground .preview-modal {
+    background: #faf7f0;
+    border: 1px solid #c8c3b8;
+    border-radius: 6px;
+    max-width: 720px;
+    width: 100%;
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 1.5rem 1.75rem;
+    font-family: Georgia, "Times New Roman", Times, serif;
+    color: #1a1a1a;
+    position: relative;
+  }
+  .playground .preview-modal-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: 1px solid #c8c3b8;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.65rem;
+    cursor: pointer;
+    color: #6b7280;
+    font-family: sans-serif;
+    line-height: 1.4;
+  }
+  .playground .preview-modal-close:hover { background: #f0ece4; }
+  .playground .preview-modal-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0 0 1rem;
+    padding-right: 5rem;
+    border-bottom: 2px solid #c8c3b8;
+    padding-bottom: 0.75rem;
+  }
+  .playground .preview-modal-body {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    margin-top: 0.75rem;
+  }
+  .playground .preview-modal-desc {
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: #1a1a1a;
+  }
+  .playground .preview-modal-desc::first-letter {
+    float: left;
+    font-size: 3.3em;
+    line-height: 0.82;
+    margin-right: 0.08em;
+    margin-top: 0.04em;
+    font-weight: 700;
+  }
+  .playground .preview-modal-no-desc {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    font-style: italic;
+  }
+  .playground .preview-modal-sidebar {
+    font-size: 0.825rem;
+    border-left: 1px solid #c8c3b8;
+    padding-left: 1rem;
+  }
+  .playground .preview-modal-meta { margin-bottom: 0.65rem; }
+  .playground .preview-modal-meta .pm-label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9ca3af;
+    font-weight: 700;
+    font-family: sans-serif;
+    margin-bottom: 0.1rem;
+  }
+  .playground .preview-modal-meta .pm-value { font-weight: 700; line-height: 1.3; }
+  .playground .preview-modal-footer {
+    border-top: 1px solid #c8c3b8;
+    padding-top: 0.75rem;
+    margin-top: 1rem;
+  }
+  .playground .preview-modal-tag-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
+  .playground .preview-modal-caption {
+    font-size: 0.68rem;
+    color: #9ca3af;
+    font-family: sans-serif;
+    margin-top: 0.75rem;
+    font-style: italic;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 0.5rem;
+  }
+  @media (max-width: 600px) {
+    .playground .preview-modal-body { grid-template-columns: 1fr; }
+    .playground .preview-modal-sidebar {
+      border-left: none;
+      border-top: 1px solid #c8c3b8;
+      padding-left: 0;
+      padding-top: 0.75rem;
+    }
+  }
 </style>
 
 {% csrf_token %}
 
 <div class="playground">
+  <p style="margin: 0 0 0.75rem; font-size: 0.875rem;">
+    <a href="/devtools/" style="color: #2563eb;">&larr; Dev Tools</a>
+  </p>
   <h1>Ingestion Playground</h1>
   <p class="description">
     Pick a city, paste an ICS feed URL, and run a <strong>dry-run</strong> to watch the full
@@ -217,6 +458,23 @@
   <!-- Controls -->
   <div class="controls">
     <div>
+      <label for="source_selector">Load existing source <span style="font-weight:400;color:#6b7280;">(populates fields below — or leave on "New source" to start fresh)</span></label>
+      <select id="source_selector">
+        <option value="">— New source —</option>
+        {% for s in sources %}
+          <option value="{{ s.id }}"
+            data-name="{{ s.name|escape }}"
+            data-url="{{ s.url|escape }}"
+            data-source_type="{{ s.source_type }}"
+            data-scraper_key="{{ s.scraper_key }}"
+            data-prompt_suffix="{{ s.prompt_suffix|escape }}"
+          >{{ s.name }} ({{ s.source_type }}{% if not s.active %}, inactive{% endif %})</option>
+        {% empty %}
+          <option disabled>No sources saved yet — use "Save source &amp; publish" or "Add source only" to create one</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
       <label for="city">City</label>
       <select id="city">
         {% for t in towns %}
@@ -227,16 +485,51 @@
       </select>
     </div>
     <div>
-      <label for="ics_url">ICS Feed URL</label>
+      <label for="source_type">Source Type</label>
+      <select id="source_type">
+        <option value="ics">ICS Feed</option>
+        <option value="scraper">Web Scraper</option>
+        <option value="http">HTTP Fetch</option>
+      </select>
+    </div>
+    <div>
+      <label for="ics_url" id="url_label">ICS Feed URL</label>
       <input id="ics_url" type="url" placeholder="https://example.com/events.ics" />
+    </div>
+    <div id="scraper_key_row" style="display:none;">
+      <label for="scraper_key">Scraper <span style="font-weight:400;color:#6b7280;">(each targets one site — picking it fills the URL)</span></label>
+      <select id="scraper_key">
+        {% for s in scrapers %}
+          <option value="{{ s.key }}" data-url="{{ s.url }}" data-name="{{ s.name }}">{{ s.key }}{% if s.url %} — {{ s.url }}{% endif %}</option>
+        {% empty %}
+          <option value="" disabled>No scrapers registered</option>
+        {% endfor %}
+      </select>
     </div>
     <div>
       <label for="source_name">Source Name <span style="font-weight:400;color:#6b7280;">(optional human-readable label)</span></label>
       <input id="source_name" type="text" placeholder="e.g. Chapel Hill Arts Council" />
     </div>
+    <div>
+      <label for="prompt_suffix">Prompt suffix <span style="font-weight:400;color:#6b7280;">(optional — appended to Gemini's standardize + safety prompts)</span></label>
+      <textarea id="prompt_suffix" placeholder="e.g. Treat all events as family-friendly."></textarea>
+    </div>
+    <div>
+      <label for="event_limit">Event limit <span style="font-weight:400;color:#6b7280;">(optional — cap events processed; leave blank for no limit)</span></label>
+      <input id="event_limit" type="number" min="1" step="1" placeholder="e.g. 10" style="width:auto;max-width:140px;" />
+    </div>
+    <div>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-weight:600;cursor:pointer;">
+        <input id="skip_dedup" type="checkbox" style="width:auto;" />
+        Skip deduplication
+        <span style="font-weight:400;color:#6b7280;">(useful when testing — events already in the DB will not be dropped)</span>
+      </label>
+    </div>
     <div class="btn-row">
       <button id="run-btn" class="btn-run">Run (dry-run)</button>
       <button id="save-btn" class="btn-save">Save source &amp; publish</button>
+      <button id="publish-only-btn" class="btn-publish-only">Publish events only</button>
+      <button id="add-source-btn" class="btn-add">Add source only</button>
     </div>
   </div>
 
@@ -260,6 +553,15 @@
 
   <!-- Results -->
   <div id="results-area"></div>
+
+  <!-- Site-fidelity preview modal (populated by JS) -->
+  <div id="preview-modal-overlay" class="preview-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Event detail preview">
+    <div class="preview-modal">
+      <button class="preview-modal-close" id="preview-modal-close">&times; Close</button>
+      <div id="preview-modal-content"></div>
+      <p class="preview-modal-caption">Preview approximation — photo and some formatting may differ from the live site.</p>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -267,11 +569,136 @@
   "use strict";
 
   /* ── DOM refs ─────────────────────────────────────────────── */
-  const cityEl       = document.getElementById("city");
-  const icsUrlEl     = document.getElementById("ics_url");
-  const sourceNameEl = document.getElementById("source_name");
-  const runBtn       = document.getElementById("run-btn");
-  const saveBtn      = document.getElementById("save-btn");
+  const sourceSelectorEl = document.getElementById("source_selector");
+  const cityEl          = document.getElementById("city");
+  const sourceTypeEl    = document.getElementById("source_type");
+  const urlLabelEl      = document.getElementById("url_label");
+  const icsUrlEl        = document.getElementById("ics_url");
+  const scraperKeyRow   = document.getElementById("scraper_key_row");
+  const scraperKeyEl    = document.getElementById("scraper_key");
+  const sourceNameEl    = document.getElementById("source_name");
+  const promptSuffixEl  = document.getElementById("prompt_suffix");
+  const eventLimitEl    = document.getElementById("event_limit");
+  const skipDedupEl     = document.getElementById("skip_dedup");
+  const runBtn          = document.getElementById("run-btn");
+  const saveBtn         = document.getElementById("save-btn");
+  const publishOnlyBtn  = document.getElementById("publish-only-btn");
+  const addSourceBtn    = document.getElementById("add-source-btn");
+
+  /* ── Source-type toggle ───────────────────────────────────── */
+  /* Both "scraper" (browser-rendered) and "http" (plain fetch) run a per-site
+     scraper picked from the registry, so both show the scraper picker. */
+  function usesScraper() {
+    return sourceTypeEl.value === "scraper" || sourceTypeEl.value === "http";
+  }
+
+  /* Each scraper is custom-built for one site, so its URL and English source
+     name live in the registry (the selected option's data-url / data-name) —
+     mirror them into the URL and Source Name fields. */
+  function autofillScraperUrl() {
+    const opt = scraperKeyEl.options[scraperKeyEl.selectedIndex];
+    if (!opt) return;
+    const url = opt.getAttribute("data-url");
+    if (url) icsUrlEl.value = url;
+    const name = opt.getAttribute("data-name");
+    if (name && !sourceNameEl.value.trim()) sourceNameEl.value = name;
+  }
+
+  function updateSourceTypeUI() {
+    const scraper = usesScraper();
+    scraperKeyRow.style.display = scraper ? "" : "none";
+    urlLabelEl.textContent = scraper ? "Page URL" : "ICS Feed URL";
+    icsUrlEl.placeholder = scraper
+      ? "https://example.com/events"
+      : "https://example.com/events.ics";
+    if (scraper) autofillScraperUrl();
+  }
+  sourceTypeEl.addEventListener("change", updateSourceTypeUI);
+  scraperKeyEl.addEventListener("change", autofillScraperUrl);
+
+  /* ── Load existing source into form ──────────────────────── */
+  if (sourceSelectorEl) {
+    sourceSelectorEl.addEventListener("change", function () {
+      const opt = sourceSelectorEl.options[sourceSelectorEl.selectedIndex];
+      if (!opt || !opt.value) return;
+      const st = opt.getAttribute("data-source_type") || "ics";
+      sourceTypeEl.value = st;
+      icsUrlEl.value     = opt.getAttribute("data-url") || "";
+      sourceNameEl.value = opt.getAttribute("data-name") || "";
+      promptSuffixEl.value = opt.getAttribute("data-prompt_suffix") || "";
+      const sk = opt.getAttribute("data-scraper_key") || "";
+      if (sk) scraperKeyEl.value = sk;
+      updateSourceTypeUI();
+      saveForm();
+    });
+  }
+
+  /* ── localStorage persistence ─────────────────────────────── */
+  const LS_FORM    = "pg_form_v1";
+  const LS_RESULT  = "pg_result_v1";
+
+  function saveForm() {
+    try {
+      localStorage.setItem(LS_FORM, JSON.stringify({
+        city:         cityEl.value,
+        source_type:  sourceTypeEl.value,
+        ics_url:      icsUrlEl.value,
+        scraper_key:  scraperKeyEl.value,
+        source_name:  sourceNameEl.value,
+        prompt_suffix: promptSuffixEl.value,
+        event_limit:  eventLimitEl.value,
+        skip_dedup:   skipDedupEl.checked,
+      }));
+    } catch (_) {}
+  }
+
+  function restoreForm() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_FORM) || "null");
+      if (!saved) return;
+      if (saved.city) cityEl.value = saved.city;
+      if (saved.source_type) sourceTypeEl.value = saved.source_type;
+      if (saved.ics_url) icsUrlEl.value = saved.ics_url;
+      if (saved.scraper_key) scraperKeyEl.value = saved.scraper_key;
+      if (saved.source_name) sourceNameEl.value = saved.source_name;
+      if (saved.prompt_suffix) promptSuffixEl.value = saved.prompt_suffix;
+      if (saved.event_limit) eventLimitEl.value = saved.event_limit;
+      if (saved.skip_dedup != null) skipDedupEl.checked = !!saved.skip_dedup;
+    } catch (_) {}
+  }
+
+  function saveResult(data, label, events) {
+    try {
+      localStorage.setItem(LS_RESULT, JSON.stringify({ data, label, events }));
+    } catch (_) {}
+  }
+
+  function restoreResult() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_RESULT) || "null");
+      if (!saved) return;
+      const banner = document.createElement("div");
+      banner.className = "warning";
+      banner.style.marginBottom = "0.5rem";
+      banner.innerHTML =
+        "<strong>Restored from last run.</strong> " +
+        "<a href='#' id='clear-saved-result' style='color:#92400e;'>Clear</a>";
+      resultsArea.appendChild(banner);
+      document.getElementById("clear-saved-result").addEventListener("click", function (e) {
+        e.preventDefault();
+        localStorage.removeItem(LS_RESULT);
+        resultsArea.innerHTML = "";
+      });
+      renderResults(saved.data, saved.label + " (restored)", saved.events, true);
+    } catch (_) {}
+  }
+
+  [cityEl, sourceTypeEl, icsUrlEl, scraperKeyEl, sourceNameEl, promptSuffixEl, eventLimitEl, skipDedupEl]
+    .forEach(function (el) { el.addEventListener("change", saveForm); });
+  promptSuffixEl.addEventListener("input", saveForm);
+
+  restoreForm();
+  updateSourceTypeUI();
 
   const stagesArea   = document.getElementById("stages-area");
   const stagesRow    = document.getElementById("stages-row");
@@ -315,6 +742,7 @@
 
   /* ── Reset UI between runs ────────────────────────────────── */
   function resetStream() {
+    try { localStorage.removeItem(LS_RESULT); } catch (_) {}
     streamDone    = false;
     eventStore    = {};
     eventOrder    = [];
@@ -396,6 +824,7 @@
         e.geminiTown    = r.town;          // captured BEFORE force_town overrides it
         e.location_name = r.location_name;
         e.start_datetime = r.start_datetime;
+        e.description   = r.description;
         e.tags          = r.tags;
         e.price         = r.price;
         e.link          = r.link;
@@ -408,6 +837,7 @@
         if (r.title != null) e.title = r.title;
         e.safety_score = r.safety_score;
         e.safety_notes = r.safety_notes;
+        e.updated_at   = r.updated_at;
         e.scored       = true;            // reached safety stage (i.e. not deduped)
         eventStore[r.id] = e;
       });
@@ -434,6 +864,7 @@
         e.date          = p.date;
         e.source_name   = p.source_name;
         if (p.price != null) e.publishedPrice = p.price;
+        if (p.description != null) e.description = p.description;
       } else {
         extraPublished.push(p);
       }
@@ -456,12 +887,14 @@
         venue:         e.venue || null,
         start_datetime: e.start_datetime,
         date:          e.date || null,
+        description:   e.description || null,
         tags:          e.tags,
         price:         (e.publishedPrice != null ? e.publishedPrice : e.price),
         link:          e.link,
-        source_name:   e.source_name,        // only set once published
+        source_name:   e.source_name,
         safety_score:  e.safety_score,
         safety_notes:  e.safety_notes,
+        updated_at:    e.updated_at || null,
         uuid:          e.uuid,
       };
     });
@@ -469,7 +902,11 @@
       list.push({
         key: "p" + i, title: p.title, status: "published", published: true,
         town: p.town, venue: p.venue, date: p.date, price: p.price,
+        description: p.description || null,
         link: p.link, source_name: p.source_name, uuid: p.uuid,
+        tags: p.tags || [], categories: p.categories || [],
+        is_verified: p.is_verified, created_by: p.created_by || null,
+        photo: p.photo || false,
       });
     });
     return list;
@@ -481,7 +918,11 @@
       return {
         key: "p" + i, title: p.title, status: "published", published: true,
         town: p.town, venue: p.venue, date: p.date, price: p.price,
+        description: p.description || null,
         link: p.link, source_name: p.source_name, uuid: p.uuid,
+        tags: p.tags || [], categories: p.categories || [],
+        is_verified: p.is_verified, created_by: p.created_by || null,
+        photo: p.photo || false,
       };
     });
   }
@@ -495,6 +936,16 @@
     if (isNaN(n)) return escHtml(p);
     if (n < 0)  return "N/A";
     if (n === 0) return "Free";
+    return "$" + n.toFixed(2).replace(/\.00$/, "");
+  }
+
+  /* Preview-only price formatter. 0 → "Free Entry"; <0 or null → null (omit);
+     otherwise "$X.XX". Do NOT change fmtPrice — other explorer code depends on it. */
+  function fmtPreviewPrice(p) {
+    if (p == null || p === "") return null;
+    const n = Number(p);
+    if (isNaN(n) || n < 0) return null;
+    if (n === 0) return "Free Entry";
     return "$" + n.toFixed(2).replace(/\.00$/, "");
   }
 
@@ -541,6 +992,13 @@
     if (ev.start_datetime) kv("Start", escHtml(ev.start_datetime));
     if (ev.date && ev.date !== ev.start_datetime) kv("Published date", escHtml(ev.date));
 
+    if (ev.description) {
+      const desc = ev.description.length > 180
+        ? ev.description.slice(0, 180).trim() + "…"
+        : ev.description;
+      kv("Description", escHtml(desc));
+    }
+
     if (ev.tags && ev.tags.length) {
       kv("Tags", ev.tags.map(function (t) { return "<span class='tag-chip'>" + escHtml(t) + "</span>"; }).join(""));
     }
@@ -553,18 +1011,120 @@
       kv("Safety", s);
     }
 
-    if (ev.published) {
-      const srcEmpty = !ev.source_name || String(ev.source_name).trim() === "";
-      kv("Source name", srcEmpty
-        ? "<span class='src-missing'>⚠ MISSING</span>"
-        : escHtml(ev.source_name));
-    }
+    const srcEmpty = !ev.source_name || String(ev.source_name).trim() === "";
+    kv("Source", srcEmpty
+      ? "<span class='src-missing'>⚠ MISSING</span>"
+      : escHtml(ev.source_name));
 
     kv("Link", linkHtml(ev.link));
+
+    if (ev.categories && ev.categories.length) {
+      kv("Categories", ev.categories.map(function (c) { return "<span class='tag-chip'>" + escHtml(c) + "</span>"; }).join(""));
+    }
+
+    kv("Verified", ev.is_verified
+      ? "<span style='color:#15803d;font-weight:700;'>✓ Yes</span>"
+      : "<span style='color:#9ca3af;'>No</span>");
+
+    kv("Photo", ev.photo
+      ? "<span style='color:#15803d;'>✓ present</span>"
+      : "<span style='color:#9ca3af;'>none</span>");
+
+    if (ev.created_by) kv("Created by", escHtml(ev.created_by));
+
     if (ev.uuid) kv("Event UUID", "<code style='font-size:0.78rem;'>" + escHtml(ev.uuid) + "</code>");
+    if (ev.updated_at) kv("Last updated", escHtml(ev.updated_at.replace("T", " ").slice(0, 19)));
 
     rows.push("<div class='detail-hint'>Click the row again to unpin.</div>");
     card.innerHTML = rows.join("");
+  }
+
+  /* ── Site preview panel ───────────────────────────────────────
+     Hand-built static-HTML approximation of the non-featured variant of
+     EventRow.tsx. Source of truth: theCommonsWeb/src/components/events/EventRow.tsx
+     This panel will drift as the real component evolves — acceptable for a dev preview. */
+  function renderPreview(parent, events) {
+    if (!events || events.length === 0) return;
+
+    const label = document.createElement("div");
+    label.className = "section-label";
+    label.textContent = "Preview (as it would appear on the site)";
+    parent.appendChild(label);
+
+    const section = document.createElement("div");
+    section.className = "preview-section";
+
+    events.forEach(function (ev) {
+      /* Date/time — parse defensively; fall back to raw string if invalid */
+      var datePart = "";
+      var timePart = "";
+      var rawDt = ev.start_datetime || ev.date;
+      if (rawDt) {
+        var d = new Date(rawDt);
+        if (!isNaN(d.getTime())) {
+          datePart = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+          timePart = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        } else {
+          datePart = String(rawDt);
+        }
+      }
+
+      /* Town + date header */
+      var town = ev.town || ev.geminiTown || "";
+      var townDateParts = [];
+      if (town) townDateParts.push(escHtml(town));
+      if (datePart) townDateParts.push(escHtml(datePart));
+      var townDate = townDateParts.join(" &mdash; ");
+
+      /* Venue • time muted line */
+      var venueParts = [];
+      if (ev.venue || ev.location_name) venueParts.push(escHtml(ev.venue || ev.location_name));
+      if (timePart) venueParts.push(escHtml(timePart));
+      var venueStr = venueParts.join(" &bull; ");
+
+      /* Tags */
+      var tagsHtml = "";
+      if (ev.tags && ev.tags.length) {
+        tagsHtml = "<div class='preview-card-tags'>" +
+          ev.tags.map(function (t) {
+            return "<span class='preview-card-tag'>" + escHtml(t) + "</span>";
+          }).join("") +
+          "</div>";
+      }
+
+      /* Price */
+      var priceStr = fmtPreviewPrice(ev.price);
+
+      var card = document.createElement("div");
+      card.className = "preview-card";
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+      card.title = "Click to preview as it appears on the site";
+      card.innerHTML =
+        "<div class='preview-card-body'>" +
+          (townDate ? "<div class='preview-card-town-date'>" + townDate + "</div>" : "") +
+          "<div class='preview-card-title'>" + escHtml(ev.title || "(untitled)") + "</div>" +
+          (venueStr ? "<div class='preview-card-venue'>" + venueStr + "</div>" : "") +
+          (ev.description ? "<div class='preview-card-desc'>" + escHtml(ev.description) + "</div>" : "") +
+          tagsHtml +
+        "</div>" +
+        (priceStr ? "<div class='preview-card-price'>" + escHtml(priceStr) + "</div>" : "");
+
+      /* ev is captured correctly in forEach's block scope */
+      card.addEventListener("click", function () { showPreviewModal(ev); });
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showPreviewModal(ev); }
+      });
+
+      section.appendChild(card);
+    });
+
+    var hint = document.createElement("div");
+    hint.className = "preview-section-hint";
+    hint.textContent = "Click any card to see the full event detail as it appears on the site.";
+    section.appendChild(hint);
+
+    parent.appendChild(section);
   }
 
   /* ── Event explorer (master table + detail card) ──────────── */
@@ -648,10 +1208,11 @@
     renderDetail(card, null);
   }
 
-  function renderResults(data, label, eventList) {
+  function renderResults(data, label, eventList, _skipSave) {
     const isDry  = data.dry_run;
     const counts = data.counts || {};
     const events = eventList || buildEventList();
+    if (!_skipSave) saveResult(data, label || (isDry ? "Dry-run complete" : "Published"), events);
 
     const hdr = document.createElement("div");
     hdr.className = "result success";
@@ -670,6 +1231,7 @@
     resultsArea.appendChild(section);
 
     renderExplorer(resultsArea, events);
+    renderPreview(resultsArea, events);
   }
 
   /* ── Error rendering ──────────────────────────────────────── */
@@ -684,14 +1246,17 @@
       box.appendChild(pre);
     }
     resultsArea.appendChild(box);
-    runBtn.disabled  = false;
-    saveBtn.disabled = false;
+    runBtn.disabled         = false;
+    saveBtn.disabled        = false;
+    publishOnlyBtn.disabled = false;
   }
 
   /* ── SSE / Run button ─────────────────────────────────────── */
   runBtn.addEventListener("click", function () {
     const city       = cityEl.value;
+    const sourceType = sourceTypeEl.value;
     const icsUrl     = icsUrlEl.value.trim();
+    const scraperKey = scraperKeyEl.value.trim();
     const sourceName = sourceNameEl.value.trim();
 
     if (!city) {
@@ -699,19 +1264,26 @@
       return;
     }
     if (!icsUrl) {
-      alert("Please enter an ICS feed URL.");
+      alert((sourceType === "scraper" || sourceType === "http") ? "Please enter a page URL." : "Please enter an ICS feed URL.");
       return;
     }
 
     resetStream();
-    runBtn.disabled  = true;
-    saveBtn.disabled = true;
+    runBtn.disabled         = true;
+    saveBtn.disabled        = true;
+    publishOnlyBtn.disabled = true;
 
+    const limitVal = eventLimitEl.value.trim();
     const params = new URLSearchParams({
-      city:        city,
-      ics_url:     icsUrl,
-      source_name: sourceName,
+      city:          city,
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffixEl.value,
+      source_type:   sourceType,
+      scraper_key:   scraperKey,
+      skip_dedup:    skipDedupEl.checked ? "1" : "0",
     });
+    if (limitVal) params.set("limit", limitVal);
     const url = "/devtools/run?" + params.toString();
 
     const es = new EventSource(url);
@@ -739,9 +1311,19 @@
       es.close();
       const data = JSON.parse(e.data);
       mergePublished(data.published || []);
+      /* Backfill source_name onto every event that mergePublished didn't cover
+         (held/dropped events never appear in published[], so they'd have no source).
+         Prefer the backend-resolved name; fall back to whatever the user typed. */
+      const fallbackSource = data.source_name || sourceNameEl.value.trim();
+      if (fallbackSource) {
+        eventOrder.forEach(function (id) {
+          if (!eventStore[id].source_name) eventStore[id].source_name = fallbackSource;
+        });
+      }
       renderResults(data);
-      runBtn.disabled  = false;
-      saveBtn.disabled = false;
+      runBtn.disabled         = false;
+      saveBtn.disabled        = false;
+      publishOnlyBtn.disabled = false;
     });
 
     es.addEventListener("error", function (e) {
@@ -769,17 +1351,24 @@
   /* ── Save button ──────────────────────────────────────────── */
   saveBtn.addEventListener("click", function () {
     const city       = cityEl.value;
+    const sourceType = sourceTypeEl.value;
     const icsUrl     = icsUrlEl.value.trim();
+    const scraperKey = scraperKeyEl.value.trim();
     const sourceName = sourceNameEl.value.trim();
 
     if (!city || !icsUrl) {
-      alert("Please fill in City and ICS Feed URL before saving.");
+      alert("Please fill in City and " + ((sourceType === "scraper" || sourceType === "http") ? "Page URL" : "ICS Feed URL") + " before saving.");
       return;
     }
 
+    const promptSuffix = promptSuffixEl.value;
+
     const confirmed = window.confirm(
       "This will write to the LIVE database.\n\n" +
-      "City: " + city + "\nICS URL: " + icsUrl + "\nSource name: " + (sourceName || "(empty)") + "\n\n" +
+      "City: " + city + "\nSource type: " + sourceType + "\nURL: " + icsUrl +
+      ((sourceType === "scraper" || sourceType === "http") ? "\nScraper key: " + (scraperKey || "(empty)") : "") +
+      "\nSource name: " + (sourceName || "(empty)") +
+      "\nPrompt suffix: " + (promptSuffix.trim() || "(none)") + "\n\n" +
       "Continue?"
     );
     if (!confirmed) return;
@@ -788,10 +1377,16 @@
     saveBtn.disabled = true;
 
     const body = new URLSearchParams({
-      city:        city,
-      ics_url:     icsUrl,
-      source_name: sourceName,
+      city:          city,
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffix,
+      source_type:   sourceType,
+      scraper_key:   scraperKey,
+      skip_dedup:    skipDedupEl.checked ? "1" : "0",
     });
+    const saveLimitVal = eventLimitEl.value.trim();
+    if (saveLimitVal) body.set("limit", saveLimitVal);
 
     fetch("/devtools/save", {
       method:  "POST",
@@ -822,10 +1417,229 @@
       renderError(err.message || String(err), null);
     })
     .finally(function () {
-      runBtn.disabled  = false;
-      saveBtn.disabled = false;
+      runBtn.disabled         = false;
+      saveBtn.disabled        = false;
+      publishOnlyBtn.disabled = false;
     });
   });
+
+  /* ── Publish events only button ───────────────────────────── */
+  publishOnlyBtn.addEventListener("click", function () {
+    const city       = cityEl.value;
+    const sourceType = sourceTypeEl.value;
+    const icsUrl     = icsUrlEl.value.trim();
+    const scraperKey = scraperKeyEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+
+    if (!city || !icsUrl) {
+      alert("Please fill in City and " + ((sourceType === "scraper" || sourceType === "http") ? "Page URL" : "ICS Feed URL") + " before publishing.");
+      return;
+    }
+
+    const promptSuffix = promptSuffixEl.value;
+
+    const confirmed = window.confirm(
+      "This will publish events to the LIVE database but will NOT register the source for daily crawling.\n\n" +
+      "City: " + city + "\nSource type: " + sourceType + "\nURL: " + icsUrl +
+      ((sourceType === "scraper" || sourceType === "http") ? "\nScraper key: " + (scraperKey || "(empty)") : "") +
+      "\nSource name: " + (sourceName || "(empty)") + "\n\nContinue?"
+    );
+    if (!confirmed) return;
+
+    runBtn.disabled         = true;
+    saveBtn.disabled        = true;
+    publishOnlyBtn.disabled = true;
+
+    const body = new URLSearchParams({
+      city:          city,
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffix,
+      source_type:   sourceType,
+      scraper_key:   scraperKey,
+      skip_dedup:    skipDedupEl.checked ? "1" : "0",
+    });
+    const pubLimitVal = eventLimitEl.value.trim();
+    if (pubLimitVal) body.set("limit", pubLimitVal);
+
+    fetch("/devtools/publish-events-only", {
+      method:  "POST",
+      headers: {
+        "X-CSRFToken":  getCsrf(),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) {
+          throw new Error("Server returned " + resp.status + ": " + t);
+        });
+      }
+      return resp.json();
+    })
+    .then(function (data) {
+      const successBox = document.createElement("div");
+      successBox.className = "result success";
+      successBox.innerHTML =
+        "<strong>Events published.</strong> Source was <em>not</em> registered for daily crawling.";
+      resultsArea.appendChild(successBox);
+
+      renderResults(data, "Publish complete (no source saved)", listFromPublished(data.published));
+    })
+    .catch(function (err) {
+      renderError(err.message || String(err), null);
+    })
+    .finally(function () {
+      runBtn.disabled         = false;
+      saveBtn.disabled        = false;
+      publishOnlyBtn.disabled = false;
+    });
+  });
+
+  /* ── Preview modal — exhaustive field dump matching the Event table ── */
+  function buildPreviewModalHtml(ev) {
+    var rawDt = ev.start_datetime || ev.date;
+    var d = rawDt ? new Date(rawDt) : null;
+    var valid = d && !isNaN(d.getTime());
+    var dateStr = valid
+      ? d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+      : escHtml(rawDt || "—");
+    var timeStr = valid
+      ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+      : "";
+
+    function meta(label, val) {
+      return "<div class='preview-modal-meta'>" +
+        "<div class='pm-label'>" + label + "</div>" +
+        "<div class='pm-value'>" + val + "</div>" +
+        "</div>";
+    }
+    function chip(text, color) {
+      return "<span style='display:inline-block;padding:0.1rem 0.45rem;border-radius:3px;" +
+        "border:1px solid #c8c3b8;font-size:0.7rem;font-variant:small-caps;letter-spacing:0.04em;" +
+        "color:" + (color || "#8b0000") + ";margin:0 0.2rem 0.2rem 0;'>" + escHtml(text) + "</span>";
+    }
+
+    /* ── Main column: description ──────────────────────────────── */
+    var descHtml = ev.description
+      ? "<p class='preview-modal-desc'>" + escHtml(ev.description) + "</p>"
+      : "<p class='preview-modal-no-desc'>No description available from pipeline.</p>";
+
+    /* ── Sidebar: core event-table fields ──────────────────────── */
+    var sidebar = "";
+    var venue = ev.venue || ev.location_name || "";
+    sidebar += meta("Venue",    venue    ? escHtml(venue)   : "<span style='color:#9ca3af;'>—</span>");
+    sidebar += meta("Date",     dateStr  ? dateStr          : "<span style='color:#9ca3af;'>—</span>");
+    if (timeStr) sidebar += meta("Time", escHtml(timeStr));
+    var town = ev.town || ev.geminiTown || "";
+    sidebar += meta("Town",     town     ? escHtml(town)    : "<span style='color:#9ca3af;'>—</span>");
+    var priceDisplay = fmtPreviewPrice(ev.price);
+    sidebar += meta("Admission", priceDisplay ? escHtml(priceDisplay) : "Free");
+    sidebar += meta("Source",
+      ev.source_name
+        ? "<em>" + escHtml(ev.source_name) + "</em>"
+        : "<span style='color:#dc2626;font-weight:600;'>⚠ MISSING</span>");
+
+    /* Tags */
+    var tagList = ev.tags && ev.tags.length ? ev.tags : [];
+    sidebar += meta("Tags",
+      tagList.length
+        ? tagList.map(function (t) { return chip(t); }).join("")
+        : "<span style='color:#9ca3af;'>none</span>");
+
+    /* Link */
+    sidebar += meta("Link",
+      ev.link
+        ? "<a href='" + escHtml(ev.link) + "' target='_blank' rel='noopener' style='color:#8b0000;word-break:break-all;'>" + escHtml(ev.link) + "</a>"
+        : "<span style='color:#9ca3af;'>none</span>");
+
+    return (
+      "<h2 class='preview-modal-title'>" + escHtml(ev.title || "(untitled)") + "</h2>" +
+      "<div class='preview-modal-body'>" +
+        "<div>" + descHtml + "</div>" +
+        "<div class='preview-modal-sidebar'>" + sidebar + "</div>" +
+      "</div>"
+    );
+  }
+
+  function showPreviewModal(ev) {
+    document.getElementById("preview-modal-content").innerHTML = buildPreviewModalHtml(ev);
+    document.getElementById("preview-modal-overlay").style.display = "flex";
+  }
+
+  function hidePreviewModal() {
+    document.getElementById("preview-modal-overlay").style.display = "none";
+  }
+
+  document.getElementById("preview-modal-close").addEventListener("click", hidePreviewModal);
+  document.getElementById("preview-modal-overlay").addEventListener("click", function (e) {
+    if (e.target === this) hidePreviewModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") hidePreviewModal();
+  });
+
+  /* ── Add source button ────────────────────────────────────── */
+  addSourceBtn.addEventListener("click", function () {
+    const sourceType = sourceTypeEl.value;
+    const icsUrl     = icsUrlEl.value.trim();
+    const scraperKey = scraperKeyEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+
+    if (!icsUrl) {
+      alert((sourceType === "scraper" || sourceType === "http") ? "Please enter a page URL." : "Please enter an ICS feed URL.");
+      return;
+    }
+
+    runBtn.disabled       = true;
+    saveBtn.disabled      = true;
+    addSourceBtn.disabled = true;
+
+    const body = new URLSearchParams({
+      ics_url:       icsUrl,
+      source_name:   sourceName,
+      prompt_suffix: promptSuffixEl.value,
+      source_type:   sourceType,
+      scraper_key:   scraperKey,
+    });
+
+    fetch("/devtools/add-source", {
+      method:  "POST",
+      headers: {
+        "X-CSRFToken":  getCsrf(),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) {
+          throw new Error("Server returned " + resp.status + ": " + t);
+        });
+      }
+      return resp.json();
+    })
+    .then(function (data) {
+      const successBox = document.createElement("div");
+      successBox.className = "result success";
+      successBox.innerHTML =
+        "<strong>Source " + (data.created ? "created" : "updated") + ".</strong> " +
+        escHtml(data.name) + " has been registered and will be picked up by the daily cron.";
+      resultsArea.appendChild(successBox);
+    })
+    .catch(function (err) {
+      renderError(err.message || String(err), null);
+    })
+    .finally(function () {
+      runBtn.disabled       = false;
+      saveBtn.disabled      = false;
+      addSourceBtn.disabled = false;
+    });
+  });
+
+  /* ── Restore last result on page load ────────────────────────── */
+  restoreResult();
 }());
 </script>
 {% endblock %}

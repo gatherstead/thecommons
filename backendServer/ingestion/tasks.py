@@ -5,11 +5,16 @@ from datetime import date
 from celery import shared_task
 from django.core.management import call_command
 
-from ingestion.importers.ics_importer import poll_all_ics_sources
-from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.deduplicator import dedup_all_pending
+from ingestion.importers.ics_importer import poll_all_ics_sources
+from ingestion.importers.scraper_importer import poll_all_scraper_sources
 from ingestion.safety_scorer import score_all_unscored
-from ingestion.services import auto_publish_safe_events, publish_all_approved
+from ingestion.services import (
+    auto_publish_safe_events,
+    ingest_direct_submission,
+    publish_all_approved,
+)
+from ingestion.standardizer import standardize_all_unprocessed
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +25,7 @@ def _resolve_env_shard():
     Mirrors the env branch of the ingest_events command's --shard handling:
     n rotates daily as (day_of_year % m) so each day polls a different slice.
     """
-    m_env = os.environ.get('INGEST_SHARD_COUNT')
+    m_env = os.environ.get("INGEST_SHARD_COUNT")
     if not m_env:
         return None
     try:
@@ -55,7 +60,7 @@ def run_ingestion_pipeline(self):
                 first_error = e
             return None
 
-    step("cleanup", lambda: call_command('cleanup_old_events'))
+    step("cleanup", lambda: call_command("cleanup_old_events"))
 
     shard = _resolve_env_shard()
     new_count = step("poll", lambda: poll_all_ics_sources(shard=shard))
@@ -78,7 +83,8 @@ def run_ingestion_pipeline(self):
     if result is not None:
         logger.info(
             "run_ingestion_pipeline: %s auto-published, %s held for review",
-            result['auto_approved'], result['held_for_review'],
+            result["auto_approved"],
+            result["held_for_review"],
         )
 
     if first_error is not None:
@@ -89,6 +95,22 @@ def run_ingestion_pipeline(self):
 
 
 @shared_task
+def scrape_all_sources_task():
+    """Poll scraper-type EventSources (renders headless Chromium). Routed to the
+    dedicated `scrape` queue so browser memory stays off the default worker."""
+    shard = _resolve_env_shard()
+    new_count = poll_all_scraper_sources(shard=shard)
+    logger.info("scrape_all_sources_task: %s new raw events", new_count)
+    return new_count
+
+
+@shared_task
 def publish_all_approved_task():
     """Background wrapper for the bulk publish (called from admin/API)."""
     return publish_all_approved()
+
+
+@shared_task
+def ingest_direct_submission_task(raw_event_id, user_id):
+    """Background wrapper for direct host submission ingestion."""
+    return ingest_direct_submission(raw_event_id, user_id)

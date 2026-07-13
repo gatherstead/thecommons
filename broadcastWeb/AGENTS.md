@@ -17,6 +17,7 @@ src/
 ├── hooks/
 │   └── useExtension.ts            # Detects the Commons Broadcast extension; ping/recheck/sendFill
 ├── lib/
+│   ├── authClient.ts              # better-auth client (createAuthClient at VITE_BETTER_AUTH_URL)
 │   └── persist.ts                 # localStorage round-trip for the whole page (key broadcast:state:v1)
 ├── services/
 │   └── broadcastApi.ts            # fetch wrappers (preview/submit/getJob/retry/submitReal/cancel/...)
@@ -31,7 +32,9 @@ cd broadcastWeb && pnpm install && pnpm dev
 ```
 
 Env vars: see `.env.example`. `VITE_BROADCAST_API_BASE_URL` points at the Django
-API; `VITE_BROADCAST_EXTENSION_ID` enables the manual-review button.
+API; `VITE_BROADCAST_EXTENSION_ID` enables the manual-review button;
+`VITE_BETTER_AUTH_URL` points at the Better Auth origin (`https://auth.thecommons.town`
+in prod, `http://localhost:3000` in dev) — required for the in-SPA login/signup/signout flow.
 
 > pnpm-managed — `npm install` fails on the symlinked store. Use pnpm everywhere.
 

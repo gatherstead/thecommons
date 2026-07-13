@@ -13,6 +13,7 @@ submission_url.
 
 These captures are scratch artifacts (gitignored), not source.
 """
+
 import pathlib
 
 from django.core.management.base import BaseCommand, CommandError
@@ -55,10 +56,14 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("site_key", choices=sorted(SITES), help="which site to capture")
         parser.add_argument("--headed", action="store_true", help="show the browser")
-        parser.add_argument("--wait", type=int, default=0,
-                            help="extra seconds to wait before dumping (lets timed popups appear)")
+        parser.add_argument(
+            "--wait",
+            type=int,
+            default=0,
+            help="extra seconds to wait before dumping (lets timed popups appear)",
+        )
 
-    def handle(self, *args, **options):
+    def handle(self, *args, **options):  # noqa: C901  # command dispatch; complexity is inherent
         key = options["site_key"]
         site = SITES.get(key)
         if site is None:
@@ -112,18 +117,18 @@ class Command(BaseCommand):
                         content = frame.content()
                     except Exception as exc:  # detached / cross-origin restricted
                         content = f"<!-- frame content unavailable: {exc} -->"
-                    sections.append(
-                        f"<!-- ===== frame[{i}] url={frame.url} ===== -->\n{content}"
-                    )
+                    sections.append(f"<!-- ===== frame[{i}] url={frame.url} ===== -->\n{content}")
                 page.screenshot(path=str(png_path), full_page=True)
             finally:
                 browser.close()
 
         html_path.write_text("\n\n".join(sections))
 
-        self.stdout.write(self.style.SUCCESS(
-            f"captured {len(frames)} frame(s) → {html_path}\nscreenshot → {png_path}"
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"captured {len(frames)} frame(s) → {html_path}\nscreenshot → {png_path}"
+            )
+        )
         self.stdout.write(f"final URL: {final_url}")
         if len(frames) > 1:
             self.stdout.write("iframe URLs (a Trumba/embedded form usually lives in one of these):")

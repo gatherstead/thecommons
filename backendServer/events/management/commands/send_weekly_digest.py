@@ -8,7 +8,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         result = fan_out_weekly_digest.delay()
-        self.stdout.write(self.style.SUCCESS(
-            f"Queued weekly digest fan-out (task {result.id}). "
-            "Subtasks will send per-recipient on the worker."
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Queued weekly digest fan-out (task {result.id}). "
+                "Subtasks will send per-recipient on the worker."
+            )
+        )

@@ -7,7 +7,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:fast": "vitest run --project=fast",
     "test:db": "vitest run --project=db",
@@ -29,11 +30,13 @@
       "esbuild",
       "sharp",
       "better-sqlite3",
-      "@prisma/client"
+      "@prisma/client",
+      "unrs-resolver"
     ]
   },
   "devDependencies": {
     "@better-auth/cli": "^1.2.0",
+    "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^9.39.1",
     "@tanstack/react-query-devtools": "^5.101.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -46,6 +49,7 @@
     "autoprefixer": "^10.4.23",
     "drizzle-kit": "^0.31.4",
     "eslint": "^9.39.1",
+    "eslint-config-next": "^16.2.10",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",

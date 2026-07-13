@@ -146,8 +146,11 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     };
 
     const isPlaceholder = pageQuery.isPlaceholderData;
+    // eslint-disable-next-line react-hooks/refs
     const isLoading = pageQuery.isPending || (isPlaceholder && lastChangeRef.current === 'category');
+    // eslint-disable-next-line react-hooks/refs
     const isLoadingWindow = isPlaceholder && lastChangeRef.current === 'window';
+    // eslint-disable-next-line react-hooks/refs
     const isLoadingPage = isPlaceholder && lastChangeRef.current === 'page';
 
     const setWindow = (w: EventWindow) => {

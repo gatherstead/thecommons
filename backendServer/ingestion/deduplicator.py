@@ -11,32 +11,39 @@ TITLE_SIMILARITY_THRESHOLD = 80
 LOCATION_SIMILARITY_THRESHOLD = 75
 TIME_WINDOW_HOURS = 3
 
+# Broadcast-sourced events are submitted to external calendars that are later
+# scraped back in, so the same event can re-enter with reformatted title/location.
+# Use a looser match (more aggressive dedup) and a wider time window for this path.
+BROADCAST_TITLE_SIMILARITY_THRESHOLD = 65
+BROADCAST_LOCATION_SIMILARITY_THRESHOLD = 60
+BROADCAST_TIME_WINDOW_HOURS = 6
 
-def find_duplicate(staged_event: StagedEvent) -> StagedEvent | None:
+
+def find_duplicate(
+    staged_event: StagedEvent,
+    title_threshold: int = TITLE_SIMILARITY_THRESHOLD,
+    location_threshold: int = LOCATION_SIMILARITY_THRESHOLD,
+    time_window_hours: int = TIME_WINDOW_HOURS,
+) -> StagedEvent | None:
     """
     Check if a staged event is a duplicate of another staged or published event.
     Returns the original event if a duplicate is found, None otherwise.
     """
-    time_min = staged_event.start_datetime - timedelta(hours=TIME_WINDOW_HOURS)
-    time_max = staged_event.start_datetime + timedelta(hours=TIME_WINDOW_HOURS)
+    time_min = staged_event.start_datetime - timedelta(hours=time_window_hours)
+    time_max = staged_event.start_datetime + timedelta(hours=time_window_hours)
 
     candidates = StagedEvent.objects.filter(
         start_datetime__range=(time_min, time_max),
-        status__in=['pending', 'approved'],
+        status__in=["pending", "approved"],
     ).exclude(pk=staged_event.pk)
 
     for candidate in candidates:
-        title_score = fuzz.ratio(
-            staged_event.title.lower(),
-            candidate.title.lower()
-        )
+        title_score = fuzz.ratio(staged_event.title.lower(), candidate.title.lower())
         location_score = fuzz.ratio(
-            staged_event.location_name.lower(),
-            candidate.location_name.lower()
+            staged_event.location_name.lower(), candidate.location_name.lower()
         )
 
-        if (title_score >= TITLE_SIMILARITY_THRESHOLD and
-                location_score >= LOCATION_SIMILARITY_THRESHOLD):
+        if title_score >= title_threshold and location_score >= location_threshold:
             logger.info(
                 f"Duplicate found: '{staged_event.title}' matches '{candidate.title}' "
                 f"(title={title_score}, location={location_score})"
@@ -48,7 +55,7 @@ def find_duplicate(staged_event: StagedEvent) -> StagedEvent | None:
 
 def dedup_all_pending(source=None):
     """Check all pending staged events for duplicates."""
-    pending = StagedEvent.objects.filter(status='pending')
+    pending = StagedEvent.objects.filter(status="pending")
     if source:
         pending = pending.filter(raw_event__source=source)
     dupes_found = 0
@@ -56,9 +63,9 @@ def dedup_all_pending(source=None):
     for staged in pending:
         original = find_duplicate(staged)
         if original:
-            staged.status = 'duplicate'
+            staged.status = "duplicate"
             staged.duplicate_of = original
-            staged.save(update_fields=['status', 'duplicate_of'])
+            staged.save(update_fields=["status", "duplicate_of"])
             dupes_found += 1
 
     logger.info(f"Found {dupes_found} duplicates out of {pending.count()} pending events")

@@ -3,6 +3,7 @@
 No global REST_FRAMEWORK config exists in this project; auth/permissions are
 applied per-view (house pattern). Rate limits blunt access-code brute force.
 """
+
 import os
 
 from django.conf import settings
@@ -12,10 +13,16 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
+from broadcast.access import redeem_upgrade_code, resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
-from broadcast.models import BroadcastSubmission
-from broadcast.permissions import HasBroadcastAccessCode
+from broadcast.models import AccessCodeUse, BroadcastSubmission
+from broadcast.permissions import (
+    RequiresBroadcastLogin,
+    RequiresBroadcastTier1,
+    RequiresBroadcastTier2,
+    _draft_id_from,
+)
 from broadcast.routing import eligible_targets
 from broadcast.serializers import CanonicalEventSerializer
 from broadcast.services import (
@@ -30,22 +37,34 @@ from broadcast.services import (
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def preview(request):
     serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
     if not serializer.is_valid():
         return Response({"event": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    if request.broadcast_access.is_trial:
+        draft_id = _draft_id_from(request)
+        if draft_id is None:
+            return Response({"draft_id": "required"}, status=status.HTTP_400_BAD_REQUEST)
+        AccessCodeUse.objects.get_or_create(
+            access_code=request.broadcast_access.code,
+            draft_id=draft_id,
+        )
+
     ev = serializer.to_canonical()
     eligible, excluded = eligible_targets(ev, enabled_adapters())
-    return Response({
-        "eligible": [{"site_key": a.key, "name": a.name} for a in eligible],
-        "excluded": [{"site_key": k, "reason": r} for k, r in excluded],
-    })
+    return Response(
+        {
+            "eligible": [{"site_key": a.key, "name": a.name} for a in eligible],
+            "excluded": [{"site_key": k, "reason": r} for k, r in excluded],
+        }
+    )
 
 
 @ratelimit(key="ip", rate="3/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def submit(request):
     serializer = CanonicalEventSerializer(data=request.data.get("event", {}))
     if not serializer.is_valid():
@@ -53,12 +72,14 @@ def submit(request):
 
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     unknown = [k for k in site_keys if k not in registry()]
     if unknown:
-        return Response({"site_keys": f"unknown sites: {unknown}"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": f"unknown sites: {unknown}"}, status=status.HTTP_400_BAD_REQUEST
+        )
 
     dry_run = request.data.get("dry_run")
     if dry_run is None:
@@ -74,67 +95,71 @@ def submit(request):
 
 
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_detail(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     return Response(job_payload(submission))
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_retry(request, job_id):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     requeued = retry_targets(submission, site_keys)
     return Response({"job_id": str(submission.id), "requeued": requeued})
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_submit_real(request, job_id):
     """Promote dry-run targets to a real submission within an existing job."""
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     site_keys = request.data.get("site_keys") or []
     if not isinstance(site_keys, list) or not site_keys:
-        return Response({"site_keys": "select at least one site"},
-                        status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
     submitted = submit_real_targets(submission, site_keys)
     return Response({"job_id": str(submission.id), "submitted": submitted})
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_cancel(request, job_id):
     """Stop a job — skip pending targets and mark the submission canceled."""
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     skipped = cancel_submission(submission)
-    return Response({
-        "job_id": str(submission.id),
-        "status": submission.status,
-        "skipped": skipped,
-    })
+    return Response(
+        {
+            "job_id": str(submission.id),
+            "status": submission.status,
+            "skipped": skipped,
+        }
+    )
 
 
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_screenshot(request, job_id, site_key):
     """Operator-gated screenshot access — never expose the directory publicly."""
     if get_adapter(site_key) is None:
@@ -142,7 +167,7 @@ def job_screenshot(request, job_id, site_key):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     target = submission.targets.filter(site_key=site_key).first()
     if not target or not target.screenshot_path:
         raise Http404
@@ -155,7 +180,7 @@ def job_screenshot(request, job_id, site_key):
 
 @ratelimit(key="ip", rate="30/m", method="GET", block=True)
 @api_view(["GET"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def job_manual_recipe(request, job_id, site_key):
     """Recipe for a needs_manual target — the manual-review extension fills it.
 
@@ -168,19 +193,20 @@ def job_manual_recipe(request, job_id, site_key):
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
-        raise Http404
+        raise Http404 from None
     target = submission.targets.filter(site_key=site_key).first()
     if not target:
         raise Http404
     if target.status != "needs_manual":
-        return Response({"detail": "target is not awaiting manual review"},
-                        status=status.HTTP_409_CONFLICT)
+        return Response(
+            {"detail": "target is not awaiting manual review"}, status=status.HTTP_409_CONFLICT
+        )
     return Response(manual_recipe(submission, site_key))
 
 
 @ratelimit(key="ip", rate="30/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier1])
 def direct_recipe(request):
     """Return a fill recipe for a site directly from event data — no job required.
 
@@ -201,7 +227,7 @@ def direct_recipe(request):
 
 @ratelimit(key="ip", rate="5/m", method="POST", block=True)
 @api_view(["POST"])
-@permission_classes([HasBroadcastAccessCode])
+@permission_classes([RequiresBroadcastTier2])
 def ai_autofill(request):
     """Extract EventDraft fields from free text via Gemini and return them for human review.
 
@@ -220,6 +246,54 @@ def ai_autofill(request):
         )
 
     return Response({"event": event})
+
+
+@ratelimit(key="ip", rate="30/m", method="GET", block=True)
+@api_view(["GET"])
+def access_info(request):
+    """Return the caller's current access tier and trial metadata.
+
+    No permission class — open to all. Returns 403 only when credentials
+    were supplied but could not be validated (invalid JWT or unknown code).
+    """
+    result = resolve_access(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    code_header = request.headers.get("X-Broadcast-Access-Code", "")
+    credentials_supplied = auth_header.startswith("Bearer ") or bool(code_header)
+
+    if credentials_supplied and result.identity is None:
+        return Response({"detail": "Invalid credentials."}, status=status.HTTP_403_FORBIDDEN)
+
+    return Response(
+        {
+            "tier": result.tier,
+            "is_trial": result.is_trial,
+            "uses_remaining": result.uses_remaining,
+        }
+    )
+
+
+@ratelimit(key="ip", rate="10/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([RequiresBroadcastLogin])
+def redeem(request):
+    """Redeem an UPGRADE access code, permanently setting the caller's tier.
+
+    Requires login (JWT) — TRIAL codes are not accepted here, and this never
+    grants a per-request tier the way the anonymous code path does.
+    """
+    raw_code = request.data.get("access_code") if isinstance(request.data, dict) else None
+    if not raw_code or not isinstance(raw_code, str):
+        return Response({"access_code": "required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    new_tier = redeem_upgrade_code(request.broadcast_email, raw_code)
+    if new_tier is None:
+        return Response(
+            {"detail": "Access code not recognized, expired, or already used up."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response({"tier": new_tier})
 
 
 def mock_form(request):

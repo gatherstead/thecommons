@@ -8,7 +8,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--once", action="store_true",
+            "--once",
+            action="store_true",
             help="Process at most one queued submission, then exit (for tests/dev).",
         )
 

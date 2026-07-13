@@ -12,8 +12,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: lint (ruff + mypy + eslint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: theCommonsWeb/pnpm-lock.yaml
+      - name: Install backend dependencies
+        working-directory: backendServer
+        run: uv sync --frozen
+      - name: Install frontend dependencies
+        working-directory: theCommonsWeb
+        run: pnpm install --frozen-lockfile
+      - name: Backend lint (ruff check + ruff format --check + mypy)
+        working-directory: backendServer
+        # DATABASE_URL is a dummy value: mypy only needs backend.settings.dev to
+        # import cleanly (it reads DATABASE_URL at import time), never to connect.
+        env:
+          DATABASE_URL: postgres://user:pass@localhost:5432/dummy
+        run: uv run ruff check . && uv run ruff format --check . && uv run mypy .
+      - name: Frontend lint (eslint)
+        working-directory: theCommonsWeb
+        run: pnpm lint
+
   backend:
     name: backend (django)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -53,6 +91,7 @@ jobs:
 
   frontend-commons:
     name: frontend (theCommonsWeb)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -94,6 +133,7 @@ jobs:
 
   frontend-broadcast:
     name: frontend (broadcastWeb)
+    needs: lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -186,7 +226,41 @@ jobs:
 
             cd backendServer
             /snap/bin/uv sync
-            /snap/bin/uv run python manage.py migrate --noinput
+
+            # Guarded migrate: `migrate --check` exits non-zero when unapplied
+            # migrations exist and applies nothing (Django 6: "Exits with a
+            # non-zero status if unapplied migrations exist and does not
+            # actually apply migrations"). So prod only writes schema when
+            # there is real work — and never without a fresh pre-migrate dump.
+            if /snap/bin/uv run python manage.py migrate --check; then
+              echo "No unapplied migrations — skipping migrate."
+            else
+              echo "Unapplied migrations detected — plan tail:"
+              /snap/bin/uv run python manage.py showmigrations --plan | tail -20
+              # A silent skip here would defeat the guard: no pg_dump = no
+              # backup = hard failure, never a warning.
+              if ! command -v pg_dump >/dev/null 2>&1; then
+                echo "::error::pg_dump not found on the VM — run: sudo apt install postgresql-client. Refusing to migrate without a pre-migrate backup."
+                exit 1
+              fi
+              mkdir -p /home/ubuntu/backups
+              # Subshell so backendServer/.env (DATABASE_URL etc.) never leaks
+              # into the rest of this script's env or the log (set -x stays
+              # off). The app's DATABASE_URL already carries Neon's sslmode,
+              # so pg_dump consumes it as-is. pipefail: a failed pg_dump must
+              # not leave a truncated-but-"green" gzip behind. This dump is
+              # belt-and-suspenders — Neon PITR/branching is the real restore
+              # mechanism (see DEPLOY.md).
+              (
+                set -o pipefail
+                set -a; . ./.env; set +a
+                pg_dump "$DATABASE_URL" | gzip > "/home/ubuntu/backups/pre-migrate-$(date +%Y%m%d-%H%M%S).sql.gz"
+              )
+              # Keep only the 5 newest dumps.
+              ls -1t /home/ubuntu/backups/pre-migrate-*.sql.gz | tail -n +6 | xargs -r rm -f --
+              /snap/bin/uv run python manage.py migrate --noinput
+            fi
+
             /snap/bin/uv run python manage.py collectstatic --noinput
 
             cd ../theCommonsWeb
@@ -206,8 +280,8 @@ jobs:
               exit 1
             fi
 
-            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker
-            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker
+            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
+            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
       - name: Post-deploy smoke test
         uses: appleboy/ssh-action@v1
         with:
@@ -246,5 +320,57 @@ jobs:
             fi
             if [ "$code" != "403" ]; then
               echo "::error::unexpected status $code from direct-recipe smoke test (expected 403)"
+              exit 1
+            fi
+
+            # ---- Auth-bridge smoke ----
+            # A broken auth stack used to deploy green because only public
+            # routes were checked. GET /auth/me is IsAuthenticated behind
+            # BearerTokenAuthentication (backend/permissions.py): it must
+            # reject cleanly. 401/403 = the stack is alive and saying no;
+            # 500 = the auth path itself crashed (JWKS fetch / neon_auth
+            # mirror lookup) — exactly the signal this probe exists to catch.
+            check_auth() { # check_auth <label> <code>
+              case "$2" in
+                401|403) ;;
+                500)
+                  echo "::error::auth smoke ($1): got 500 — auth middleware crashed"
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::auth smoke ($1): got $2, expected 401 or 403"
+                  exit 1
+                  ;;
+              esac
+            }
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://api.thecommons.town/auth/me)
+            check_auth "no Authorization header" "$code"
+            # Syntactically valid JWT (RS256 header, JSON payload, base64url
+            # garbage signature, unknown kid) — walks the full verify path:
+            # header parse -> JWKS fetch from Next.js -> kid lookup fails ->
+            # AuthenticationFailed. Static and secret-free by construction.
+            garbage_jwt='eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InNtb2tlLXRlc3QifQ.eyJzdWIiOiJzbW9rZS10ZXN0LXVzZXIiLCJpYXQiOjB9.aW52YWxpZC1zaWduYXR1cmUtZm9yLXNtb2tlLXRlc3Q'
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $garbage_jwt" https://api.thecommons.town/auth/me)
+            check_auth "garbage-signature bearer JWT" "$code"
+
+            # Acceptance tier (API-key arm of the bridge): POST /events/create
+            # is gated by HasCommonsAPIKeyOrUser. With the real
+            # THE_COMMONS_API_KEY and an empty JSON body, permission must pass
+            # (a bad key would 403) and the view then 400s on missing fields
+            # BEFORE creating anything — a positive valid-credential check
+            # with zero writes. The key is sourced from the backend's own
+            # .env inside the $() subshell so it never reaches this step's
+            # environment or the log. (A valid-JWT check is deliberately NOT
+            # done: minting one needs Better Auth's private JWKS key and a
+            # neon_auth.user row, and neon_auth is an externally-owned
+            # read-only mirror — see ARCHITECTURE.md §Authentication.)
+            code=$(
+              set -a; . /home/ubuntu/thecommons/backendServer/.env; set +a
+              curl -s -o /dev/null -w '%{http_code}' -X POST https://api.thecommons.town/events/create \
+                -H "Authorization: Bearer $THE_COMMONS_API_KEY" \
+                -H 'Content-Type: application/json' -d '{}'
+            )
+            if [ "$code" != "400" ]; then
+              echo "::error::auth smoke (valid API key): /events/create returned $code, expected 400 (auth accepted, body rejected)"
               exit 1
             fi

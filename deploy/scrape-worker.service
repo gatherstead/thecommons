@@ -1,0 +1,31 @@
+# Ingestion scrape worker — copy to /etc/systemd/system/scrape-worker.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now scrape-worker
+#
+# Drains the dedicated `scrape` queue (ingestion.tasks.scrape_all_sources_task,
+# routed via CELERY_TASK_ROUTES in backend/settings/base.py). That task renders
+# headless Chromium and is memory-heavy, so it gets its own worker — this keeps
+# browser memory off the default `celery` worker entirely.
+
+[Unit]
+Description=The Commons scrape worker (Playwright ingestion scraper)
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thecommons/backendServer
+EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
+# Chromium is installed via `uv run playwright install chromium` as the ubuntu
+# user into ~/.cache/ms-playwright/ — shared with broadcast-worker, so no extra
+# download if it's already installed. NEVER a branded "chrome" channel —
+# unsupported on arm64.
+ExecStart=/snap/bin/uv run celery -A backend worker -Q scrape -c 1 -l info
+Restart=on-failure
+RestartSec=5
+# Headless Chromium is memory-heavy on the 6 GB VM — cap the worker so a leak
+# can't take down gunicorn/nextjs/celery.
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

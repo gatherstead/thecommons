@@ -2,13 +2,13 @@
 
 Self-contained module: no imports from events/ or ingestion/ (isolation contract).
 """
+
 import json
 import logging
 import time
 
-from google import genai
-
 from django.conf import settings
+from google import genai
 
 from broadcast.routing import CATEGORIES, LOCALITIES
 
@@ -152,10 +152,13 @@ def extract_event_fields(text: str) -> dict:
                 break
             except Exception as exc:
                 if "503" in str(exc) or "UNAVAILABLE" in str(exc):
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     logger.warning(
                         "[autofill][%s] 503 on attempt %d/%d, retrying in %ds…",
-                        model, attempt + 1, _MAX_RETRIES, wait,
+                        model,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        wait,
                     )
                     time.sleep(wait)
                 else:
@@ -168,6 +171,7 @@ def extract_event_fields(text: str) -> dict:
     if response is None:
         raise RuntimeError("AI autofill: all models/retries exhausted")
 
+    assert response.text is not None, "Gemini returned a response with no text"
     raw_text = response.text.strip()
     clean = _strip_fences(raw_text)
 

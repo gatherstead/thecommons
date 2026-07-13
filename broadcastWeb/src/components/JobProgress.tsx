@@ -1,12 +1,12 @@
 import { useState } from "react";
 
 import type { JobDetail, JobTarget } from "../models/broadcastModels";
-import { getManualRecipe, openScreenshot } from "../services/broadcastApi";
+import { type ApiAuth, getManualRecipe, openScreenshot } from "../services/broadcastApi";
 import { sendFill, useExtension, WEB_STORE_URL } from "../hooks/useExtension";
 
 interface Props {
   job: JobDetail;
-  accessCode: string;
+  auth: ApiAuth;
   onRetry: (siteKeys: string[]) => void;
   onSubmitReal: (siteKeys: string[]) => void;
   retrying: boolean;
@@ -34,7 +34,7 @@ const DISPLAY_LABELS: Record<DisplayStatus, string> = {
   skipped: "Skipped",
 };
 
-export default function JobProgress({ job, accessCode, onRetry, onSubmitReal, retrying }: Props) {
+export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying }: Props) {
   const { installed, extensionId, recheck } = useExtension();
   // Targets the user has acted on locally. Pure client state so the badge flips
   // immediately; the poller confirms (or a real failure overrides to "error").
@@ -71,7 +71,7 @@ export default function JobProgress({ job, accessCode, onRetry, onSubmitReal, re
     view.every((v) => v.status === "submitted" || v.status === "skipped");
 
   const openShot = (path: string) => {
-    openScreenshot(accessCode, path).catch(() => {
+    openScreenshot(auth, path).catch(() => {
       /* surfaced in console by the service */
     });
   };
@@ -91,7 +91,7 @@ export default function JobProgress({ job, accessCode, onRetry, onSubmitReal, re
     setWorking(siteKey);
     setManualError("");
     try {
-      const recipe = await getManualRecipe(accessCode, job.job_id, siteKey);
+      const recipe = await getManualRecipe(auth, job.job_id, siteKey);
       const ok = await sendFill(extensionId, recipe);
       if (!ok) {
         setManualError("Couldn't reach the extension. Is it installed and enabled?");

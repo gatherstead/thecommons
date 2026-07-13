@@ -27,7 +27,7 @@ const renderProgress = (j: JobDetail, props: Partial<React.ComponentProps<typeof
   render(
     <JobProgress
       job={j}
-      accessCode="CODE"
+      auth={{ accessCode: "CODE" }}
       onRetry={vi.fn()}
       onSubmitReal={vi.fn()}
       retrying={false}
@@ -96,7 +96,7 @@ describe("retry affordance", () => {
     rerender(
       <JobProgress
         job={job({ status: "failed", targets: [target({ site_key: "fail", status: "failed" })] })}
-        accessCode="CODE"
+        auth={{ accessCode: "CODE" }}
         onRetry={vi.fn()}
         onSubmitReal={vi.fn()}
         retrying={false}

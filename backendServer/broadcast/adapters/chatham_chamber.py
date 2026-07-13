@@ -35,6 +35,7 @@ Capture notes / honesty (all confirmed in the live capture):
   (reCAPTCHA → always needs_manual), so it only documents intent for the
   manual-review extension.
 """
+
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import Eligibility
@@ -80,17 +81,28 @@ def _location(ev) -> str:
 
 
 _RECIPE_FIELDS = [
-    RecipeField("input[name='eventTitle']", "text", lambda ev: ev.title, required=True,
-                label="Event title"),
-    RecipeField("input[name='eventStartDate']", "date", lambda ev: _iso_date(ev.start_datetime),
-                required=True, label="Start date"),
+    RecipeField(
+        "input[name='eventTitle']", "text", lambda ev: ev.title, required=True, label="Event title"
+    ),
+    RecipeField(
+        "input[name='eventStartDate']",
+        "date",
+        lambda ev: _iso_date(ev.start_datetime),
+        required=True,
+        label="Start date",
+    ),
     RecipeField("#eventDescription", "froala", lambda ev: ev.description, label="Description"),
     RecipeField("#locationDescription", "froala", _location, label="Location"),
     RecipeField("#hoursDescription", "froala", _hours, label="Date and Time Description"),
     RecipeField("#pricingDescription", "froala", _price, label="Fees / Admission"),
     RecipeField("#contactDescription", "textarea", _contact, label="Contact details"),
-    RecipeField("input[name='eventContactEmailAddress']", "text", lambda ev: ev.contact_email,
-                required=True, label="Contact email"),
+    RecipeField(
+        "input[name='eventContactEmailAddress']",
+        "text",
+        lambda ev: ev.contact_email,
+        required=True,
+        label="Contact email",
+    ),
 ]
 
 
@@ -121,20 +133,42 @@ class ChathamChamberAdapter(SiteAdapter):
         get the checkbox and skip the time fields."""
         specs = list(_RECIPE_FIELDS)
         end = ev.end_datetime or ev.start_datetime
-        specs.append(RecipeField(
-            "input[ng-model='vm.model.EndDateTime'][type='date']", "date",
-            lambda ev, e=end: _iso_date(e), required=True, label="End date"))
+        specs.append(
+            RecipeField(
+                "input[ng-model='vm.model.EndDateTime'][type='date']",
+                "date",
+                lambda ev, e=end: _iso_date(e),
+                required=True,
+                label="End date",
+            )
+        )
         if ev.all_day:
-            specs.append(RecipeField("input[name='eventIsAllDay']", "checkbox",
-                                     lambda ev: "true", recipe_only=True,
-                                     label="All-day event"))
+            specs.append(
+                RecipeField(
+                    "input[name='eventIsAllDay']",
+                    "checkbox",
+                    lambda ev: "true",
+                    recipe_only=True,
+                    label="All-day event",
+                )
+            )
         else:
-            specs.append(RecipeField(
-                "input[ng-model='vm.model.StartDateTime'][type='time']", "time",
-                lambda ev: _iso_time(ev.start_datetime), label="Start time"))
-            specs.append(RecipeField(
-                "input[ng-model='vm.model.EndDateTime'][type='time']", "time",
-                lambda ev, e=end: _iso_time(e), label="End time"))
+            specs.append(
+                RecipeField(
+                    "input[ng-model='vm.model.StartDateTime'][type='time']",
+                    "time",
+                    lambda ev: _iso_time(ev.start_datetime),
+                    label="Start time",
+                )
+            )
+            specs.append(
+                RecipeField(
+                    "input[ng-model='vm.model.EndDateTime'][type='time']",
+                    "time",
+                    lambda ev, e=end: _iso_time(e),
+                    label="End time",
+                )
+            )
         return specs
 
     def fill_and_submit(self, page, ev, ctx):
@@ -142,25 +176,33 @@ class ChathamChamberAdapter(SiteAdapter):
             page.goto(self.submission_url, timeout=ctx.timeout_ms)
             page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         except Exception as exc:
-            return TargetResult(status="needs_manual",
-                                error=f"could not load chamber submit form: {exc}")
+            return TargetResult(
+                status="needs_manual", error=f"could not load chamber submit form: {exc}"
+            )
         h.dismiss_consent(page)
 
         if _has_login_wall(page):
-            return TargetResult(status="needs_manual", error="member login wall present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="member login wall present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         missing = h.apply_specs(page, self.recipe_field_specs(ev), ev, ctx.timeout_ms)
         if missing:
-            return TargetResult(status="needs_manual",
-                                error="required fields unfilled: " + "; ".join(missing),
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="required fields unfilled: " + "; ".join(missing),
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         shot = h.take_screenshot(page, ctx, self.key, "before-submit")
         # reCAPTCHA is structural on this form, so there is no automated submit
         # to suppress — dry run and real run alike defer to a human via manual
         # review. Always needs_manual (never "succeeded").
         note = "[DRY RUN] " if ctx.dry_run else ""
-        return TargetResult(status="needs_manual",
-                            error=note + "reCAPTCHA present; submit manually",
-                            screenshot_path=shot)
+        return TargetResult(
+            status="needs_manual",
+            error=note + "reCAPTCHA present; submit manually",
+            screenshot_path=shot,
+        )

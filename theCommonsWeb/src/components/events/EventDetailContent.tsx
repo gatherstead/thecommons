@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { FILTER_TAGS } from '../../constants/tags';
 import { Badge } from '../ui/Badge';
 import { Link } from '../ui/Link';
@@ -38,11 +39,16 @@ export function EventDetailContent({ event, towns = [] }: EventDetailContentProp
     return (
         <>
             {event.photo && (
-                <img
-                    src={event.photo}
-                    alt={event.title}
-                    className="w-full max-h-56 object-cover mb-4 border border-[var(--color-border-light)]"
-                />
+                <div className="relative w-full mb-4 border border-[var(--color-border-light)] overflow-hidden" style={{ height: '224px' }}>
+                    <Image
+                        src={event.photo}
+                        alt={event.title}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 768px) 100vw, 720px"
+                        priority={false}
+                    />
+                </div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">

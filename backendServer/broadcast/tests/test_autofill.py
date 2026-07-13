@@ -1,21 +1,21 @@
 """Tests for AI autofill endpoint and extract_event_fields helper.
 
-Uses SimpleTestCase + @tag("fast") — no database required.
+Fast tier: StripFencesTest, CoerceTest, ExtractEventFieldsTest (no DB).
+DB tier: AutofillViewTest (permission layer requires DB for access resolution).
 All Gemini network calls are mocked.
 """
+
 import json
-import os
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase, override_settings
-from django.test import tag
+from django.test import SimpleTestCase, TestCase, override_settings, tag
 from rest_framework.test import APIClient
 
+from broadcast.access import hash_code
 from broadcast.autofill import _coerce, _strip_fences, extract_event_fields
-
-CODES = {"BROADCAST_ACCESS_CODES": "testop:TESTCODE"}
+from broadcast.models import AccessCode, BroadcastAccess
 
 _GOOD_RESPONSE = {
     "title": "Jazz Night at The Plant",
@@ -48,21 +48,25 @@ def _make_genai_response_text(text: str):
     return SimpleNamespace(text=text)
 
 
+def _patch_jwt(email):
+    return mock.patch("broadcast.access.verify_better_auth_jwt", return_value={"email": email})
+
+
 @tag("fast")
 class StripFencesTest(SimpleTestCase):
     def test_no_fences(self):
         self.assertEqual(_strip_fences('{"a": 1}'), '{"a": 1}')
 
     def test_json_fences(self):
-        raw = "```json\n{\"a\": 1}\n```"
+        raw = '```json\n{"a": 1}\n```'
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
     def test_plain_fences(self):
-        raw = "```\n{\"a\": 1}\n```"
+        raw = '```\n{"a": 1}\n```'
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
     def test_leading_trailing_whitespace(self):
-        raw = "  ```json\n{\"a\": 1}\n```  "
+        raw = '  ```json\n{"a": 1}\n```  '
         self.assertEqual(_strip_fences(raw), '{"a": 1}')
 
 
@@ -71,10 +75,25 @@ class CoerceTest(SimpleTestCase):
     def test_all_keys_present_with_defaults_on_empty(self):
         result = _coerce({})
         for key in (
-            "title", "description", "start_datetime", "end_datetime", "all_day",
-            "venue_name", "address_line1", "state", "zip", "locality", "categories",
-            "event_url", "ticket_url", "price", "is_free", "image_url",
-            "organizer_name", "contact_email", "contact_phone",
+            "title",
+            "description",
+            "start_datetime",
+            "end_datetime",
+            "all_day",
+            "venue_name",
+            "address_line1",
+            "state",
+            "zip",
+            "locality",
+            "categories",
+            "event_url",
+            "ticket_url",
+            "price",
+            "is_free",
+            "image_url",
+            "organizer_name",
+            "contact_email",
+            "contact_phone",
         ):
             self.assertIn(key, result)
 
@@ -164,10 +183,25 @@ class ExtractEventFieldsTest(SimpleTestCase):
         with patch("broadcast.autofill.genai.Client", return_value=client_inst):
             result = extract_event_fields("some event text")
         for key in (
-            "title", "description", "start_datetime", "end_datetime", "all_day",
-            "venue_name", "address_line1", "state", "zip", "locality", "categories",
-            "event_url", "ticket_url", "price", "is_free", "image_url",
-            "organizer_name", "contact_email", "contact_phone",
+            "title",
+            "description",
+            "start_datetime",
+            "end_datetime",
+            "all_day",
+            "venue_name",
+            "address_line1",
+            "state",
+            "zip",
+            "locality",
+            "categories",
+            "event_url",
+            "ticket_url",
+            "price",
+            "is_free",
+            "image_url",
+            "organizer_name",
+            "contact_email",
+            "contact_phone",
         ):
             self.assertIn(key, result, f"missing key: {key}")
 
@@ -189,68 +223,85 @@ class ExtractEventFieldsTest(SimpleTestCase):
                 extract_event_fields("some event text")
 
 
-@tag("fast")
+@tag("db")
 @override_settings(RATELIMIT_ENABLE=False)
-class AutofillViewTest(SimpleTestCase):
+class AutofillViewTest(TestCase):
+    """View-level tests for ai_autofill — require DB for permission resolution.
+
+    ai_autofill is tier-2 gated. JWT path uses a BroadcastAccess row + mocked
+    JWT verification. Code path uses an AccessCode row.
+    """
+
     def setUp(self):
         self.client = APIClient()
+        BroadcastAccess.objects.create(email="tier2@example.com", tier=2)
+        BroadcastAccess.objects.create(email="tier1@example.com", tier=1)
 
-    def _post(self, body, code="TESTCODE"):
-        with mock.patch.dict(os.environ, CODES):
+    def _post_jwt(self, body, email="tier2@example.com"):
+        with _patch_jwt(email):
             return self.client.post(
                 "/broadcast/ai-autofill",
                 body,
                 format="json",
-            )
-
-    def _post_with_code_in_body(self, text, code="TESTCODE"):
-        with mock.patch.dict(os.environ, CODES):
-            return self.client.post(
-                "/broadcast/ai-autofill",
-                {"access_code": code, "text": text},
-                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
             )
 
     def test_blank_text_returns_400(self):
-        resp = self._post_with_code_in_body("")
+        resp = self._post_jwt({"text": ""})
         self.assertEqual(resp.status_code, 400)
         self.assertIn("text", resp.json())
 
     def test_whitespace_only_text_returns_400(self):
-        resp = self._post_with_code_in_body("   \n\t  ")
+        resp = self._post_jwt({"text": "   \n\t  "})
         self.assertEqual(resp.status_code, 400)
 
     def test_missing_text_key_returns_400(self):
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post(
-                "/broadcast/ai-autofill",
-                {"access_code": "TESTCODE"},
-                format="json",
-            )
+        resp = self._post_jwt({})
         self.assertEqual(resp.status_code, 400)
 
-    def test_bad_access_code_returns_403(self):
-        with mock.patch.dict(os.environ, CODES):
-            resp = self.client.post(
-                "/broadcast/ai-autofill",
-                {"access_code": "WRONGCODE", "text": "some event"},
-                format="json",
-            )
+    def test_no_credentials_returns_403(self):
+        resp = self.client.post(
+            "/broadcast/ai-autofill",
+            {"text": "some event"},
+            format="json",
+        )
         self.assertEqual(resp.status_code, 403)
 
-    def test_missing_access_code_returns_403(self):
-        with mock.patch.dict(os.environ, CODES):
+    def test_tier1_jwt_denied_on_ai_autofill(self):
+        resp = self._post_jwt({"text": "some event"}, email="tier1@example.com")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_tier2_jwt_allowed_on_ai_autofill(self):
+        with patch("broadcast.views.extract_event_fields", return_value=dict(_GOOD_RESPONSE)):
+            resp = self._post_jwt({"text": "Jazz night this Saturday at The Plant"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("event", resp.json())
+
+    def test_tier2_access_code_allowed_on_ai_autofill(self):
+        AccessCode.objects.create(
+            code_hash=hash_code("TIER2CODE"),
+            label="testop",
+            tier=2,
+            max_uses=None,
+        )
+        with patch("broadcast.views.extract_event_fields", return_value=dict(_GOOD_RESPONSE)):
             resp = self.client.post(
                 "/broadcast/ai-autofill",
-                {"text": "some event"},
+                {"access_code": "TIER2CODE", "text": "Jazz night at The Plant"},
                 format="json",
             )
-        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("event", resp.json())
+
+    # No "tier1 access code denied" case anymore — trial (anonymous) AccessCode
+    # rows are always tier 2 (AccessCode.save() forces it). A below-tier-2
+    # anonymous code can't be constructed; see test_tier1_jwt_denied_on_ai_autofill
+    # for the equivalent denial via a permanent tier-1 BroadcastAccess grant.
 
     @override_settings(GEMINI_API_KEY="test")
     def test_happy_path_returns_event_dict(self):
         with patch("broadcast.views.extract_event_fields", return_value=dict(_GOOD_RESPONSE)):
-            resp = self._post_with_code_in_body("Jazz night this Saturday at The Plant")
+            resp = self._post_jwt({"text": "Jazz night this Saturday at The Plant"})
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertIn("event", body)
@@ -259,17 +310,22 @@ class AutofillViewTest(SimpleTestCase):
     @override_settings(GEMINI_API_KEY="test")
     def test_llm_failure_returns_502(self):
         with patch("broadcast.views.extract_event_fields", side_effect=RuntimeError("llm down")):
-            resp = self._post_with_code_in_body("Jazz night at The Plant")
+            resp = self._post_jwt({"text": "Jazz night at The Plant"})
         self.assertEqual(resp.status_code, 502)
         self.assertIn("error", resp.json())
 
     def test_access_code_via_header(self):
-        with mock.patch.dict(os.environ, CODES):
-            with patch("broadcast.views.extract_event_fields", return_value=dict(_GOOD_RESPONSE)):
-                resp = self.client.post(
-                    "/broadcast/ai-autofill",
-                    {"text": "Jazz night this Saturday"},
-                    format="json",
-                    HTTP_X_BROADCAST_ACCESS_CODE="TESTCODE",
-                )
+        AccessCode.objects.create(
+            code_hash=hash_code("HEADERCODE"),
+            label="testop",
+            tier=2,
+            max_uses=None,
+        )
+        with patch("broadcast.views.extract_event_fields", return_value=dict(_GOOD_RESPONSE)):
+            resp = self.client.post(
+                "/broadcast/ai-autofill",
+                {"text": "Jazz night this Saturday"},
+                format="json",
+                HTTP_X_BROADCAST_ACCESS_CODE="HEADERCODE",
+            )
         self.assertEqual(resp.status_code, 200)

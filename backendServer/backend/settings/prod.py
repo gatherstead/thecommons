@@ -1,6 +1,7 @@
 import os
-from urllib.parse import urlparse, parse_qsl
-from .base import *
+from urllib.parse import parse_qsl, urlparse
+
+from .base import *  # noqa: F403  # Django settings override files use star imports by convention
 
 DEBUG = False
 
@@ -16,13 +17,13 @@ ALLOWED_HOSTS = os.environ["DJANGO_ALLOWED_HOSTS"].split(",")
 
 _db = urlparse(os.environ["DATABASE_URL"])
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': _db.path.replace('/', ''),
-        'USER': _db.username,
-        'PASSWORD': _db.password,
-        'HOST': _db.hostname,
-        'PORT': 5432,
-        'OPTIONS': dict(parse_qsl(_db.query)),
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _db.path.replace("/", ""),
+        "USER": _db.username,
+        "PASSWORD": _db.password,
+        "HOST": _db.hostname,
+        "PORT": 5432,
+        "OPTIONS": dict(parse_qsl(_db.query)),
     }
 }

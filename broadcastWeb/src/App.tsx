@@ -1,22 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 
+import AuthModal from "./components/AuthModal";
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
+import { authClient, fetchJwt } from "./lib/authClient";
 import {
+  type ApiAuth,
+  ApiError,
   aiAutofill,
   cancelJob,
   directRecipe,
+  directSubmit,
+  getAccess,
   getJob,
   previewBroadcast,
+  redeemAccessCode,
   retryJob,
   submitReal,
 } from "./services/broadcastApi";
 
 const DEV_FIXTURE: EventDraft = {
+  draft_id: "",
   title: "Bull City BOOs Fest",
   description:
     "Join The MAKRS Society for our 5th annual Halloween Festival at Durham Central Park!\n\nCostumes Encouraged!!\n\nCool People. Cool Stuff.\n\n🍕 THE FOOD: 10-15 food trucks, breweries, cideries, wine, desserts and more!\n\n🔥 THE PERFORMANCES: Contortionist, magician, aerialist, fire performers and more!\n\n🎧 THE MUSIC: Live DJ keeping the party alive all night!\n\n🔮 THE EXPERIENCE: Lasers, fog, stilt walkers, tarot card readers, costume contests, selfie wall and more!\n\nVendor Applications: https://www.eventeny.com/events/vendor/?id=46443\nFood Truck Applications: https://www.eventeny.com/events/vendor/?id=46444\nEvent Website: https://makrs.com/bull-city-boos-fest",
@@ -40,6 +48,7 @@ const DEV_FIXTURE: EventDraft = {
 };
 
 const EMPTY_DRAFT: EventDraft = {
+  draft_id: "",
   title: "",
   description: "",
   start_datetime: "",
@@ -137,10 +146,30 @@ const restoreFillStatus = (
 };
 
 export default function App() {
+  const session = authClient.useSession();
+  const [jwt, setJwt] = useState<string | null>(null);
+  const [tier, setTier] = useState<0 | 1 | 2>(0);
+  const [isTrial, setIsTrial] = useState(false);
+  const [usesRemaining, setUsesRemaining] = useState<number | null>(null);
+
   const [accessCode, setAccessCode] = useState(SESSION.accessCode ?? "");
-  const [verified, setVerified] = useState(SESSION.verified ?? false);
+  const [accessVerified, setAccessVerified] = useState(SESSION.verified ?? false);
+  // The code that actually passed verification — the input box is scratch space
+  // until Verify succeeds, so API auth never picks up a half-typed code.
+  const [verifiedCode, setVerifiedCode] = useState(
+    SESSION.verified ? SESSION.accessCode ?? "" : ""
+  );
+  // Which credential granted the current tier: a permanent account tier (jwt)
+  // or a per-request trial code (code). Decides which auth header API calls use.
+  const [accessSource, setAccessSource] = useState<"jwt" | "code" | null>(null);
+  const [accessError, setAccessError] = useState("");
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
+
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
+    draft_id: DRAFT.draft?.draft_id || crypto.randomUUID(),
     ...STICKY_CONTACT,
   });
   const [preview, setPreview] = useState<PreviewResult | null>(DRAFT.preview ?? null);
@@ -157,18 +186,88 @@ export default function App() {
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
+  // A trial code authenticates per-request via header; a permanent account
+  // tier authenticates via JWT. Whichever granted the tier wins.
+  const auth: ApiAuth =
+    accessSource === "code" && verifiedCode
+      ? { accessCode: verifiedCode }
+      : jwt
+        ? { jwt }
+        : { accessCode: verifiedCode };
+
   const jobActive = job !== null && (job.status === "queued" || job.status === "running");
   const locked = Boolean(preview);
+  const signedIn = Boolean(session.data);
+  // Access always requires a login; a verified trial code alone is not enough.
+  const hasAccess = signedIn && tier >= 1;
+
+  useEffect(() => {
+    if (session.isPending) return;
+    if (!session.data) {
+      setJwt(null);
+      setTier(0);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource(null);
+      return;
+    }
+    fetchJwt().then(async (token) => {
+      setJwt(token);
+      if (!token) return;
+      try {
+        const access = await getAccess({ jwt: token });
+        if (access.tier > 0) {
+          setTier(access.tier);
+          setIsTrial(access.is_trial);
+          setUsesRemaining(access.uses_remaining);
+          setAccessSource("jwt");
+          return;
+        }
+      } catch {
+        // account lookup failed — fall through to a previously verified code
+      }
+      // No permanent tier on the account — re-validate a persisted trial code.
+      if (accessVerified && verifiedCode) {
+        try {
+          const access = await getAccess({ accessCode: verifiedCode });
+          setTier(access.tier);
+          setIsTrial(access.is_trial);
+          setUsesRemaining(access.uses_remaining);
+          setAccessSource("code");
+          return;
+        } catch {
+          setAccessVerified(false);
+          setVerifiedCode("");
+        }
+      }
+      setTier(0);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource(null);
+    });
+  }, [session.data, session.isPending]);
+
+  // Prefill the contact fields from the account once access unlocks —
+  // only fills blanks, never overwrites what the user typed.
+  useEffect(() => {
+    const user = session.data?.user;
+    if (!hasAccess || !user) return;
+    setDraft((prev) => ({
+      ...prev,
+      organizer_name: prev.organizer_name || user.name || "",
+      contact_email: prev.contact_email || user.email || "",
+    }));
+  }, [hasAccess, session.data]);
 
   useEffect(() => {
     saveSession({
-      accessCode,
-      verified,
+      accessCode: accessVerified && verifiedCode ? verifiedCode : accessCode,
+      verified: accessVerified,
       organizer_name: draft.organizer_name,
       contact_email: draft.contact_email,
       contact_phone: draft.contact_phone,
     });
-  }, [accessCode, verified, draft.organizer_name, draft.contact_email, draft.contact_phone]);
+  }, [accessCode, accessVerified, verifiedCode, draft.organizer_name, draft.contact_email, draft.contact_phone]);
 
   useEffect(() => {
     saveDraft({
@@ -179,15 +278,69 @@ export default function App() {
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
+    const authSnap: ApiAuth =
+      accessSource === "code" && verifiedCode
+        ? { accessCode: verifiedCode }
+        : jwt
+          ? { jwt }
+          : { accessCode: verifiedCode };
     const id = setInterval(() => {
-      getJob(accessCode, jobIdRef.current!)
+      getJob(authSnap, jobIdRef.current!)
         .then(setJob)
         .catch(() => {
           /* transient poll failure — keep polling */
         });
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [jobActive, accessCode]);
+  }, [jobActive, verifiedCode, jwt, accessSource]);
+
+  // One code box, two code kinds: try it as an UPGRADE code first (permanent,
+  // bound to the account), and if the backend rejects that, as a TRIAL code
+  // (per-request header auth). Either way the user sees a single Verify step.
+  const handleVerifyCode = async () => {
+    if (!accessCode.trim() || !jwt) return;
+    setAccessError("");
+    try {
+      const result = await redeemAccessCode({ jwt }, accessCode);
+      setTier(result.tier);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource("jwt");
+      setAccessVerified(false);
+      setAccessCode("");
+      setShowCodeEntry(false);
+      return;
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 403)) {
+        setAccessError("Could not verify the access code. Try again.");
+        return;
+      }
+    }
+    try {
+      const access = await getAccess({ accessCode });
+      if (access.tier === 0) throw new ApiError(403, "code grants no access");
+      setAccessVerified(true);
+      setVerifiedCode(accessCode);
+      setAccessSource("code");
+      setTier(access.tier);
+      setIsTrial(access.is_trial);
+      setUsesRemaining(access.uses_remaining);
+      setShowCodeEntry(false);
+    } catch {
+      setAccessVerified(false);
+      setAccessError("Access code not recognized. Check the code and try again.");
+    }
+  };
+
+  const handleSignOut = async () => {
+    await authClient.signOut();
+    setJwt(null);
+    setTier(0);
+    setIsTrial(false);
+    setUsesRemaining(null);
+    setAccessSource(null);
+    setAccessError("");
+  };
 
   const handleDraftChange = (next: EventDraft) => {
     setDraft(next);
@@ -200,8 +353,9 @@ export default function App() {
   const handlePreview = async () => {
     setBusy(true);
     setError("");
+    directSubmit(auth, draft.draft_id, toApiEvent(draft)).catch(() => {});
     try {
-      const result = await previewBroadcast(accessCode, toApiEvent(draft));
+      const result = await previewBroadcast(auth, toApiEvent(draft));
       setPreview(result);
       // Coming-soon calendars are shown in the picker but can't be submitted —
       // keep them out of the default selection so they never enter the submit list.
@@ -224,8 +378,8 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      await retryJob(accessCode, jobIdRef.current, siteKeys);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await retryJob(auth, jobIdRef.current, siteKeys);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Retry failed.");
     } finally {
@@ -237,8 +391,8 @@ export default function App() {
     if (!jobIdRef.current) return;
     setError("");
     try {
-      await submitReal(accessCode, jobIdRef.current, siteKeys);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await submitReal(auth, jobIdRef.current, siteKeys);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed.");
     }
@@ -249,8 +403,8 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      await cancelJob(accessCode, jobIdRef.current);
-      setJob(await getJob(accessCode, jobIdRef.current));
+      await cancelJob(auth, jobIdRef.current);
+      setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancel failed.");
     } finally {
@@ -265,7 +419,7 @@ export default function App() {
     }
     setExtFillStatus((prev) => ({ ...prev, [siteKey]: "filling" }));
     try {
-      const recipe = await directRecipe(accessCode, toApiEvent(draft), siteKey);
+      const recipe = await directRecipe(auth, toApiEvent(draft), siteKey);
       const ok = await sendFill(extensionId, recipe);
       setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "submitted" : "unavailable" }));
     } catch {
@@ -281,6 +435,7 @@ export default function App() {
     setSelected(new Set());
     setDraft((prev) => ({
       ...EMPTY_DRAFT,
+      draft_id: crypto.randomUUID(),
       organizer_name: prev.organizer_name,
       contact_email: prev.contact_email,
       contact_phone: prev.contact_phone,
@@ -291,7 +446,7 @@ export default function App() {
     setSpeedSubmit(false);
   };
 
-  // Reset everything for a fresh event, but keep the (verified) access code.
+  // Reset everything for a fresh event, but keep the (verified) access/auth state.
   const startOver = resetCore;
 
   const resetForm = resetCore;
@@ -300,13 +455,14 @@ export default function App() {
     setAiBusy(true);
     setError("");
     try {
-      const result = await aiAutofill(accessCode, aiText);
+      const result = await aiAutofill(auth, aiText);
       setDraft((prev) => ({
         ...EMPTY_DRAFT,
         organizer_name: prev.organizer_name,
         contact_email: prev.contact_email,
         contact_phone: prev.contact_phone,
         ...result.event,
+        draft_id: crypto.randomUUID(),
       }));
       setPreview(null);
       setJob(null);
@@ -335,6 +491,41 @@ export default function App() {
     ? Object.fromEntries(preview.eligible.map((s) => [s.site_key, s.name]))
     : {};
 
+  // Access flow: one step active at a time; done steps collapse to a summary
+  // line, upcoming steps stay visible but dimmed so the path ahead is clear.
+  const step2: "todo" | "active" | "done" = !signedIn ? "todo" : hasAccess ? "done" : "active";
+  const step3: "todo" | "active" = hasAccess ? "active" : "todo";
+  const stepClass = (state: "todo" | "active" | "done") => `access-step access-step-${state}`;
+
+  const codeEntry = (
+    <>
+      <div className="verify-row">
+        <input
+          id="access-code"
+          type="password"
+          value={accessCode}
+          onChange={(e) => {
+            setAccessCode(e.target.value);
+            setAccessError("");
+          }}
+          autoComplete="off"
+          disabled={busy || job !== null || locked}
+          placeholder="Provided by The Commons"
+          aria-label="Access code"
+        />
+        <button
+          type="button"
+          className="verify"
+          onClick={handleVerifyCode}
+          disabled={accessCode.trim() === ""}
+        >
+          Verify
+        </button>
+      </div>
+      {accessError && <p className="field-error">{accessError}</p>}
+    </>
+  );
+
   return (
     <div className="page">
       <header className="masthead">
@@ -353,130 +544,168 @@ export default function App() {
         <div className="rule-double" />
       </header>
 
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+
       <section className={`section${locked ? " form-dim" : ""}`}>
         <h2>Access</h2>
-        <div className="field-grid">
-          <div className="field access-col">
-            <label htmlFor="access-code">
-              Access Code <span className="required-mark">*</span>
-            </label>
-            <div className="verify-row">
-              <input
-                id="access-code"
-                type="password"
-                value={accessCode}
-                onChange={(e) => { setAccessCode(e.target.value); setVerified(false); }}
-                autoComplete="off"
-                disabled={busy || job !== null || locked}
-              />
-              <button
-                type="button"
-                className={verified ? "verify is-verified" : "verify"}
-                onClick={() => { if (accessCode.trim() !== "") setVerified(true); }}
-                disabled={verified || accessCode.trim() === ""}
-              >
-                {verified ? "✓ Success" : "Verify"}
-              </button>
-            </div>
-            <p className="hint">Provided by The Commons. Remembered on this device — you stay signed in across events.</p>
-          </div>
+        <ol className="access-steps">
+          {/* Step 1 — sign in */}
+          <li className={stepClass(signedIn ? "done" : "active")}>
+            <p className="step-label">Sign in</p>
+            {session.isPending ? (
+              <p className="hint">Checking session…</p>
+            ) : signedIn ? (
+              <p className="step-summary">
+                {session.data!.user.email}{" "}
+                <button type="button" className="linklike" onClick={handleSignOut}>
+                  Sign out
+                </button>
+              </p>
+            ) : (
+              <>
+                <p className="hint">Use your account, or create one in a few seconds.</p>
+                <button type="button" onClick={() => setShowAuthModal(true)}>
+                  Sign in / Create account
+                </button>
+              </>
+            )}
+          </li>
 
-          <div className="contact-col">
-            <div className="field">
-              <label htmlFor="contact-name">Contact Name</label>
-              <input
-                id="contact-name"
-                type="text"
-                value={draft.organizer_name ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-                maxLength={200}
-              />
-            </div>
+          {/* Step 2 — access code */}
+          <li className={stepClass(step2)}>
+            <p className="step-label">Enter your access code</p>
+            {step2 === "todo" && (
+              <p className="hint">The Commons team gives you a code — we verify it on the spot.</p>
+            )}
+            {step2 === "active" && (
+              <>
+                <p className="hint">
+                  This account has no broadcast access yet — enter the code from The
+                  Commons team and we&rsquo;ll verify it on the spot.
+                </p>
+                {codeEntry}
+              </>
+            )}
+            {step2 === "done" && (
+              <>
+                <p className="step-summary">
+                  {accessSource === "code" && isTrial && usesRemaining !== null ? (
+                    <>
+                      Trial access — {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining.
+                      One use per event previewed; edits are free.
+                    </>
+                  ) : (
+                    <>Tier {tier} access on this account.</>
+                  )}{" "}
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => setShowCodeEntry((v) => !v)}
+                  >
+                    Have another code?
+                  </button>
+                </p>
+                {showCodeEntry && codeEntry}
+              </>
+            )}
+          </li>
 
-            <div className="field">
-              <label htmlFor="contact-email">Contact Email</label>
-              <input
-                id="contact-email"
-                type="email"
-                value={draft.contact_email ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-              />
-            </div>
+          {/* Step 3 — contact info */}
+          <li className={stepClass(step3)}>
+            <p className="step-label">Confirm your contact info</p>
+            {step3 === "todo" ? (
+              <p className="hint">
+                Name, email, and phone shown as the organizer contact on each calendar —
+                prefilled from your account.
+              </p>
+            ) : (
+              <div className="contact-row">
+                <div className="field">
+                  <label htmlFor="contact-name">Name</label>
+                  <input
+                    id="contact-name"
+                    type="text"
+                    value={draft.organizer_name ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                    maxLength={200}
+                  />
+                </div>
 
-            <div className="field">
-              <label htmlFor="contact-phone">Contact Phone</label>
-              <input
-                id="contact-phone"
-                type="tel"
-                value={draft.contact_phone ?? ""}
-                onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-                disabled={busy || job !== null || !verified || locked}
-                maxLength={40}
-              />
-            </div>
+                <div className="field">
+                  <label htmlFor="contact-email">Email</label>
+                  <input
+                    id="contact-email"
+                    type="email"
+                    value={draft.contact_email ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                  />
+                </div>
 
-            <p className="hint">Used as the organizer/submitter contact on every calendar. Remembered on this device and reused for every event.</p>
+                <div className="field">
+                  <label htmlFor="contact-phone">Phone</label>
+                  <input
+                    id="contact-phone"
+                    type="tel"
+                    value={draft.contact_phone ?? ""}
+                    onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
+                    disabled={busy || job !== null || locked}
+                    maxLength={40}
+                  />
+                </div>
+
+                <p className="hint contact-hint">
+                  Shown as the organizer contact on every calendar. Remembered on this
+                  device and reused for your next event.
+                </p>
+              </div>
+            )}
+          </li>
+        </ol>
+      </section>
+
+      <section className="section">
+        <h2>AI Autofill</h2>
+        <div className={locked || tier < 2 ? "form-dim" : ""}>
+          <p className="hint">
+            Paste a raw event description, email, or flyer text below and the AI will fill
+            the event fields for you.
+            {tier < 2 && <em> Available with Tier 2 access.</em>}
+          </p>
+          <textarea
+            className="ai-autofill-textarea"
+            placeholder="Paste an event description / flyer text / email…"
+            value={aiText}
+            onChange={(e) => setAiText(e.target.value)}
+            disabled={tier < 2 || !isDraftEmpty(draft) || aiBusy || job !== null || locked}
+          />
+          <div className="actions">
+            <button
+              type="button"
+              onClick={handleAiAutofill}
+              disabled={
+                tier < 2 ||
+                aiText.trim() === "" ||
+                !isDraftEmpty(draft) ||
+                aiBusy ||
+                job !== null ||
+                locked
+              }
+            >
+              {aiBusy ? "Generating…" : "✨ Generate from text"}
+            </button>
+            {tier >= 2 && !isDraftEmpty(draft) && (
+              <span className="section-note">
+                AI autofill works on a blank event form — click Reset to clear the event
+                details first.
+              </span>
+            )}
           </div>
         </div>
       </section>
 
-      <section className={`section${locked ? " form-dim" : ""}`}>
-        <h2>AI Autofill</h2>
-        <p className="hint">
-          Paste a raw event description, email, or flyer text below and the AI will fill
-          the event fields for you. Works on a blank event form — your saved contact
-          details are fine; reset first if you've already entered event details.
-        </p>
-        {!verified ? (
-          <p className="section-note">Verify your access code to begin.</p>
-        ) : !isDraftEmpty(draft) ? (
-          <>
-            <textarea
-              className="ai-autofill-textarea"
-              disabled
-              placeholder="Paste an event description / flyer text / email…"
-              value={aiText}
-            />
-            <div className="actions">
-              <button type="button" disabled>
-                ✨ Generate from text
-              </button>
-              <span className="section-note">
-                AI autofill works on a blank event form — click Reset to clear the event details first.
-              </span>
-            </div>
-          </>
-        ) : (
-          <>
-            <textarea
-              className="ai-autofill-textarea"
-              placeholder="Paste an event description / flyer text / email…"
-              value={aiText}
-              onChange={(e) => setAiText(e.target.value)}
-              disabled={aiBusy || job !== null || locked}
-            />
-            <div className="actions">
-              <button
-                type="button"
-                onClick={handleAiAutofill}
-                disabled={
-                  !verified ||
-                  aiText.trim() === "" ||
-                  !isDraftEmpty(draft) ||
-                  aiBusy ||
-                  job !== null ||
-                  locked
-                }
-              >
-                {aiBusy ? "Generating…" : "✨ Generate from text"}
-              </button>
-            </div>
-          </>
-        )}
-      </section>
-
+      {/* ── The Event form ── */}
       <section className="section">
         <div className="section-title-row">
           <h2>The Event</h2>
@@ -484,17 +713,17 @@ export default function App() {
             type="button"
             className="reset-form-inline"
             onClick={resetForm}
-            disabled={busy || aiBusy || job !== null}
+            disabled={busy || aiBusy || job !== null || !hasAccess || locked}
             title="Clear the form and start over"
           >
             Reset form
           </button>
         </div>
-        <div className={verified && !locked ? "" : "form-dim"}>
+        <div className={hasAccess && !locked ? "" : "form-dim"}>
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
-          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked} />
+          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked || !hasAccess} />
         </div>
         <div className="actions">
           {preview ? (
@@ -514,14 +743,17 @@ export default function App() {
               <button
                 type="button"
                 onClick={handlePreview}
-                disabled={busy || job !== null || !draftValid || accessCode.trim() === "" || !verified}
+                disabled={busy || job !== null || !draftValid || !hasAccess}
               >
                 {busy ? "Checking…" : "Preview Destinations"}
               </button>
-              {!verified && (
-                <span className="section-note">Verify your access code to begin.</span>
+              {!hasAccess && (
+                <span className="section-note">
+                  Complete the Access steps above to unlock the form — this is a preview
+                  of what you&rsquo;ll fill in.
+                </span>
               )}
-              {verified && !draftValid && (
+              {hasAccess && !draftValid && (
                 <span className="section-note">Fill the required (*) fields to preview.</span>
               )}
             </>
@@ -663,7 +895,7 @@ export default function App() {
           <h2>Progress</h2>
           <JobProgress
             job={job}
-            accessCode={accessCode}
+            auth={auth}
             onRetry={handleRetry}
             onSubmitReal={handleSubmitReal}
             retrying={busy}

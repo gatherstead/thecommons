@@ -4,6 +4,7 @@ Site metadata (URL, eligibility, auth) lives in code with the adapter so the
 rules and the script version together. Tier 2 (auth) adapters are added here
 only after a ToS review (design doc §13).
 """
+
 import os
 
 from broadcast.adapters._mock import MockSiteAdapter

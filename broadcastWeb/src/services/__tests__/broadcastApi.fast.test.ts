@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventDraft } from "../../models/broadcastModels";
 import {
   ApiError,
+  type ApiAuth,
   aiAutofill,
+  authHeaders,
   cancelJob,
+  directSubmit,
+  getAccess,
   getJob,
   getManualRecipe,
   openScreenshot,
@@ -19,6 +23,7 @@ import {
 const BASE = "http://127.0.0.1:8000";
 
 const EVENT: EventDraft = {
+  draft_id: "draft-uuid-123",
   title: "Test Event",
   description: "A description",
   start_datetime: "2026-10-17T16:00:00.000Z",
@@ -31,6 +36,9 @@ const EVENT: EventDraft = {
   categories: ["music"],
   is_free: true,
 };
+
+const CODE: ApiAuth = { accessCode: "CODE" };
+const JWT_AUTH: ApiAuth = { jwt: "tok.en.here" };
 
 const jsonResponse = (
   body: unknown,
@@ -53,126 +61,220 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// ── authHeaders unit tests ─────────────────────────────────────────────────
+
+describe("authHeaders", () => {
+  it("returns Bearer header for a JWT", () => {
+    expect(authHeaders({ jwt: "my-token" })).toEqual({ Authorization: "Bearer my-token" });
+  });
+
+  it("returns X-Broadcast-Access-Code header for an access code", () => {
+    expect(authHeaders({ accessCode: "MY-CODE" })).toEqual({
+      "X-Broadcast-Access-Code": "MY-CODE",
+    });
+  });
+
+  it("JWT wins when both are provided", () => {
+    expect(authHeaders({ jwt: "jwt", accessCode: "code" })).toEqual({
+      Authorization: "Bearer jwt",
+    });
+  });
+
+  it("returns empty object when neither is set", () => {
+    expect(authHeaders({})).toEqual({});
+  });
+});
+
+// ── getAccess ─────────────────────────────────────────────────────────────
+
+describe("getAccess", () => {
+  it("GETs /broadcast/access with Bearer header and returns tier info", async () => {
+    const result = { tier: 2 as const, is_trial: false, uses_remaining: null };
+    fetchMock.mockResolvedValue(jsonResponse(result));
+
+    await expect(getAccess(JWT_AUTH)).resolves.toEqual(result);
+
+    const [url, init] = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/broadcast/access`);
+    expect(init.method).toBeUndefined();
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok.en.here");
+  });
+
+  it("GETs /broadcast/access with access-code header", async () => {
+    const result = { tier: 1 as const, is_trial: true, uses_remaining: 3 };
+    fetchMock.mockResolvedValue(jsonResponse(result));
+
+    await expect(getAccess(CODE)).resolves.toEqual(result);
+
+    const [, init] = lastCall(fetchMock);
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
+  });
+
+  it("throws ApiError on 403", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ detail: "Invalid credentials." }, { ok: false, status: 403 }));
+
+    await expect(getAccess(JWT_AUTH)).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("Access denied"),
+    });
+  });
+
+  it("returns tier 0 for anonymous (no-credentials) request", async () => {
+    const result = { tier: 0 as const, is_trial: false, uses_remaining: null };
+    fetchMock.mockResolvedValue(jsonResponse(result));
+
+    await expect(getAccess({})).resolves.toEqual(result);
+
+    const [, init] = lastCall(fetchMock);
+    // No auth header
+    expect((init.headers as Record<string, string>)["Authorization"]).toBeUndefined();
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBeUndefined();
+  });
+});
+
+// ── POST wrappers ──────────────────────────────────────────────────────────
+
 describe("POST wrappers", () => {
-  it("previewBroadcast posts the access code + event and returns the body", async () => {
+  it("previewBroadcast sends auth header and {draft_id, event} body", async () => {
     const result = { eligible: [{ site_key: "a", name: "A" }], excluded: [] };
     fetchMock.mockResolvedValue(jsonResponse(result));
 
-    await expect(previewBroadcast("CODE", EVENT)).resolves.toEqual(result);
+    await expect(previewBroadcast(CODE, EVENT)).resolves.toEqual(result);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/preview`);
     expect(init.method).toBe("POST");
-    expect(init.headers).toEqual({ "Content-Type": "application/json" });
-    expect(JSON.parse(init.body as string)).toEqual({
-      access_code: "CODE",
-      event: EVENT,
-    });
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ draft_id: EVENT.draft_id, event: EVENT });
+    // Must not include access_code in the body
+    expect(body).not.toHaveProperty("access_code");
   });
 
-  it("submitBroadcast includes site keys and the dry_run flag", async () => {
+  it("previewBroadcast sends Bearer header when using JWT auth", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ eligible: [], excluded: [] }));
+
+    await previewBroadcast(JWT_AUTH, EVENT);
+
+    const [, init] = lastCall(fetchMock);
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok.en.here");
+  });
+
+  it("submitBroadcast sends event + site_keys + dry_run (no access_code in body)", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ job_id: "j1" }));
 
-    await submitBroadcast("CODE", EVENT, ["a", "b"], true);
+    await submitBroadcast(CODE, EVENT, ["a", "b"], true);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/submit`);
-    expect(JSON.parse(init.body as string)).toEqual({
-      access_code: "CODE",
-      event: EVENT,
-      site_keys: ["a", "b"],
-      dry_run: true,
-    });
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ event: EVENT, site_keys: ["a", "b"], dry_run: true });
+    expect(body).not.toHaveProperty("access_code");
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
   });
 
-  it("retryJob targets the job's retry route", async () => {
+  it("retryJob targets the job's retry route without access_code in body", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ job_id: "j1", requeued: 2 }));
 
-    await retryJob("CODE", "j1", ["a", "b"]);
+    await retryJob(CODE, "j1", ["a", "b"]);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/retry`);
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({
-      access_code: "CODE",
-      site_keys: ["a", "b"],
-    });
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ site_keys: ["a", "b"] });
+    expect(body).not.toHaveProperty("access_code");
   });
 
-  it("submitReal targets the submit-real route", async () => {
+  it("submitReal targets the submit-real route without access_code in body", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ job_id: "j1", submitted: 1 }));
 
-    await submitReal("CODE", "j1", ["a"]);
+    await submitReal(CODE, "j1", ["a"]);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/submit-real`);
-    expect(JSON.parse(init.body as string)).toEqual({
-      access_code: "CODE",
-      site_keys: ["a"],
-    });
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ site_keys: ["a"] });
+    expect(body).not.toHaveProperty("access_code");
   });
 
-  it("cancelJob posts only the access code", async () => {
+  it("cancelJob posts empty body (auth in header)", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ job_id: "j1", status: "canceled", skipped: 3 }));
 
-    await cancelJob("CODE", "j1");
+    await cancelJob(CODE, "j1");
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/cancel`);
-    expect(JSON.parse(init.body as string)).toEqual({ access_code: "CODE" });
+    const body = JSON.parse(init.body as string);
+    expect(body).not.toHaveProperty("access_code");
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
+  });
+
+  it("directSubmit posts draft_id + event to /api/events/direct-submit (no access_code in body)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: "accepted", draft_id: "draft-uuid-123" }));
+
+    await directSubmit(CODE, "draft-uuid-123", EVENT);
+
+    const [url, init] = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/api/events/direct-submit`);
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ draft_id: "draft-uuid-123", event: EVENT });
+    expect(body).not.toHaveProperty("access_code");
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
   });
 });
 
 describe("aiAutofill", () => {
-  it("POSTs to /broadcast/ai-autofill with access_code and text, returns the event", async () => {
+  it("POSTs to /broadcast/ai-autofill with auth header and text, no access_code in body", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ event: EVENT }));
 
-    const result = await aiAutofill("CODE", "paste event text here");
+    const result = await aiAutofill(CODE, "paste event text here");
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/ai-autofill`);
     expect(init.method).toBe("POST");
-    expect(init.headers).toEqual({ "Content-Type": "application/json" });
-    expect(JSON.parse(init.body as string)).toEqual({
-      access_code: "CODE",
-      text: "paste event text here",
-    });
+    expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ text: "paste event text here" });
+    expect(body).not.toHaveProperty("access_code");
     expect(result).toEqual({ event: EVENT });
   });
 
   it("maps 400 (blank text) to an error", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ text: ["blank"] }, { ok: false, status: 400 }));
 
-    await expect(aiAutofill("CODE", "")).rejects.toMatchObject({
+    await expect(aiAutofill(CODE, "")).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining("problem"),
     });
   });
 
-  it("maps 403 (bad access code / rate limit) to the access-code message", async () => {
+  it("maps 403 (bad access / rate limit) to the access-denied message", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 403 }));
 
-    await expect(aiAutofill("BAD", "some text")).rejects.toMatchObject({
+    await expect(aiAutofill({ accessCode: "BAD" }, "some text")).rejects.toMatchObject({
       status: 403,
-      message: expect.stringContaining("Access code not recognized"),
+      message: expect.stringContaining("Access denied"),
     });
   });
 
   it("maps 502 (LLM down) to a generic failure message", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 502 }));
 
-    const err = await aiAutofill("CODE", "text").catch((e) => e);
+    const err = await aiAutofill(CODE, "text").catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(502);
   });
 });
 
 describe("GET wrappers", () => {
-  it("getJob sends the access code in the X-Broadcast-Access-Code header", async () => {
+  it("getJob sends X-Broadcast-Access-Code header (access-code auth)", async () => {
     const job = { job_id: "j1", status: "queued", targets: [] };
     fetchMock.mockResolvedValue(jsonResponse(job));
 
-    await expect(getJob("CODE", "j1")).resolves.toEqual(job);
+    await expect(getJob(CODE, "j1")).resolves.toEqual(job);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1`);
@@ -181,11 +283,21 @@ describe("GET wrappers", () => {
     expect(init.body).toBeUndefined();
   });
 
+  it("getJob sends Bearer header when using JWT auth", async () => {
+    const job = { job_id: "j1", status: "queued", targets: [] };
+    fetchMock.mockResolvedValue(jsonResponse(job));
+
+    await getJob(JWT_AUTH, "j1");
+
+    const [, init] = lastCall(fetchMock);
+    expect(init.headers).toEqual({ Authorization: "Bearer tok.en.here" });
+  });
+
   it("getManualRecipe fetches the per-site recipe with the access header", async () => {
     const recipe = { site_key: "a", name: "A", url: "u", fields: [], captcha_hint: null, submit_selector: "#go" };
     fetchMock.mockResolvedValue(jsonResponse(recipe));
 
-    await expect(getManualRecipe("CODE", "j1", "siteA")).resolves.toEqual(recipe);
+    await expect(getManualRecipe(CODE, "j1", "siteA")).resolves.toEqual(recipe);
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/manual/siteA`);
@@ -194,19 +306,19 @@ describe("GET wrappers", () => {
 });
 
 describe("error mapping", () => {
-  it("maps 403 to the access-code message", async () => {
+  it("maps 403 to the access-denied message", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 403 }));
 
-    await expect(previewBroadcast("BAD", EVENT)).rejects.toMatchObject({
+    await expect(previewBroadcast({ accessCode: "BAD" }, EVENT)).rejects.toMatchObject({
       status: 403,
-      message: expect.stringContaining("Access code not recognized"),
+      message: expect.stringContaining("Access denied"),
     });
   });
 
   it("maps 400 to a form-problem message echoing the body", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ zip: ["required"] }, { ok: false, status: 400 }));
 
-    await expect(previewBroadcast("CODE", EVENT)).rejects.toMatchObject({
+    await expect(previewBroadcast(CODE, EVENT)).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining("zip"),
     });
@@ -215,7 +327,7 @@ describe("error mapping", () => {
   it("maps other failures to a generic message and throws ApiError", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, { ok: false, status: 500 }));
 
-    const error = await getJob("CODE", "j1").catch((e) => e);
+    const error = await getJob(CODE, "j1").catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(500);
     expect(error.message).toBe("Request failed (500).");
@@ -233,7 +345,7 @@ describe("openScreenshot", () => {
     vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
     vi.useFakeTimers();
 
-    await openScreenshot("CODE", "/broadcast/jobs/j1/shot.png");
+    await openScreenshot(CODE, "/broadcast/jobs/j1/shot.png");
 
     const [url, init] = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/broadcast/jobs/j1/shot.png`);
@@ -249,6 +361,6 @@ describe("openScreenshot", () => {
   it("throws ApiError when the screenshot fetch fails", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
 
-    await expect(openScreenshot("CODE", "/x.png")).rejects.toBeInstanceOf(ApiError);
+    await expect(openScreenshot(CODE, "/x.png")).rejects.toBeInstanceOf(ApiError);
   });
 });

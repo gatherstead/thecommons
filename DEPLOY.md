@@ -26,15 +26,15 @@ nginx, firewall, troubleshooting).
 > auto-deploy. The ingestion and weekly-digest jobs **moved off OS cron** onto
 > `django-celery-beat` (a DB-backed scheduler seeded by migrations). If you followed
 > any older notes that set up `crontab`/`logrotate`/`/var/log/thecommons` for those
-> two jobs, that approach is **dead** — Part 1 §8 retires it.
+> two jobs, that approach is **dead** — Part 1 §9 retires it.
 
 ---
 
 # Part 1 — First deploy (manual, one time)
 
 Do these in order. The CI auto-deploy in Part 2 **cannot** succeed until this is
-done, because it restarts `celery`/`celerybeat`/`broadcast-worker`, which don't
-exist on the box yet.
+done, because it restarts `celery`/`celerybeat`/`broadcast-worker`/`scrape-worker`,
+which don't exist on the box yet.
 
 ## 1. Pull the new code onto the VM
 
@@ -45,7 +45,7 @@ git fetch origin
 git checkout testing+ci && git pull origin testing+ci
 ```
 
-> You provision from the `testing+ci` branch now. In §9 you'll switch the VM to
+> You provision from the `testing+ci` branch now. In §10 you'll switch the VM to
 > `main` so CI's `git pull` tracks the right branch going forward.
 
 ## 2. Provision Redis (one time)
@@ -151,7 +151,44 @@ Do all seven in order.
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-## 6. Frontend builds + restart
+## 6. Scrape worker (one time)
+
+The ingestion scraper (`ingestion.tasks.scrape_all_sources_task`) renders headless
+Chromium and is routed to a dedicated `scrape` Celery queue (`CELERY_TASK_ROUTES` in
+`backend/settings/base.py`) so its memory never lands on the default `celery`
+worker. `deploy/celery.service`'s `ExecStart` has no `-Q` flag (`celery -A backend
+worker -l info --concurrency=2`), so the default worker only drains the `celery`
+queue — it will **not** pick up `scrape` tasks. Without this dedicated worker,
+scrape tasks queue forever.
+
+1. **Playwright Chromium** (skip if already installed for broadcast — same shared
+   cache):
+   ```bash
+   cd /home/ubuntu/thecommons/backendServer
+   /snap/bin/uv run playwright install chromium
+   /snap/bin/uv run playwright install-deps chromium     # apt system libs (uses sudo)
+   ```
+   Bundled Chromium only — **never** a branded "chrome" channel, unsupported on
+   arm64. It installs into `/home/ubuntu/.cache/ms-playwright/`, shared with
+   `broadcast-worker`, so there's no extra download if that's already in place.
+2. **Env.** Add the three `INGEST_SCRAPER_*` vars to `backendServer/.env` if you
+   want non-default values (all optional — see Part 3 for defaults).
+3. **Worker service:**
+   ```bash
+   cd /home/ubuntu/thecommons
+   sudo cp deploy/scrape-worker.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now scrape-worker
+   sudo systemctl status scrape-worker      # active (running)
+   ```
+
+> ⚠️ **Operator ordering matters.** From this point on, `.github/workflows/ci.yml`'s
+> `deploy` job restarts `scrape-worker` on every push to `main` (see §10/Part 2).
+> If you haven't installed and `systemctl enable`d the unit (and run `playwright
+> install chromium`) **before** the first deploy that includes this change, CI's
+> `sudo -n systemctl restart ... scrape-worker` step will fail and block the
+> deploy. Do steps 1–3 above first.
+
+## 7. Frontend builds + restart
 
 ```bash
 cd /home/ubuntu/thecommons/theCommonsWeb
@@ -164,7 +201,7 @@ pnpm install && pnpm run build           # static → dist/, served directly by 
 sudo systemctl restart gunicorn
 ```
 
-## 7. Verify
+## 8. Verify
 
 ```bash
 cd /home/ubuntu/thecommons
@@ -182,7 +219,7 @@ curl -I https://broadcast.thecommons.town/            # expect 200/3xx
 If the broadcast `curl` hangs, it's the iptables REJECT-before-ACCEPT gotcha — see
 Part 3 §Firewall.
 
-## 8. Retire the old OS cron (only if it exists)
+## 9. Retire the old OS cron (only if it exists)
 
 Beat now owns the ingest + digest schedules. If the box still has the old cron
 lines, remove them so the jobs don't run twice:
@@ -194,7 +231,7 @@ crontab -e                 # delete those two lines if present
 
 `healthcheck.sh` also flags leftover cron lines for these jobs.
 
-## 9. Switch the VM to `main` and enable CI/CD
+## 10. Switch the VM to `main` and enable CI/CD
 
 **On your laptop** — merge and push:
 
@@ -217,7 +254,7 @@ cat ~/.ssh/thecommons_deploy.pub | ssh -i oraclevps.key ubuntu@129.80.229.41 \
 ssh -i ~/.ssh/thecommons_deploy ubuntu@129.80.229.41 'echo deploy-key-ok'
 ```
 
-**Sudoers drop-in (VM)** — passwordless restart for exactly the five units:
+**Sudoers drop-in (VM)** — passwordless restart for exactly the six units:
 
 ```bash
 sudo visudo -f /etc/sudoers.d/deploy-restart
@@ -228,7 +265,8 @@ ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart gunicorn, \
                             /usr/bin/systemctl restart nextjs, \
                             /usr/bin/systemctl restart celery, \
                             /usr/bin/systemctl restart celerybeat, \
-                            /usr/bin/systemctl restart broadcast-worker
+                            /usr/bin/systemctl restart broadcast-worker, \
+                            /usr/bin/systemctl restart scrape-worker
 ```
 
 **GitHub repo secrets** (Settings → Secrets and variables → Actions) — all four:
@@ -274,12 +312,19 @@ The `deploy` job runs only on **push to `main`**, after `backend`,
 
 Once Part 1 is done, **every push to `main`** runs CI (`.github/workflows/ci.yml`)
 and, after all three test jobs pass, a gated `deploy` job SSHes into the VM and runs
-the full sequence: `git pull` → `uv sync` → `migrate` → `collectstatic` → both
-frontend `pnpm install`/`build` → restart `gunicorn nextjs celery celerybeat
-broadcast-worker`. A failing test on `main` blocks the deploy.
+the full sequence: `git pull` → `uv sync` → guarded `migrate` (below) → `collectstatic`
+→ both frontend `pnpm install`/`build` → restart `gunicorn nextjs celery celerybeat
+broadcast-worker scrape-worker`, then a post-deploy smoke test: all three domains, `/events/`,
+auth probes (`/auth/me` with no/garbage token must 401/403 — never 500 — and the
+API-key path must accept the real key), and a broadcast rate-limit regression check.
+A failing test on `main` blocks the deploy.
 
-> ⚠️ The workflow runs `migrate` **unguarded** — a destructive migration applies
-> automatically. There's no "review migrations first" gate yet.
+> **Guarded migrate:** the deploy runs `migrate --check` first and skips `migrate`
+> entirely when nothing is pending. When migrations *are* pending it logs the plan,
+> takes a `pg_dump` to `/home/ubuntu/backups/pre-migrate-<timestamp>.sql.gz` (keeps
+> the 5 newest), and only then applies. It **fails the deploy** if `pg_dump` is
+> missing — one-time VM prep: `sudo apt install -y postgresql-client`. The dump is
+> belt-and-suspenders; Neon PITR/branching is the real restore mechanism.
 
 ### Manual fallback (CI down, or a hand hotfix)
 
@@ -300,6 +345,9 @@ cd ../theCommonsWeb && pnpm install && pnpm run build && sudo systemctl restart 
 # Broadcast
 cd ../backendServer && sudo systemctl restart broadcast-worker
 cd ../broadcastWeb && pnpm install && pnpm run build     # static — no service to restart
+
+# Scrape worker (if scraper/task code changed)
+cd ../backendServer && sudo systemctl restart scrape-worker
 ```
 
 ---
@@ -318,7 +366,7 @@ UV_BIN=/snap/bin/uv bash deploy/healthcheck.sh --no-color | tee /tmp/health.log
 ```
 
 It checks (✓/!/✗): RAM/disk vs thresholds; `systemctl is-active` for `redis-server`,
-`celery`, `celerybeat`, `gunicorn`, `nextjs`, `broadcast-worker`; leftover OS-cron
+`celery`, `celerybeat`, `gunicorn`, `nextjs`, `broadcast-worker`, `scrape-worker`; leftover OS-cron
 lines; and via `manage.py healthcheck` — Postgres `SELECT 1`, Redis broker ping
 (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and each
 seeded `PeriodicTask` (enabled + last-run freshness: daily within ~25h, weekly
@@ -337,6 +385,7 @@ also runs standalone: `/snap/bin/uv run python manage.py healthcheck [--json]`.
 | `celery` | Async task worker | `deploy/celery.service` | `/snap/bin/uv run celery -A backend worker`, concurrency 2, drains Redis DB 0 |
 | `celerybeat` | Scheduler | `deploy/celerybeat.service` | DatabaseScheduler; **exactly one** process |
 | `broadcast-worker` | Playwright form-filler | `deploy/broadcast-worker.service` | `run_broadcast_worker`, MemoryMax 2G |
+| `scrape-worker` | Ingestion scraper (Playwright) | `deploy/scrape-worker.service` | `celery -A backend worker -Q scrape -c 1`, MemoryMax 2G, drains the dedicated `scrape` queue only |
 
 ```bash
 sudo systemctl status   <unit>
@@ -361,8 +410,11 @@ CRON_SECRET=
 THE_COMMONS_API_KEY=
 SAFETY_SCORE_THRESHOLD=0.3             # optional
 INGEST_SHARD_COUNT=3                   # optional — see §3
-BETTER_AUTH_JWKS_URL=https://thecommons.town/api/auth/jwks
-BETTER_AUTH_ISSUER=https://thecommons.town
+INGEST_SCRAPER_HEADLESS=true           # optional — default true
+INGEST_SCRAPER_TIMEOUT_MS=30000        # optional — default 30000
+INGEST_SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; TheCommons/1.0)  # optional — default shown
+BETTER_AUTH_JWKS_URL=https://auth.thecommons.town/api/auth/jwks
+BETTER_AUTH_ISSUER=https://auth.thecommons.town
 BETTER_AUTH_AUDIENCE=
 BREVO_API_KEY=
 DIGEST_FROM_EMAIL=digest@thecommons.town
@@ -370,7 +422,6 @@ SITE_URL=https://thecommons.town
 REDIS_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/0          # Celery broker + results (DB 0)
 REDIS_CACHE_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/1    # read-endpoint cache (DB 1)
 # Broadcast (see backendServer/.env.example for the full annotated block)
-BROADCAST_ACCESS_CODES=
 BROADCAST_HEADLESS=true
 BROADCAST_DRY_RUN_DEFAULT=false
 BROADCAST_MAX_CONCURRENCY=1
@@ -386,8 +437,17 @@ NEXT_PUBLIC_API_BASE_URL=https://api.thecommons.town
 NEXT_PUBLIC_THE_COMMONS_API_KEY=
 DATABASE_URL=                          # same Neon connection string
 BETTER_AUTH_SECRET=
-BETTER_AUTH_URL=https://thecommons.town
-NEXT_PUBLIC_BETTER_AUTH_URL=https://thecommons.town
+BETTER_AUTH_URL=https://auth.thecommons.town
+NEXT_PUBLIC_BETTER_AUTH_URL=https://auth.thecommons.town
+BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town   # enables cross-subdomain sessions (SameSite=None; Secure)
+```
+
+### `broadcastWeb/.env`
+
+```
+VITE_BROADCAST_API_BASE_URL=https://api.thecommons.town
+VITE_BROADCAST_EXTENSION_ID=           # Chrome extension ID for extension autofill
+VITE_BETTER_AUTH_URL=https://auth.thecommons.town
 ```
 
 ## nginx
@@ -428,7 +488,7 @@ Two layers must allow 80/443:
 | 400 on `/events/` from browser | `NEXT_PUBLIC_API_BASE_URL` wrong or stale build | `.env.local`, then `pnpm run build` |
 | Django admin has no CSS | `collectstatic` not run / `/static/` alias wrong | `manage.py collectstatic --noinput` |
 | Celery worker won't start / no broker | `REDIS_URL` missing/wrong password, or Redis down | `redis-cli -a '<pass>' PING`; `journalctl -u celery -n 50` |
-| Scheduled job ran twice | leftover OS cron alongside beat | `crontab -l` (Part 1 §8) |
+| Scheduled job ran twice | leftover OS cron alongside beat | `crontab -l` (Part 1 §9) |
 
 ## Deep-dive references
 
@@ -436,3 +496,4 @@ Two layers must allow 80/443:
 - `docs/broadcast.md` — broadcast subsystem: routing, adapters, worker, recipe layer, extension, SPA wiring
 - `docs/dev-db-isolation.md` — Neon dev branch setup for local development
 - `docs/ingestion-pipeline.md` — scrape → stage → publish flow
+- `docs/runbook-auth-cutover.md` — Auth-origin cutover (auth.thecommons.town subdomain, .thecommons.town cookie domain, forced re-login)

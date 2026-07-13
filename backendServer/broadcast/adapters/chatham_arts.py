@@ -16,6 +16,7 @@ Form notes from the capture:
 - #tribe-not-title is a spam honeypot ("Fake Title") — intentionally left blank.
 - No captcha on this form. Submit button is #post (name=community-event).
 """
+
 import difflib
 
 from broadcast.adapters import _helpers as h
@@ -24,22 +25,24 @@ from broadcast.routing import Eligibility
 
 _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 entry
 
-_CHATHAM_CONFIRM = "#tribe_custom-_ecp_custom_4-PleaseconfirmthatthiseventtakesplaceinChathamCounty-0"
+_CHATHAM_CONFIRM = (
+    "#tribe_custom-_ecp_custom_4-PleaseconfirmthatthiseventtakesplaceinChathamCounty-0"
+)
 
 # Eligibility already restricts this calendar to arts/literary events, but we map
 # all known slugs in case the operator submits a broader event here.
 _CA_CATEGORY_MAP: dict[str, str] = {
-    "arts":        "Arts",
-    "literary":    "Literary",
-    "music":       "Music",
-    "festival":    "Festival",
-    "community":   "Community",
-    "education":   "Education",
+    "arts": "Arts",
+    "literary": "Literary",
+    "music": "Music",
+    "festival": "Festival",
+    "community": "Community",
+    "education": "Education",
     "family-kids": "Family",
-    "wellness":    "Wellness",
-    "market":      "Market",
-    "food-drink":  "Food",
-    "nightlife":   "Nightlife",
+    "wellness": "Wellness",
+    "market": "Market",
+    "food-drink": "Food",
+    "nightlife": "Nightlife",
 }
 
 
@@ -64,10 +67,16 @@ def _end(ev):
 # are event-dependent or non-fillable — see recipe_field_specs().
 _PLAIN_FIELDS = [
     RecipeField("#post_title", "text", lambda ev: ev.title, required=True, label="Event title"),
-    RecipeField("#post_content", "textarea", lambda ev: ev.description, required=True,
-                label="Description"),
-    RecipeField("#EventStartDate", "date", lambda ev: _ca_date(ev.start_datetime), required=True,
-                label="Start date"),
+    RecipeField(
+        "#post_content", "textarea", lambda ev: ev.description, required=True, label="Description"
+    ),
+    RecipeField(
+        "#EventStartDate",
+        "date",
+        lambda ev: _ca_date(ev.start_datetime),
+        required=True,
+        label="Start date",
+    ),
     RecipeField("#EventEndDate", "date", lambda ev: _ca_date(_end(ev)), label="End date"),
     RecipeField("#EventURL", "text", lambda ev: ev.event_url, label="External link"),
     RecipeField("#EventCost", "text", lambda ev: "0" if ev.is_free else ev.price, label="Cost"),
@@ -95,60 +104,113 @@ class ChathamArtsAdapter(SiteAdapter):
         specs = list(_PLAIN_FIELDS)
         if not ev.all_day:
             specs += [
-                RecipeField("#EventStartTime", "time", lambda ev: _ca_time(ev.start_datetime),
-                            label="Start time"),
-                RecipeField("#EventEndTime", "time", lambda ev: _ca_time(_end(ev)),
-                            label="End time"),
+                RecipeField(
+                    "#EventStartTime",
+                    "time",
+                    lambda ev: _ca_time(ev.start_datetime),
+                    label="Start time",
+                ),
+                RecipeField(
+                    "#EventEndTime", "time", lambda ev: _ca_time(_end(ev)), label="End time"
+                ),
             ]
         if ev.venue_name:
-            specs.append(RecipeField("#saved_tribe_venue", "select2", lambda ev: ev.venue_name,
-                                     recipe_only=True, label="Venue",
-                                     hint="pick the match or choose Create"))
+            specs.append(
+                RecipeField(
+                    "#saved_tribe_venue",
+                    "select2",
+                    lambda ev: ev.venue_name,
+                    recipe_only=True,
+                    label="Venue",
+                    hint="pick the match or choose Create",
+                )
+            )
         if ev.organizer_name:
-            specs.append(RecipeField("#saved_tribe_organizer", "select2",
-                                     lambda ev: ev.organizer_name, recipe_only=True,
-                                     label="Organizer", hint="pick the match or choose Create"))
+            specs.append(
+                RecipeField(
+                    "#saved_tribe_organizer",
+                    "select2",
+                    lambda ev: ev.organizer_name,
+                    recipe_only=True,
+                    label="Organizer",
+                    hint="pick the match or choose Create",
+                )
+            )
             # Emit organizer detail inputs as plain text so the extension fills
             # them directly via DOM (the recipe-only select2 above only carries
             # the name). These inputs always exist in the DOM; emitting them
             # unconditionally is harmless (empty-value fields are dropped by
             # recipe()). organizer-website uses event_url — CanonicalEvent has no
             # separate organizer URL field.
-            specs.append(RecipeField("#organizer-phone", "text",
-                                     lambda ev: ev.contact_phone, label="Organizer phone"))
-            specs.append(RecipeField("#organizer-website", "text",
-                                     lambda ev: ev.event_url, label="Organizer website"))
-            specs.append(RecipeField("#organizer-email", "text",
-                                     lambda ev: ev.contact_email, label="Organizer email"))
+            specs.append(
+                RecipeField(
+                    "#organizer-phone", "text", lambda ev: ev.contact_phone, label="Organizer phone"
+                )
+            )
+            specs.append(
+                RecipeField(
+                    "#organizer-website", "text", lambda ev: ev.event_url, label="Organizer website"
+                )
+            )
+            specs.append(
+                RecipeField(
+                    "#organizer-email", "text", lambda ev: ev.contact_email, label="Organizer email"
+                )
+            )
         # Same Tribe Events plugin as Triangle Weekender; selector is identical.
-        specs.append(RecipeField(
-            "select[name='tax_input[tribe_events_cat][]']", "select2_multi",
-            _ca_category_terms, recipe_only=True, label="Event categories",
-            hint="AJAX dropdown — extension searches each term; unmatched terms are skipped"))
-        specs.append(RecipeField(_CHATHAM_CONFIRM, "checkbox", lambda ev: "Yes",
-                                 required=True, recipe_only=True,
-                                 label="Confirm event is in Chatham County"))
+        specs.append(
+            RecipeField(
+                "select[name='tax_input[tribe_events_cat][]']",
+                "select2_multi",
+                _ca_category_terms,
+                recipe_only=True,
+                label="Event categories",
+                hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
+            )
+        )
+        specs.append(
+            RecipeField(
+                _CHATHAM_CONFIRM,
+                "checkbox",
+                lambda ev: "Yes",
+                required=True,
+                recipe_only=True,
+                label="Confirm event is in Chatham County",
+            )
+        )
         if ev.image_url:
-            specs.append(RecipeField("#event_image", "file", lambda ev: ev.image_url,
-                                     recipe_only=True, label="Event image",
-                                     hint="auto-uploaded by the extension; falls back to manual highlight if needed"))
+            specs.append(
+                RecipeField(
+                    "#event_image",
+                    "file",
+                    lambda ev: ev.image_url,
+                    recipe_only=True,
+                    label="Event image",
+                    hint="auto-uploaded by the extension; falls back to manual highlight if needed",
+                )
+            )
         return specs
 
-    def fill_and_submit(self, page, ev, ctx):
+    def fill_and_submit(self, page, ev, ctx):  # noqa: C901  # Playwright form fill; complexity is inherent
         page.goto(self.submission_url, timeout=ctx.timeout_ms)
         page.wait_for_load_state("domcontentloaded", timeout=ctx.timeout_ms)
         h.dismiss_consent(page)
 
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="captcha/bot-check present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         specs = self.recipe_field_specs(ev)
         missing = h.apply_specs(page, specs, ev, ctx.timeout_ms)
         if missing:
-            return TargetResult(status="needs_manual",
-                                error="required fields unfilled: " + "; ".join(missing),
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="required fields unfilled: " + "; ".join(missing),
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         # The timepicker leaves its dropdown open, which would intercept the next
         # click — close it before driving the venue/organizer select2 widgets.
@@ -170,7 +232,10 @@ class ChathamArtsAdapter(SiteAdapter):
                     _try_fill(page, selector, value)
 
         if ev.organizer_name:
-            if _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name) == "created":
+            if (
+                _select2_match_or_create(page, "saved_tribe_organizer", ev.organizer_name)
+                == "created"
+            ):
                 _try_fill(page, "#organizer-email", ev.contact_email)
                 _try_fill(page, "#organizer-phone", ev.contact_phone)
                 # organizer-website uses event_url (no separate organizer URL on CanonicalEvent).
@@ -186,18 +251,25 @@ class ChathamArtsAdapter(SiteAdapter):
                 _try_fill_file(page, "#event_image", local)
 
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha/bot-check present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="captcha/bot-check present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         shot = h.take_screenshot(page, ctx, self.key, "before-submit")
         if ctx.dry_run:
-            return TargetResult(status="succeeded", error="[DRY RUN] not submitted",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="succeeded", error="[DRY RUN] not submitted", screenshot_path=shot
+            )
 
         page.locator("#post").click(timeout=ctx.timeout_ms)
         page.wait_for_load_state("networkidle", timeout=ctx.timeout_ms)
-        return TargetResult(status="succeeded", external_url=page.url,
-                            screenshot_path=h.take_screenshot(page, ctx, self.key, "after-submit"))
+        return TargetResult(
+            status="succeeded",
+            external_url=page.url,
+            screenshot_path=h.take_screenshot(page, ctx, self.key, "after-submit"),
+        )
 
 
 def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
@@ -255,9 +327,12 @@ def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
 # Close buttons used by popup/offcanvas plugins; first visible one wins.
 _POPUP_CLOSE_SELECTORS = [
     ".uael-offcanvas-close",
-    ".pum-close", ".popmake-close",
-    ".dialog-close-button", ".elementor-popup-modal .dialog-close-button",
-    "[aria-label='Close']", "[aria-label='close']",
+    ".pum-close",
+    ".popmake-close",
+    ".dialog-close-button",
+    ".elementor-popup-modal .dialog-close-button",
+    "[aria-label='Close']",
+    "[aria-label='close']",
     "button.close",
 ]
 

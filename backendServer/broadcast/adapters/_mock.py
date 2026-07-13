@@ -1,6 +1,7 @@
 """Mock site adapter — drives the local static form so the runner/worker
 pipeline can be exercised end-to-end (CI and dev) without hitting real sites.
 """
+
 import pathlib
 
 from broadcast.adapters import _helpers as h
@@ -31,7 +32,7 @@ class MockSiteAdapter(SiteAdapter):
     requires_auth = False
     eligibility = Eligibility(localities=frozenset(), categories=frozenset())
 
-    def fill_and_submit(self, page, ev, ctx: RunContext) -> TargetResult:
+    def fill_and_submit(self, page, ev, ctx: RunContext) -> TargetResult:  # noqa: C901  # Playwright form fill; complexity is inherent
         page.goto(self.submission_url, timeout=ctx.timeout_ms)
 
         page.get_by_label("Event Title").fill(ev.title)
@@ -63,15 +64,22 @@ class MockSiteAdapter(SiteAdapter):
                 page.get_by_label("Event Image").set_input_files(local)
 
         if h.has_captcha(page):
-            return TargetResult(status="needs_manual", error="captcha present",
-                                screenshot_path=h.take_screenshot(page, ctx, self.key))
+            return TargetResult(
+                status="needs_manual",
+                error="captcha present",
+                screenshot_path=h.take_screenshot(page, ctx, self.key),
+            )
 
         shot = h.take_screenshot(page, ctx, self.key)
         if ctx.dry_run:
-            return TargetResult(status="succeeded", error="[DRY RUN] not submitted",
-                                screenshot_path=shot)
+            return TargetResult(
+                status="succeeded", error="[DRY RUN] not submitted", screenshot_path=shot
+            )
 
         page.get_by_role("button", name="Submit Event").click()
         page.locator("#confirmation").wait_for(state="visible", timeout=ctx.timeout_ms)
-        return TargetResult(status="succeeded", external_url=page.url,
-                            screenshot_path=h.take_screenshot(page, ctx, self.key, "after"))
+        return TargetResult(
+            status="succeeded",
+            external_url=page.url,
+            screenshot_path=h.take_screenshot(page, ctx, self.key, "after"),
+        )

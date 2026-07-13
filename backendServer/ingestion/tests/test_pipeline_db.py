@@ -1,9 +1,11 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
 from celery.exceptions import Retry
 from django.test import TestCase, override_settings, tag
+from django.utils import timezone
 
 from events.models import Event, Town
 from ingestion.importers.scraper_importer import fetch_scraper_source
@@ -14,6 +16,10 @@ from ingestion.standardizer import standardize_all_unprocessed
 from ingestion.tasks import run_ingestion_pipeline
 
 SCRAPER_FIXTURE = Path(__file__).parent / "fixtures" / "visitpittsboro_month.html"
+
+# Fixed "now" the fixture's 3 events (07-12, 07-17, 07-19) were built to be
+# future-dated against — see test_scraper_extract_fast.py for the same fix.
+_FIXTURE_BUILD_TIME = timezone.make_aware(datetime(2026, 7, 11))
 
 
 @tag("db")
@@ -84,6 +90,12 @@ class ScraperToPublishedEventTests(TestCase):
             scraper_key="visitpittsboro",
         )
         self.html = SCRAPER_FIXTURE.read_text(encoding="utf-8")
+        self.enterContext(
+            mock.patch(
+                "ingestion.scraping.scrapers.visitpittsboro.timezone.now",
+                return_value=_FIXTURE_BUILD_TIME,
+            )
+        )
 
     def _standardized_payload(self, raw_event):
         return {

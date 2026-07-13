@@ -81,6 +81,20 @@
   }
   .playground .btn-publish-only:hover { background: #6d28d9; }
   .playground .btn-publish-only:disabled { background: #c4b5fd; cursor: not-allowed; }
+  .playground .btn-copy-cmd {
+    display: inline-block;
+    background: #fff;
+    color: #374151;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 0.6rem 1.4rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .playground .btn-copy-cmd:hover { background: #f9fafb; border-color: #9ca3af; }
+  .playground .btn-copy-cmd.copied { border-color: #16a34a; color: #15803d; }
 
   /* Warning / info boxes */
   .playground .warning {
@@ -458,20 +472,17 @@
   <!-- Controls -->
   <div class="controls">
     <div>
-      <label for="source_selector">Load existing source <span style="font-weight:400;color:#6b7280;">(populates fields below — or leave on "New source" to start fresh)</span></label>
+      <label for="source_selector">
+        Load existing source
+        <span style="font-weight:400;color:#6b7280;">(populates fields below — or leave on "New source" to start fresh)</span>
+        <button type="button" id="refresh-sources-btn" style="margin-left:0.5rem;font-size:0.75rem;font-weight:600;padding:0.1rem 0.5rem;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;color:#374151;">↺ Refresh</button>
+        <label style="margin-left:0.75rem;font-weight:400;font-size:0.8rem;display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;">
+          <input type="checkbox" id="sources-prod-toggle" style="width:auto;" />
+          Prod DB
+        </label>
+      </label>
       <select id="source_selector">
-        <option value="">— New source —</option>
-        {% for s in sources %}
-          <option value="{{ s.id }}"
-            data-name="{{ s.name|escape }}"
-            data-url="{{ s.url|escape }}"
-            data-source_type="{{ s.source_type }}"
-            data-scraper_key="{{ s.scraper_key }}"
-            data-prompt_suffix="{{ s.prompt_suffix|escape }}"
-          >{{ s.name }} ({{ s.source_type }}{% if not s.active %}, inactive{% endif %})</option>
-        {% empty %}
-          <option disabled>No sources saved yet — use "Save source &amp; publish" or "Add source only" to create one</option>
-        {% endfor %}
+        <option value="">— Loading sources… —</option>
       </select>
     </div>
     <div>
@@ -530,6 +541,7 @@
       <button id="save-btn" class="btn-save">Save source &amp; publish</button>
       <button id="publish-only-btn" class="btn-publish-only">Publish events only</button>
       <button id="add-source-btn" class="btn-add">Add source only</button>
+      <button id="copy-cmd-btn" class="btn-copy-cmd" title="Copy the manage.py command to add this source on the production VM">Copy VM command</button>
     </div>
   </div>
 
@@ -584,6 +596,7 @@
   const saveBtn         = document.getElementById("save-btn");
   const publishOnlyBtn  = document.getElementById("publish-only-btn");
   const addSourceBtn    = document.getElementById("add-source-btn");
+  const copyCmdBtn      = document.getElementById("copy-cmd-btn");
 
   /* ── Source-type toggle ───────────────────────────────────── */
   /* Both "scraper" (browser-rendered) and "http" (plain fetch) run a per-site
@@ -617,6 +630,60 @@
   scraperKeyEl.addEventListener("change", autofillScraperUrl);
 
   /* ── Load existing source into form ──────────────────────── */
+  function populateSourceSelector(sources) {
+    const prev = sourceSelectorEl.value;
+    sourceSelectorEl.innerHTML = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "— New source —";
+    sourceSelectorEl.appendChild(blank);
+    if (!sources || sources.length === 0) {
+      const empty = document.createElement("option");
+      empty.disabled = true;
+      empty.textContent = 'No sources saved yet — use "Save source & publish" or "Add source only" to create one';
+      sourceSelectorEl.appendChild(empty);
+    } else {
+      sources.forEach(function (s) {
+        const opt = document.createElement("option");
+        opt.value = String(s.id);
+        opt.setAttribute("data-name",         s.name         || "");
+        opt.setAttribute("data-url",          s.url          || "");
+        opt.setAttribute("data-source_type",  s.source_type  || "ics");
+        opt.setAttribute("data-scraper_key",  s.scraper_key  || "");
+        opt.setAttribute("data-prompt_suffix",s.prompt_suffix|| "");
+        opt.textContent = s.name + " (" + s.source_type + (s.active ? "" : ", inactive") + ")";
+        sourceSelectorEl.appendChild(opt);
+      });
+    }
+    /* Restore selection if the same source is still in the list */
+    if (prev) sourceSelectorEl.value = prev;
+  }
+
+  const sourcesProdToggle = document.getElementById("sources-prod-toggle");
+
+  function fetchSources(cb) {
+    const useProd = sourcesProdToggle && sourcesProdToggle.checked;
+    const url = useProd ? "/devtools/sources?db=prod_readonly" : "/devtools/sources";
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        populateSourceSelector(data.sources || []);
+        if (sourcesProdToggle) {
+          const label = sourcesProdToggle.closest("label");
+          if (label) label.style.color = useProd ? "#dc2626" : "";
+        }
+        if (cb) cb();
+      })
+      .catch(function () { populateSourceSelector([]); });
+  }
+
+  /* Fetch on page load */
+  fetchSources();
+
+  if (sourcesProdToggle) {
+    sourcesProdToggle.addEventListener("change", function () { fetchSources(); });
+  }
+
   if (sourceSelectorEl) {
     sourceSelectorEl.addEventListener("change", function () {
       const opt = sourceSelectorEl.options[sourceSelectorEl.selectedIndex];
@@ -630,6 +697,14 @@
       if (sk) scraperKeyEl.value = sk;
       updateSourceTypeUI();
       saveForm();
+    });
+  }
+
+  const refreshSourcesBtn = document.getElementById("refresh-sources-btn");
+  if (refreshSourcesBtn) {
+    refreshSourcesBtn.addEventListener("click", function () {
+      refreshSourcesBtn.textContent = "↺ …";
+      fetchSources(function () { refreshSourcesBtn.textContent = "↺ Refresh"; });
     });
   }
 
@@ -1635,6 +1710,70 @@
       runBtn.disabled       = false;
       saveBtn.disabled      = false;
       addSourceBtn.disabled = false;
+    });
+  });
+
+  /* ── Copy VM command ─────────────────────────────────────────── */
+  copyCmdBtn.addEventListener("click", function () {
+    const icsUrl     = icsUrlEl.value.trim();
+    const sourceType = sourceTypeEl.value;
+    const scraperKey = scraperKeyEl.value.trim();
+    const sourceName = sourceNameEl.value.trim();
+    const suffix     = promptSuffixEl.value.trim();
+
+    if (!icsUrl) {
+      alert("Please enter a URL first.");
+      return;
+    }
+    if (!sourceName) {
+      alert("Please enter a Source Name first.");
+      return;
+    }
+
+    function shellQuote(s) {
+      /* Wrap in single quotes, escaping any single quotes inside. */
+      return "'" + s.replace(/'/g, "'\\''") + "'";
+    }
+
+    var parts = [
+      "cd /home/ubuntu/thecommons/backendServer &&",
+      "/snap/bin/uv run python manage.py add_source",
+      "--url",      shellQuote(icsUrl),
+      "--type",     sourceType,
+      "--name",     shellQuote(sourceName),
+    ];
+    if ((sourceType === "scraper" || sourceType === "http") && scraperKey) {
+      parts.push("--scraper-key", shellQuote(scraperKey));
+    }
+    if (suffix) {
+      parts.push("--prompt-suffix", shellQuote(suffix));
+    }
+
+    var cmd = parts.join(" ");
+
+    navigator.clipboard.writeText(cmd).then(function () {
+      copyCmdBtn.textContent = "Copied!";
+      copyCmdBtn.classList.add("copied");
+      setTimeout(function () {
+        copyCmdBtn.textContent = "Copy VM command";
+        copyCmdBtn.classList.remove("copied");
+      }, 2000);
+    }).catch(function () {
+      /* Fallback for non-HTTPS contexts */
+      var ta = document.createElement("textarea");
+      ta.value = cmd;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      copyCmdBtn.textContent = "Copied!";
+      copyCmdBtn.classList.add("copied");
+      setTimeout(function () {
+        copyCmdBtn.textContent = "Copy VM command";
+        copyCmdBtn.classList.remove("copied");
+      }, 2000);
     });
   });
 

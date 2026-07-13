@@ -36,6 +36,21 @@ DATABASES = {
 
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
+# Optional: point at the prod Neon branch so the devtool sources dropdown
+# can list prod sources.  Set PROD_DATABASE_URL in backendServer/.env.
+_prod_db_url = os.getenv("PROD_DATABASE_URL")
+if _prod_db_url:
+    _pdb = urlparse(_prod_db_url)
+    DATABASES["prod_readonly"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _pdb.path.replace("/", ""),
+        "USER": _pdb.username,
+        "PASSWORD": _pdb.password,
+        "HOST": _pdb.hostname,
+        "PORT": 5432,
+        "OPTIONS": dict(parse_qsl(_pdb.query)),
+    }
+
 # No long-running worker in dev — spawn a one-shot worker on submit/retry so
 # forms get processed without running the worker by hand. Override with
 # BROADCAST_AUTOSPAWN_WORKER=false to use a manual `run_broadcast_worker`.

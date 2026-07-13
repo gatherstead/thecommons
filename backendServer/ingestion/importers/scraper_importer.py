@@ -78,7 +78,9 @@ def fetch_http_source(source: EventSource, *, limit: int | None = None) -> list[
     return _ingest_with_scraper(source, _fetch_via_http, limit=limit)
 
 
-def _ingest_with_scraper(source: EventSource, fetch_html: Callable[[str], str], *, limit: int | None = None) -> list[RawEvent]:
+def _ingest_with_scraper(
+    source: EventSource, fetch_html: Callable[[str], str], *, limit: int | None = None
+) -> list[RawEvent]:
     """Fetch → extract → save, shared by the browser and HTTP fetch strategies.
 
     Only PHASE 1 (how the HTML is obtained) differs between source types; the

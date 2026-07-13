@@ -68,6 +68,156 @@ def _event_dict(e):
     }
 
 
+def _run_fetch_stage(q, source, limit):
+    q.put(("stage", {"stage": "fetch", "status": "start"}))
+
+    _fetch_source(source, limit=limit)
+
+    if limit is not None:
+        keep_ids = list(RawEvent.objects.filter(source=source).values_list("id", flat=True)[:limit])
+        RawEvent.objects.filter(source=source).exclude(id__in=keep_ids).delete()
+
+    fetch_records = list(
+        RawEvent.objects.filter(source=source).values(
+            "id", "raw_title", "raw_location", "raw_start", "source_url", "source_uid"
+        )
+    )
+    q.put(("stage_data", {"stage": "fetch", "records": fetch_records}))
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "fetch",
+                "status": "end",
+                "summary": {"count": len(fetch_records)},
+            },
+        )
+    )
+
+
+def _run_standardize_stage(q, source, prompt_suffix):
+    q.put(("stage", {"stage": "standardize", "status": "start"}))
+    std_count = standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
+    std_records = [
+        {
+            "id": s.id,
+            "title": s.title,
+            "town": s.town,
+            "location_name": s.location_name,
+            "start_datetime": s.start_datetime,
+            "description": s.description,
+            "tags": s.tags,
+            "price": s.price,
+            "link": s.link,
+        }
+        for s in StagedEvent.objects.filter(raw_event__source=source)
+    ]
+    q.put(("stage_data", {"stage": "standardize", "records": std_records}))
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "standardize",
+                "status": "end",
+                "summary": {"count": std_count},
+            },
+        )
+    )
+
+
+def _run_force_town_stage(q, source, town):
+    q.put(("stage", {"stage": "force_town", "status": "start"}))
+    for staged in StagedEvent.objects.filter(raw_event__source=source):
+        if slugify(staged.town) != town.slug:
+            q.put(
+                (
+                    "warning",
+                    {
+                        "code": "town_mismatch",
+                        "message": (
+                            f"Gemini guessed town '{staged.town}' but you forced '{town.name}'"
+                        ),
+                        "detail": {
+                            "staged_title": staged.title,
+                            "gemini_town": staged.town,
+                        },
+                    },
+                )
+            )
+        staged.town = town.name
+        staged.save(update_fields=["town"])
+    q.put(("stage", {"stage": "force_town", "status": "end"}))
+
+
+def _run_dedup_stage(q, source, skip_dedup):
+    q.put(("stage", {"stage": "dedup", "status": "start"}))
+    dedup_count = 0 if skip_dedup else dedup_all_pending(source=source)
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "dedup",
+                "status": "end",
+                "summary": {"count": dedup_count, "skipped": skip_dedup},
+            },
+        )
+    )
+
+
+def _run_safety_stage(q, source, prompt_suffix):
+    q.put(("stage", {"stage": "safety", "status": "start"}))
+    safety_count = score_all_unscored(source=source, prompt_suffix=prompt_suffix)
+    safety_records = [
+        {
+            "id": s.id,
+            "title": s.title,
+            "safety_score": s.safety_score,
+            "safety_notes": s.safety_notes,
+            "status": s.status,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in StagedEvent.objects.filter(raw_event__source=source)
+    ]
+    q.put(("stage_data", {"stage": "safety", "records": safety_records}))
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "safety",
+                "status": "end",
+                "summary": {"count": safety_count},
+            },
+        )
+    )
+
+
+def _run_publish_stage(q, source, town):
+    q.put(("stage", {"stage": "publish", "status": "start"}))
+    counts = auto_publish_safe_events(source=source, force_town=town)
+
+    # Snapshot published events BEFORE rollback may discard them
+    published = [
+        _event_dict(e)
+        for e in Event.objects.filter(
+            town=town,
+            staged_source__raw_event__source=source,
+        ).distinct()
+    ]
+
+    q.put(("stage_data", {"stage": "publish", "records": published}))
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "publish",
+                "status": "end",
+                "summary": counts,
+            },
+        )
+    )
+    return counts, published
+
+
 def run_pipeline_into_queue(
     q,
     *,
@@ -104,9 +254,6 @@ def run_pipeline_into_queue(
                 return
 
             with transaction.atomic():
-                # ── FETCH ─────────────────────────────────────────────────────
-                q.put(("stage", {"stage": "fetch", "status": "start"}))
-
                 effective_source_name = _resolve_source_name(
                     source_name, source_type, scraper_key, ics_url
                 )
@@ -119,153 +266,12 @@ def run_pipeline_into_queue(
                 )
                 source.save()
 
-                _fetch_source(source, limit=limit)
-
-                if limit is not None:
-                    keep_ids = list(
-                        RawEvent.objects.filter(source=source).values_list("id", flat=True)[:limit]
-                    )
-                    RawEvent.objects.filter(source=source).exclude(id__in=keep_ids).delete()
-
-                fetch_records = list(
-                    RawEvent.objects.filter(source=source).values(
-                        "id", "raw_title", "raw_location", "raw_start", "source_url", "source_uid"
-                    )
-                )
-                q.put(("stage_data", {"stage": "fetch", "records": fetch_records}))
-                q.put(
-                    (
-                        "stage",
-                        {
-                            "stage": "fetch",
-                            "status": "end",
-                            "summary": {"count": len(fetch_records)},
-                        },
-                    )
-                )
-
-                # ── STANDARDIZE ───────────────────────────────────────────────
-                q.put(("stage", {"stage": "standardize", "status": "start"}))
-                std_count = standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
-                std_records = []
-                for s in StagedEvent.objects.filter(raw_event__source=source):
-                    std_records.append(
-                        {
-                            "id": s.id,
-                            "title": s.title,
-                            "town": s.town,
-                            "location_name": s.location_name,
-                            "start_datetime": s.start_datetime,
-                            "description": s.description,
-                            "tags": s.tags,
-                            "price": s.price,
-                            "link": s.link,
-                        }
-                    )
-                q.put(("stage_data", {"stage": "standardize", "records": std_records}))
-                q.put(
-                    (
-                        "stage",
-                        {
-                            "stage": "standardize",
-                            "status": "end",
-                            "summary": {"count": std_count},
-                        },
-                    )
-                )
-
-                # ── FORCE_TOWN ────────────────────────────────────────────────
-                q.put(("stage", {"stage": "force_town", "status": "start"}))
-                for staged in StagedEvent.objects.filter(raw_event__source=source):
-                    if slugify(staged.town) != town.slug:
-                        q.put(
-                            (
-                                "warning",
-                                {
-                                    "code": "town_mismatch",
-                                    "message": (
-                                        f"Gemini guessed town '{staged.town}'"
-                                        f" but you forced '{town.name}'"
-                                    ),
-                                    "detail": {
-                                        "staged_title": staged.title,
-                                        "gemini_town": staged.town,
-                                    },
-                                },
-                            )
-                        )
-                    staged.town = town.name
-                    staged.save(update_fields=["town"])
-                q.put(("stage", {"stage": "force_town", "status": "end"}))
-
-                # ── DEDUP ─────────────────────────────────────────────────────
-                q.put(("stage", {"stage": "dedup", "status": "start"}))
-                if skip_dedup:
-                    dedup_count = 0
-                else:
-                    dedup_count = dedup_all_pending(source=source)
-                q.put(
-                    (
-                        "stage",
-                        {
-                            "stage": "dedup",
-                            "status": "end",
-                            "summary": {"count": dedup_count, "skipped": skip_dedup},
-                        },
-                    )
-                )
-
-                # ── SAFETY ────────────────────────────────────────────────────
-                q.put(("stage", {"stage": "safety", "status": "start"}))
-                safety_count = score_all_unscored(source=source, prompt_suffix=prompt_suffix)
-                safety_records = []
-                for s in StagedEvent.objects.filter(raw_event__source=source):
-                    safety_records.append(
-                        {
-                            "id": s.id,
-                            "title": s.title,
-                            "safety_score": s.safety_score,
-                            "safety_notes": s.safety_notes,
-                            "status": s.status,
-                            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                        }
-                    )
-                q.put(("stage_data", {"stage": "safety", "records": safety_records}))
-                q.put(
-                    (
-                        "stage",
-                        {
-                            "stage": "safety",
-                            "status": "end",
-                            "summary": {"count": safety_count},
-                        },
-                    )
-                )
-
-                # ── PUBLISH ───────────────────────────────────────────────────
-                q.put(("stage", {"stage": "publish", "status": "start"}))
-                counts = auto_publish_safe_events(source=source, force_town=town)
-
-                # Snapshot published events BEFORE rollback may discard them
-                published = [
-                    _event_dict(e)
-                    for e in Event.objects.filter(
-                        town=town,
-                        staged_source__raw_event__source=source,
-                    ).distinct()
-                ]
-
-                q.put(("stage_data", {"stage": "publish", "records": published}))
-                q.put(
-                    (
-                        "stage",
-                        {
-                            "stage": "publish",
-                            "status": "end",
-                            "summary": counts,
-                        },
-                    )
-                )
+                _run_fetch_stage(q, source, limit)
+                _run_standardize_stage(q, source, prompt_suffix)
+                _run_force_town_stage(q, source, town)
+                _run_dedup_stage(q, source, skip_dedup)
+                _run_safety_stage(q, source, prompt_suffix)
+                counts, published = _run_publish_stage(q, source, town)
 
                 final = {
                     "dry_run": dry_run,

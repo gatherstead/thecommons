@@ -63,7 +63,9 @@ def _parse_datetime(month_abbr: str, day: str, year: int, time_str: str | None) 
         except ValueError:
             pass
     try:
-        naive = datetime.strptime(f"{month_abbr} {day} {year}", "%b %d %Y").replace(hour=hour, minute=minute)
+        naive = datetime.strptime(f"{month_abbr} {day} {year}", "%b %d %Y").replace(
+            hour=hour, minute=minute
+        )
     except ValueError:
         return None
     return naive.replace(tzinfo=_LOCAL_TZ)
@@ -79,7 +81,9 @@ class VisitchapelhillScraper(Scraper):
 
     def extract(self, html: str) -> list[RawEventData]:
         tree = lxml_html.fromstring(html)
-        items = tree.xpath('//div[@data-recid and contains(concat(" ", normalize-space(@class), " "), " item ")]')
+        items = tree.xpath(
+            '//div[@data-recid and contains(concat(" ", normalize-space(@class), " "), " item ")]'
+        )
 
         now = timezone.now()
         events = []
@@ -115,7 +119,9 @@ class VisitchapelhillScraper(Scraper):
             location = location_links[0].text_content().strip() if location_links else ""
 
             recid = item.get("data-recid", "")
-            source_uid = recid or hashlib.sha256(f"{title}{month_abbr}{day}{year}".encode()).hexdigest()
+            source_uid = (
+                recid or hashlib.sha256(f"{title}{month_abbr}{day}{year}".encode()).hexdigest()
+            )
 
             events.append(
                 RawEventData(
@@ -133,4 +139,6 @@ class VisitchapelhillScraper(Scraper):
         # their start time has already passed, and we want the same events a
         # human sees on the page, not a stricter subset.
         today_local = now.astimezone(_LOCAL_TZ).date()
-        return [event for event in events if event.start.astimezone(_LOCAL_TZ).date() >= today_local]
+        return [
+            event for event in events if event.start.astimezone(_LOCAL_TZ).date() >= today_local
+        ]

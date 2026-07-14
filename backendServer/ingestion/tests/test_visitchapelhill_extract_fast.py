@@ -14,7 +14,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "visitchapelhill.html"
 # be future-dated against. extract() drops past events using the real clock,
 # so the test freezes time instead of relying on wall-clock never catching up
 # to the fixture's baked-in dates.
-_FIXTURE_BUILD_TIME = timezone.make_aware(datetime(2026, 7, 13, 0, 0), timezone=ZoneInfo("America/New_York"))
+_FIXTURE_BUILD_TIME = timezone.make_aware(
+    datetime(2026, 7, 13, 0, 0), timezone=ZoneInfo("America/New_York")
+)
 
 
 @tag("fast")
@@ -43,7 +45,9 @@ class VisitchapelhillExtractTests(SimpleTestCase):
         self.assertEqual(meditation.source_uid, "34606")
 
         # No <li class="time"> element at all -> defaults to midnight, no end.
-        open_mic = next(e for e in events if e.title == "Open Mic Night at Steel String Brewery Taproom")
+        open_mic = next(
+            e for e in events if e.title == "Open Mic Night at Steel String Brewery Taproom"
+        )
         self.assertEqual(open_mic.start.isoformat(), "2026-07-13T18:00:00-04:00")
         self.assertIsNone(open_mic.end)
 

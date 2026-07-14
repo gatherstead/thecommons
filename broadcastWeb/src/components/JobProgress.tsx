@@ -10,6 +10,10 @@ interface Props {
   onRetry: (siteKeys: string[]) => void;
   onSubmitReal: (siteKeys: string[]) => void;
   retrying: boolean;
+  // site_keys that have exhausted the client's auto-retry cap (App.tsx's
+  // stuck-target self-heal) and are still stuck — UI-only, does not touch
+  // the real TargetStatus/backend status.
+  stuckExhausted?: Set<string>;
 }
 
 // What the user sees per target — derived from the backend status plus the
@@ -22,7 +26,8 @@ type DisplayStatus =
   | "submitted"
   | "needs_manual"
   | "error"
-  | "skipped";
+  | "skipped"
+  | "stuck_exhausted";
 
 const DISPLAY_LABELS: Record<DisplayStatus, string> = {
   pending: "Pending",
@@ -32,9 +37,17 @@ const DISPLAY_LABELS: Record<DisplayStatus, string> = {
   needs_manual: "Needs manual",
   error: "Error",
   skipped: "Skipped",
+  stuck_exhausted: "Failed - Worker Stuck",
 };
 
-export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying }: Props) {
+export default function JobProgress({
+  job,
+  auth,
+  onRetry,
+  onSubmitReal,
+  retrying,
+  stuckExhausted,
+}: Props) {
   const { installed, extensionId, recheck } = useExtension();
   // Targets the user has acted on locally. Pure client state so the badge flips
   // immediately; the poller confirms (or a real failure overrides to "error").
@@ -46,6 +59,15 @@ export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying
   const displayStatus = (t: JobTarget): DisplayStatus => {
     if (t.status === "failed") return "error"; // a real failure overrides optimism
     if (realSubmitted.has(t.site_key) || manualSubmitted.has(t.site_key)) return "submitted";
+    // Auto-retry cap exhausted and the target never recovered — still
+    // technically "pending"/"in_progress" on the backend, but the operator
+    // needs to know the worker is stuck and a manual retry is now expected.
+    if (
+      stuckExhausted?.has(t.site_key) &&
+      (t.status === "pending" || t.status === "in_progress")
+    ) {
+      return "stuck_exhausted";
+    }
     if (t.status === "needs_manual") return "needs_manual";
     if (t.status === "succeeded") return t.dry_run ? "ready" : "submitted";
     if (t.status === "in_progress") return "in_progress";
@@ -56,7 +78,13 @@ export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying
   const view = job.targets.map((t) => ({ target: t, status: displayStatus(t) }));
   const readyKeys = view.filter((v) => v.status === "ready").map((v) => v.target.site_key);
   const retryable = job.targets
-    .filter((t) => t.status === "failed" || t.status === "needs_manual")
+    .filter(
+      (t) =>
+        t.status === "failed" ||
+        t.status === "needs_manual" ||
+        (stuckExhausted?.has(t.site_key) &&
+          (t.status === "pending" || t.status === "in_progress")),
+    )
     .filter((t) => !manualSubmitted.has(t.site_key) && !realSubmitted.has(t.site_key))
     .map((t) => t.site_key);
   const finished =
@@ -132,6 +160,11 @@ export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying
             <span className={`target-status ${status}`}>{DISPLAY_LABELS[status]}</span>
             <span className="site-name">{t.name}</span>
             {status === "error" && t.error && <span className="reason">— {t.error}</span>}
+            {status === "stuck_exhausted" && (
+              <span className="reason">
+                — automatic retries exhausted; the worker never picked this back up
+              </span>
+            )}
             {status === "ready" && (
               <>
                 <button
@@ -208,7 +241,7 @@ export default function JobProgress({ job, auth, onRetry, onSubmitReal, retrying
           for getting the word out. Your event is on its way to the community.
         </p>
       )}
-      {finished && retryable.length > 0 && (
+      {(finished || (stuckExhausted?.size ?? 0) > 0) && retryable.length > 0 && (
         <div className="actions">
           <button type="button" onClick={() => onRetry(retryable)} disabled={retrying}>
             {retrying ? "Re-queuing…" : `Retry ${retryable.length} unfinished`}

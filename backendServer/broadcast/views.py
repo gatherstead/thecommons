@@ -28,6 +28,7 @@ from broadcast.serializers import CanonicalEventSerializer
 from broadcast.services import (
     cancel_submission,
     create_submission,
+    force_retry_stuck_target,
     job_payload,
     manual_recipe,
     retry_targets,
@@ -118,6 +119,24 @@ def job_retry(request, job_id):
             {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
         )
     requeued = retry_targets(submission, site_keys)
+    return Response({"job_id": str(submission.id), "requeued": requeued})
+
+
+@ratelimit(key="ip", rate="10/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([RequiresBroadcastTier1])
+def job_retry_stuck(request, job_id):
+    """Recover targets frozen in_progress by a worker that died mid-run."""
+    try:
+        submission = BroadcastSubmission.objects.get(id=job_id)
+    except BroadcastSubmission.DoesNotExist:
+        raise Http404 from None
+    site_keys = request.data.get("site_keys") or []
+    if not isinstance(site_keys, list) or not site_keys:
+        return Response(
+            {"site_keys": "select at least one site"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    requeued = force_retry_stuck_target(submission, site_keys)
     return Response({"job_id": str(submission.id), "requeued": requeued})
 
 

@@ -11,6 +11,7 @@ urlpatterns = [
     path("submit", views.submit, name="submit"),
     path("jobs/<uuid:job_id>", views.job_detail, name="job-detail"),
     path("jobs/<uuid:job_id>/retry", views.job_retry, name="job-retry"),
+    path("jobs/<uuid:job_id>/retry-stuck", views.job_retry_stuck, name="job-retry-stuck"),
     path("jobs/<uuid:job_id>/submit-real", views.job_submit_real, name="job-submit-real"),
     path("jobs/<uuid:job_id>/cancel", views.job_cancel, name="job-cancel"),
     path(

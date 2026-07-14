@@ -20,6 +20,7 @@ import {
   previewBroadcast,
   redeemAccessCode,
   retryJob,
+  retryStuck,
   submitReal,
 } from "./services/broadcastApi";
 
@@ -103,6 +104,13 @@ export const unfilledOptionalFields = (draft: EventDraft): string[] => {
 
 const POLL_MS = 3000;
 
+// Self-heal thresholds — deliberately more aggressive than the backend's own
+// 60s floor on started_at (see broadcast/routing.py); the server is the final
+// word on whether a reset is actually safe.
+const QUEUED_STUCK_MS = 30_000; // dispatch is near-instant now, so 30s is generous
+const RUNNING_STUCK_MS = 90_000; // 3x BROADCAST_TIMEOUT_MS (30s default)
+const MAX_AUTO_RETRIES_PER_SITE = 2;
+
 const SESSION = loadSession();
 const DRAFT = loadDraft();
 
@@ -184,6 +192,17 @@ export default function App() {
   );
   const [speedSubmit, setSpeedSubmit] = useState(DRAFT.speedSubmit ?? false);
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
+  // Auto-retry counters per site_key, capped at MAX_AUTO_RETRIES_PER_SITE.
+  // A ref (not state) so bumping it doesn't re-trigger the poll effect, and
+  // survives re-renders across ticks of the same interval.
+  const autoRetryCountRef = useRef<Map<string, number>>(new Map());
+  // Site keys with an auto-retry currently in flight — guards against firing
+  // a second retryStuck for the same target before the first one's response
+  // (and the next getJob poll) has had a chance to move it out of "stuck".
+  const autoRetryInFlightRef = useRef<Set<string>>(new Set());
+  // Site keys that have exhausted the auto-retry cap and are still stuck —
+  // surfaced to JobProgress for the "Failed - Worker Stuck" label.
+  const [exhaustedStuckKeys, setExhaustedStuckKeys] = useState<Set<string>>(new Set());
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
   // A trial code authenticates per-request via header; a permanent account
@@ -276,6 +295,15 @@ export default function App() {
     });
   }, [draft, preview, selected, job, extFillStatus, speedSubmit]);
 
+  // A fresh job_id means a fresh run — the retry cap and in-flight guard are
+  // per-job, so start them clean rather than carrying over counts from a
+  // previous submission that happened to reuse a stale ref.
+  useEffect(() => {
+    autoRetryCountRef.current = new Map();
+    autoRetryInFlightRef.current = new Set();
+    setExhaustedStuckKeys(new Set());
+  }, [job?.job_id]);
+
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
     const authSnap: ApiAuth =
@@ -285,14 +313,70 @@ export default function App() {
           ? { jwt }
           : { accessCode: verifiedCode };
     const id = setInterval(() => {
-      getJob(authSnap, jobIdRef.current!)
-        .then(setJob)
+      const currentJobId = jobIdRef.current!;
+      getJob(authSnap, currentJobId)
+        .then((fresh) => {
+          setJob(fresh);
+          detectAndHealStuck(authSnap, currentJobId, fresh);
+        })
         .catch(() => {
           /* transient poll failure — keep polling */
         });
     }, POLL_MS);
     return () => clearInterval(id);
   }, [jobActive, verifiedCode, jwt, accessSource]);
+
+  // Stuck-target self-heal: with server-side polling gone, this client loop is
+  // the primary detector. A job stuck "queued" too long (dispatch should be
+  // near-instant) or a target stuck "in_progress" too long (worker likely
+  // died mid-run) gets one retryStuck call per tick it's newly detected,
+  // capped at MAX_AUTO_RETRIES_PER_SITE per site_key so a permanently broken
+  // site can't loop forever.
+  const detectAndHealStuck = (authSnap: ApiAuth, jobId: string, fresh: JobDetail) => {
+    if (fresh.status !== "queued" && fresh.status !== "running") return;
+
+    const now = Date.now();
+    const stuckKeys: string[] = [];
+
+    if (fresh.status === "queued") {
+      const createdAge = now - new Date(fresh.created_at).getTime();
+      if (createdAge > QUEUED_STUCK_MS) {
+        for (const t of fresh.targets) {
+          if (t.status === "pending") stuckKeys.push(t.site_key);
+        }
+      }
+    }
+
+    for (const t of fresh.targets) {
+      if (t.status !== "in_progress" || !t.started_at) continue;
+      const runningAge = now - new Date(t.started_at).getTime();
+      if (runningAge > RUNNING_STUCK_MS) stuckKeys.push(t.site_key);
+    }
+
+    const toRetry = stuckKeys.filter((key) => {
+      if (autoRetryInFlightRef.current.has(key)) return false; // already firing
+      const count = autoRetryCountRef.current.get(key) ?? 0;
+      if (count >= MAX_AUTO_RETRIES_PER_SITE) {
+        setExhaustedStuckKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+        return false;
+      }
+      return true;
+    });
+    if (toRetry.length === 0) return;
+
+    toRetry.forEach((key) => {
+      autoRetryInFlightRef.current.add(key);
+      autoRetryCountRef.current.set(key, (autoRetryCountRef.current.get(key) ?? 0) + 1);
+    });
+    retryStuck(authSnap, jobId, toRetry)
+      .then(() => getJob(authSnap, jobId).then(setJob))
+      .catch(() => {
+        /* transient failure — the next poll tick will re-detect and retry */
+      })
+      .finally(() => {
+        toRetry.forEach((key) => autoRetryInFlightRef.current.delete(key));
+      });
+  };
 
   // One code box, two code kinds: try it as an UPGRADE code first (permanent,
   // bound to the account), and if the backend rejects that, as a TRIAL code
@@ -444,6 +528,9 @@ export default function App() {
     setAiText("");
     setExtFillStatus({});
     setSpeedSubmit(false);
+    autoRetryCountRef.current = new Map();
+    autoRetryInFlightRef.current = new Set();
+    setExhaustedStuckKeys(new Set());
   };
 
   // Reset everything for a fresh event, but keep the (verified) access/auth state.
@@ -915,6 +1002,7 @@ export default function App() {
             onRetry={handleRetry}
             onSubmitReal={handleSubmitReal}
             retrying={busy}
+            stuckExhausted={exhaustedStuckKeys}
           />
           {jobActive && (
             <div className="actions">

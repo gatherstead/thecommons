@@ -80,6 +80,7 @@ export interface JobTarget {
   error: string;
   external_url: string;
   screenshot_url: string;
+  started_at: string | null;
 }
 
 export interface JobDetail {

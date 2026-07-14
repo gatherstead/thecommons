@@ -1,12 +1,18 @@
 """Direct service-level transition tests for the broadcast state machine.
 Covers branches the API tests don't already assert."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from django.test import TestCase, tag
+from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
-from broadcast.services import cancel_submission, retry_targets, submit_real_targets
+from broadcast.services import (
+    cancel_submission,
+    force_retry_stuck_target,
+    retry_targets,
+    submit_real_targets,
+)
 
 
 def make_submission(status="queued"):
@@ -91,3 +97,60 @@ class RetryTargetsTests(TestCase):
         reset = submission.targets.get(site_key="failed_site")
         self.assertEqual(reset.status, "pending")
         self.assertEqual(reset.error, "")
+
+
+@tag("db")
+class ForceRetryStuckTargetTests(TestCase):
+    def test_stale_in_progress_target_is_reset(self):
+        submission = make_submission(status="running")
+        BroadcastTarget.objects.create(
+            submission=submission,
+            site_key="stuck_site",
+            status="in_progress",
+            started_at=timezone.now() - timedelta(seconds=61),
+            attempts=2,
+        )
+
+        updated = force_retry_stuck_target(submission, ["stuck_site"])
+
+        self.assertEqual(updated, 1)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, "queued")
+        target = submission.targets.get(site_key="stuck_site")
+        self.assertEqual(target.status, "pending")
+        self.assertEqual(target.error, "")
+        self.assertEqual(target.attempts, 2)  # attempts are preserved, not reset
+
+    def test_recently_started_target_is_left_alone(self):
+        submission = make_submission(status="running")
+        BroadcastTarget.objects.create(
+            submission=submission,
+            site_key="active_site",
+            status="in_progress",
+            started_at=timezone.now() - timedelta(seconds=5),
+        )
+
+        updated = force_retry_stuck_target(submission, ["active_site"])
+
+        self.assertEqual(updated, 0)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, "running")
+        target = submission.targets.get(site_key="active_site")
+        self.assertEqual(target.status, "in_progress")
+
+    def test_finished_target_is_noop(self):
+        submission = make_submission(status="done")
+        BroadcastTarget.objects.create(
+            submission=submission,
+            site_key="done_site",
+            status="succeeded",
+            started_at=timezone.now() - timedelta(seconds=120),
+        )
+
+        updated = force_retry_stuck_target(submission, ["done_site"])
+
+        self.assertEqual(updated, 0)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, "done")
+        target = submission.targets.get(site_key="done_site")
+        self.assertEqual(target.status, "succeeded")

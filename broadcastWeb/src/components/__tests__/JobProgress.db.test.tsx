@@ -11,6 +11,7 @@ const target = (over: Partial<JobTarget> & { site_key: string; status: TargetSta
   error: "",
   external_url: "",
   screenshot_url: "",
+  started_at: null,
   ...over,
 });
 

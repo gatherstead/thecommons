@@ -295,11 +295,19 @@ jobs:
           script: |
             set -e
             check() { # check <url> <expected-code>
-              code=$(curl -s -o /dev/null -w '%{http_code}' "$1")
-              if [ "$code" != "$2" ]; then
-                echo "::error::smoke test failed: $1 returned $code, expected $2"
-                exit 1
-              fi
+              # `systemctl restart` returns as soon as the unit is "active", but
+              # nextjs/gunicorn can take a few seconds to actually bind their
+              # socket -- retry through nginx's transient 502 instead of failing
+              # on the very first request after restart.
+              for i in 1 2 3 4 5 6 7 8 9 10; do
+                code=$(curl -s -o /dev/null -w '%{http_code}' "$1")
+                if [ "$code" = "$2" ]; then
+                  return 0
+                fi
+                sleep 2
+              done
+              echo "::error::smoke test failed: $1 returned $code, expected $2"
+              exit 1
             }
             check "https://thecommons.town/" 200
             check "https://broadcast.thecommons.town/" 200

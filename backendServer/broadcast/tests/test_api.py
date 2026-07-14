@@ -1,7 +1,9 @@
+from datetime import timedelta
 from unittest import mock
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings, tag
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from broadcast.access import hash_code
@@ -177,6 +179,88 @@ class SubmitAndJobTest(TestCase):
         target.refresh_from_db()
         self.assertEqual(target.status, "pending")
         self.assertEqual(target.error, "")
+
+
+@override_settings(RATELIMIT_ENABLE=False)
+@tag("db")
+class RetryStuckJobTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        BroadcastAccess.objects.create(email="makrs@example.com", tier=1)
+
+    def _submit(self, site_keys, dry_run=True):
+        with _patch_jwt("makrs@example.com"):
+            return self.client.post(
+                "/broadcast/submit",
+                {"event": EVENT, "site_keys": site_keys, "dry_run": dry_run},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
+
+    def _retry_stuck(self, job_id, site_keys):
+        with _patch_jwt("makrs@example.com"):
+            return self.client.post(
+                f"/broadcast/jobs/{job_id}/retry-stuck",
+                {"site_keys": site_keys},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
+
+    def _get_job(self, job_id):
+        with _patch_jwt("makrs@example.com"):
+            return self.client.get(
+                f"/broadcast/jobs/{job_id}",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
+
+    def test_stale_stuck_target_is_requeued(self):
+        job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
+        submission = BroadcastSubmission.objects.get(id=job_id)
+        target = submission.targets.get()
+        target.status = "in_progress"
+        target.started_at = timezone.now() - timedelta(seconds=61)
+        target.save()
+        submission.status = "running"
+        submission.save()
+
+        resp = self._retry_stuck(job_id, ["explore_pittsboro"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["requeued"], 1)
+
+        detail = self._get_job(job_id).json()
+        self.assertEqual(detail["status"], "queued")
+        stuck_target = detail["targets"][0]
+        self.assertEqual(stuck_target["status"], "pending")
+        self.assertIn("started_at", stuck_target)
+
+    def test_recently_started_target_is_not_requeued(self):
+        job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
+        submission = BroadcastSubmission.objects.get(id=job_id)
+        target = submission.targets.get()
+        target.status = "in_progress"
+        target.started_at = timezone.now() - timedelta(seconds=5)
+        target.save()
+        submission.status = "running"
+        submission.save()
+
+        resp = self._retry_stuck(job_id, ["explore_pittsboro"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["requeued"], 0)
+
+        detail = self._get_job(job_id).json()
+        self.assertEqual(detail["status"], "running")
+        still_stuck = detail["targets"][0]
+        self.assertEqual(still_stuck["status"], "in_progress")
+        self.assertIn("started_at", still_stuck)
+
+    def test_rejects_empty_sites(self):
+        job_id = self._submit(["explore_pittsboro"]).json()["job_id"]
+        resp = self._retry_stuck(job_id, [])
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unknown_job_not_found(self):
+        resp = self._retry_stuck("00000000-0000-0000-0000-000000000000", ["explore_pittsboro"])
+        self.assertEqual(resp.status_code, 404)
 
 
 @override_settings(RATELIMIT_ENABLE=False)

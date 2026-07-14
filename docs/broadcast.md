@@ -6,10 +6,10 @@ It spans four places:
 
 | Piece | Path | Role |
 |-------|------|------|
-| Backend app | `backendServer/broadcast/` | Models, routing, adapters, DB-queue worker, API |
+| Backend app | `backendServer/broadcast/` | Models, routing, adapters, on-demand Celery worker, API |
 | Operator SPA | `broadcastWeb/` | Vite + React console (select sites → extension autofill) |
 | Browser extension | `broadcastExtension/` | Primary Chrome MV3 autofill helper — opens each calendar in a tab |
-| Worker service | `broadcast-worker` (systemd) | Runs `run_broadcast_worker` continuously in prod (oneshot path) |
+| Worker service | `broadcast-worker` (systemd) | `celery -A backend worker -Q broadcast -c 1` — drains the dedicated `broadcast` Celery queue (oneshot path) |
 
 **Key files:** `broadcast/services.py`, `broadcast/worker.py`, `broadcast/runner.py`, `broadcast/routing.py`, `broadcast/schema.py`, `broadcast/access.py`, `broadcast/adapters/`.
 
@@ -17,7 +17,7 @@ It spans four places:
 
 - **Isolation from `events/`.** `broadcast/routing.py` must not import from `events` (enforced by `test_isolation.py`). The broadcast app operates on its own denormalized copy of an event (`CanonicalEvent` / `BroadcastSubmission`), never on `events.Event`. The ingestion bridge (`POST /api/events/direct-submit`) that fires alongside preview preserves this contract: its code lives entirely in `ingestion/`, and `broadcast/` still imports nothing from `events/` or `ingestion/`.
 - **No Django ORM inside `sync_playwright`.** `runner.py` fetches everything into plain objects first, then drives the browser. Playwright must never run inside gunicorn.
-- **Not Celery.** Broadcast has its own Postgres-backed queue (`SELECT FOR UPDATE SKIP LOCKED`), independent of the Celery/Redis stack.
+- **Single-concurrency `broadcast` Celery queue.** Both `process_broadcast_queue` and `recover_broadcast_orphans` are routed to a dedicated `broadcast` queue (`CELERY_TASK_ROUTES` in `backend/settings/base.py`), drained by exactly one `-c 1` worker. This is load-bearing, not a tuning default: `recover_orphans()` assumes any `running` submission at startup is orphaned, so a second concurrent worker could race a live queue-drain and re-queue an in-flight target.
 - **Adapters never invent content, never call an LLM at runtime, and never solve captchas.** Missing required field / captcha / login wall → the target ends `needs_manual`.
 
 ## Submission modes
@@ -58,7 +58,7 @@ SPA.sendFill(extensionId, recipe) ───────────────�
 1. **Preview** (`views.preview`) — serializes the event into a `CanonicalEvent` (`schema.py`, ORM-decoupled; converts UTC → `America/New_York`), then `routing.eligible_targets()` matches each adapter's eligibility (locality ∩ category sets) and returns eligible vs excluded-with-reason. Deterministic, no side effects. **The SPA also fires `POST /api/events/direct-submit` (fire-and-forget, non-blocking) on the same click** — this is the ingestion bridge that routes the event into the standardization pipeline without waiting for the next cron run. A failure of the direct-submit call never blocks or affects the preview result.
 2. **Direct recipe** (`views.direct_recipe`, `POST /broadcast/direct-recipe`) — takes event data + `site_key`, validates via `CanonicalEventSerializer`, calls `adapter.recipe()`, and returns the recipe JSON. No `BroadcastSubmission` row created; pure read-through. 404 if site unknown or login-gated (no recipe). Rate-limited 30/m.
 3. **Extension fill** — SPA calls `sendFill(extensionId, recipe)` for each site. The extension opens a tab at `recipe.url`, injects `content.js`, which fills all non-captcha fields and shows a sticky review banner. Never clicks submit.
-4. **Oneshot worker path** (disabled in SPA) — `views.submit` → `services.create_submission` creates `BroadcastSubmission` + `BroadcastTarget` rows, status `queued`. Worker (`run_broadcast_worker`) claims them, calls `adapter.fill_and_submit`, screenshots, and records status. Review & submit-real flow promotes dry-run targets to real. See below for details.
+4. **Oneshot worker path** (disabled in SPA) — `views.submit` → `services.create_submission` creates `BroadcastSubmission` + `BroadcastTarget` rows, status `queued`, then calls `_dispatch_worker()`, which does `transaction.on_commit(process_broadcast_queue.delay)` — an on-demand Celery task, routed to the dedicated `broadcast` queue, that drains the queue (`worker.claim_next` → `adapter.fill_and_submit`, screenshots, records status) by looping `worker.run_once()` until empty. `retry_targets` and `submit_real_targets` call the same dispatcher. Review & submit-real flow promotes dry-run targets to real. See below for details.
 
 ## Models
 
@@ -185,7 +185,7 @@ Auth: Bearer JWT or `X-Broadcast-Access-Code` header/body (resolved as a tier). 
 
 | Command | Purpose |
 |---------|---------|
-| `run_broadcast_worker [--once]` | The queue worker loop (systemd in prod; `--once` for dev/tests) |
+| `run_broadcast_worker [--once]` | Debug helper only — `--once` drains one submission via `worker.run_once()` without Celery. Not a service entrypoint; prod/dev dispatch goes through the `broadcast` Celery queue. |
 | `broadcast_dry_run --site --fixture` | Run one adapter dry against a fixture (`broadcast/fixtures/`) |
 | `capture_broadcast_form <site>` | Capture a live form's HTML/PNG for selector picking |
 | `check_recipes [--live]` | Audit recipe selectors offline; `--live` loads each real form (hits third-party sites — run deliberately) |
@@ -199,7 +199,6 @@ Auth: Bearer JWT or `X-Broadcast-Access-Code` header/body (resolved as a tier). 
 
 | Var | Meaning |
 |-----|---------|
-| `BROADCAST_AUTOSPAWN_WORKER` | Spawn a one-shot worker on submit/retry (**true in dev**, false in prod) |
 | `BROADCAST_ENABLE_MOCK` | Add the mock adapter to the registry (CI/dev) |
 | `BROADCAST_HEADLESS` | Run Chromium headless (default true) |
 | `BROADCAST_DRY_RUN_DEFAULT` | Default dry-run for submissions |
@@ -209,10 +208,17 @@ Auth: Bearer JWT or `X-Broadcast-Access-Code` header/body (resolved as a tier). 
 
 SPA env (`broadcastWeb/.env`): `VITE_BROADCAST_API_BASE_URL` (Django API), `VITE_BROADCAST_EXTENSION_ID` (required — enables the extension autofill primary flow), `VITE_BETTER_AUTH_URL` (Better Auth base URL — `https://auth.thecommons.town` in prod, `http://localhost:3000` in dev).
 
-## Dev vs prod worker
+## Dispatch model: on-demand Celery (Suite 25)
 
-- **Dev:** `BROADCAST_AUTOSPAWN_WORKER=true` → `services` detaches `run_broadcast_worker --once` via `transaction.on_commit` on submit/retry. Safe alongside other workers (`SKIP LOCKED`, separate process, `--once` skips orphan recovery).
-- **Prod:** the systemd `broadcast-worker` runs `run_broadcast_worker` continuously (autospawn off; it is authoritative). Tuned for a 6 GB ARM64 VM (concurrency 1, bundled Chromium). See [DEPLOY.md](../DEPLOY.md).
+Dispatch is triggered by the app, not polled by the worker. `services._dispatch_worker()` calls `transaction.on_commit(process_broadcast_queue.delay)` from `create_submission`, `retry_targets`, and `submit_real_targets` — so a submission enqueues its own drain the instant the transaction commits, instead of a worker polling Postgres on a fixed interval.
+
+- **`process_broadcast_queue`** (`broadcast/tasks.py`) — the Celery task that actually drains the queue: loops `worker.run_once()` (which wraps `claim_next` → `SELECT FOR UPDATE SKIP LOCKED` → `adapter.fill_and_submit`) until nothing is left to claim.
+- **`recover_broadcast_orphans`** (`broadcast/tasks.py`) — crash-recovery only. Seeded as a django-celery-beat periodic task (`broadcast-orphan-recovery`, migration `0009_seed_orphan_recovery_beat.py`) running every 6 hours on the hour, UTC. It re-queues any submission left `running` by a worker that crashed mid-drain. This is a belt-and-suspenders net, not the normal recovery path (see below).
+- **Both tasks share the single `broadcast` Celery queue**, drained by exactly one `-c 1` worker (systemd `broadcast-worker`, `celery -A backend worker -Q broadcast -c 1`). That single-worker invariant is what makes `recover_orphans()`'s "any `running` row is orphaned" assumption safe — a second concurrent worker would let a live drain race orphan recovery.
+- **Dev:** there is no autospawned worker. Run `celery -A backend worker -Q broadcast -c 1 -l info` locally to drain the queue, or set `CELERY_TASK_ALWAYS_EAGER=True` (as `settings/test.py` does) to execute tasks synchronously without a worker at all.
+- **Normal stalled-target recovery is client-driven, not server-polled.** The SPA's 3s poll loop (`broadcastWeb/src/App.tsx`) flags a target stuck if it's `queued` >30s or `in_progress` >90s, then calls `POST /broadcast/jobs/<id>/retry-stuck` for just those site keys (capped at 2 auto-retries per site before showing "Failed - Worker Stuck"). That endpoint (`views.job_retry_stuck` → `services.force_retry_stuck_target`) only resets a target if its `started_at` is more than 60 seconds old — a server-side floor so a client can't yank a target that's genuinely mid-fill. The 6h beat sweep exists only to catch what a crashed worker leaves behind between client sessions.
+
+See [DEPLOY.md](../DEPLOY.md) for the systemd unit.
 
 ## Notable behaviors
 

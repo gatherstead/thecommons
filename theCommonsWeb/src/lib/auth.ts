@@ -20,12 +20,18 @@ const extraOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
     .map((o) => o.trim())
     .filter(Boolean);
 
+// Better Auth's own trustedOrigins list only governs internal origin/redirect
+// validation — it does not emit Access-Control-Allow-* response headers.
+// Cross-origin callers (broadcastWeb, in dev or prod) need those set
+// explicitly; see the route handler in app/api/auth/[...all]/route.ts.
+export const TRUSTED_ORIGINS = [...BASE_TRUSTED_ORIGINS, ...extraOrigins];
+
 const cookieDomain = process.env.BETTER_AUTH_COOKIE_DOMAIN;
 
 export const auth = betterAuth({
     baseURL: process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
     secret: process.env.BETTER_AUTH_SECRET,
-    trustedOrigins: [...BASE_TRUSTED_ORIGINS, ...extraOrigins],
+    trustedOrigins: TRUSTED_ORIGINS,
     database: drizzleAdapter(db, {
         provider: 'pg',
         schema: {

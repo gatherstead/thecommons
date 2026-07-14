@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `25`
+**Next suite number:** `26`
 
 ## Suite ledger
 
@@ -23,6 +23,7 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 22 | Code-quality hardening (lint / types / CI) | Needs QA | T0–T7, T12 | _(pending)_ |
 | 23 | Dev tooling / slash-commands | Needs QA | 23.1–23.6 | _(pending)_ |
 | 24 | Notion sync (outbox → Kanban) | Needs QA | 24.1–24.2 | _(pending)_ |
+| 25 | Broadcast dispatch on Celery (kill the 3s Neon poll) | Needs QA | 25.1–25.9 | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

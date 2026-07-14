@@ -5,9 +5,13 @@ extraction logic lives in each scraper's own module; this file only wires
 them up by key.
 """
 
+from ingestion.scraping.scrapers.theplantnc import TheplantncScraper
+from ingestion.scraping.scrapers.visitchapelhill import VisitchapelhillScraper
 from ingestion.scraping.scrapers.visitpittsboro import VisitpittsboroScraper
 
 _SCRAPERS = [
+    TheplantncScraper(),
+    VisitchapelhillScraper(),
     VisitpittsboroScraper(),
 ]
 

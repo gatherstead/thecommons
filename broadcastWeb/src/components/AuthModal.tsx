@@ -10,6 +10,7 @@ export default function AuthModal({ onClose }: AuthModalProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [userType, setUserType] = useState<"VENUE" | "BUSINESS">("VENUE");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,24 +25,39 @@ export default function AuthModal({ onClose }: AuthModalProps) {
   const handleSignIn = async () => {
     setLoading(true);
     setError("");
-    const result = await authClient.signIn.email({ email, password });
-    setLoading(false);
-    if (result.error) {
-      setError(result.error.message ?? "Sign in failed.");
-    } else {
-      onClose();
+    try {
+      const result = await authClient.signIn.email({ email, password });
+      if (result.error) {
+        setError(result.error.message ?? "Sign in failed. Check your email and password.");
+      } else {
+        onClose();
+      }
+    } catch {
+      setError("Couldn't reach the sign-in server. Check your connection and try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSignUp = async () => {
     setLoading(true);
     setError("");
-    const result = await authClient.signUp.email({ email, password, name });
-    setLoading(false);
-    if (result.error) {
-      setError(result.error.message ?? "Account creation failed.");
-    } else {
-      onClose();
+    try {
+      const result = await authClient.signUp.email({
+        email,
+        password,
+        name,
+        user_type: userType,
+      });
+      if (result.error) {
+        setError(result.error.message ?? "Account creation failed.");
+      } else {
+        onClose();
+      }
+    } catch {
+      setError("Couldn't reach the sign-up server. Check your connection and try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -77,17 +93,32 @@ export default function AuthModal({ onClose }: AuthModalProps) {
           }}
         >
           {mode === "signup" && (
-            <div className="field">
-              <label htmlFor="auth-name">Name</label>
-              <input
-                id="auth-name"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoComplete="name"
-                disabled={loading}
-              />
-            </div>
+            <>
+              <div className="field">
+                <label htmlFor="auth-name">Name</label>
+                <input
+                  id="auth-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="field" style={{ marginTop: "0.75rem" }}>
+                <label htmlFor="auth-user-type">Account type</label>
+                <select
+                  id="auth-user-type"
+                  value={userType}
+                  onChange={(e) => setUserType(e.target.value as "VENUE" | "BUSINESS")}
+                  disabled={loading}
+                >
+                  <option value="VENUE">Venue</option>
+                  <option value="BUSINESS">Business</option>
+                </select>
+              </div>
+            </>
           )}
 
           <div className="field" style={mode === "signup" ? { marginTop: "0.75rem" } : undefined}>

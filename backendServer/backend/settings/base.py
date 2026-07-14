@@ -118,9 +118,6 @@ BROADCAST_DOWNLOAD_DIR = os.getenv(
     "BROADCAST_DOWNLOAD_DIR", str(BASE_DIR / "broadcast_artifacts" / "downloads")
 )
 BROADCAST_TIMEOUT_MS = int(os.getenv("BROADCAST_TIMEOUT_MS", "30000"))
-# When on, submit/retry spawn a one-shot worker process to drain the queue.
-# Off in prod (the systemd broadcast-worker handles it); dev turns it on.
-BROADCAST_AUTOSPAWN_WORKER = os.getenv("BROADCAST_AUTOSPAWN_WORKER", "false").lower() == "true"
 
 # ── Ingestion scraper (Playwright page render) ───────────────────────────────
 INGEST_SCRAPER_HEADLESS = os.getenv("INGEST_SCRAPER_HEADLESS", "true").lower() != "false"
@@ -151,8 +148,15 @@ CELERY_TIMEZONE = "UTC"
 # Headless-Chrome scraping is memory-heavy — pin it to its own queue drained by a
 # dedicated, memory-capped worker (deploy/scrape-worker.service) so it never shares
 # the default worker with digests/ingestion.
+#
+# The two broadcast tasks below share this SAME `broadcast` queue, drained by a
+# SINGLE `-c 1` worker. That's load-bearing: recover_broadcast_orphans assumes any
+# submission still in 'running' status is orphaned, which only holds if it can
+# never run while process_broadcast_queue is mid-drain on another worker.
 CELERY_TASK_ROUTES = {
     "ingestion.tasks.scrape_all_sources_task": {"queue": "scrape"},
+    "broadcast.tasks.process_broadcast_queue": {"queue": "broadcast"},
+    "broadcast.tasks.recover_broadcast_orphans": {"queue": "broadcast"},
 }
 
 # Read-endpoint cache on Redis DB 1 (broker is DB 0). dev.py swaps this for a

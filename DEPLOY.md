@@ -115,6 +115,13 @@ Django admin.
 The broadcast feature adds a third subdomain, a Playwright worker, and a static SPA.
 Do all seven in order.
 
+> **Local dev note:** `BROADCAST_AUTOSPAWN_WORKER` no longer exists — Suite 25 moved
+> broadcast dispatch onto on-demand Celery (`transaction.on_commit(process_broadcast_queue.delay)`),
+> so there's nothing to autospawn. To drain broadcast jobs locally, either run
+> `celery -A backend worker -Q broadcast -c 1 -l info` alongside `runserver`, or set
+> `CELERY_TASK_ALWAYS_EAGER=True` (as `settings/test.py` does) to execute tasks
+> synchronously with no worker at all. See [`docs/broadcast.md`](docs/broadcast.md).
+
 1. **TLS (do this first).** The existing origin cert covers only `thecommons.town`
    and `api.thecommons.town`. In the Cloudflare dashboard, reissue an origin cert
    for `thecommons.town, *.thecommons.town`, replace
@@ -138,7 +145,18 @@ Do all seven in order.
 5. **Env.** Add the `BROADCAST_*` block from `backendServer/.env.example` to
    `backendServer/.env`, and append `https://broadcast.thecommons.town` to both
    `CORS_EXTRA_ORIGINS` and `CSRF_TRUSTED_ORIGINS`.
-6. **Worker service:**
+6. **Worker service.** Broadcast dispatch is on-demand Celery, not a poll loop:
+   the app calls `transaction.on_commit(process_broadcast_queue.delay)` on
+   submit/retry, routed to a dedicated `broadcast` Celery queue
+   (`CELERY_TASK_ROUTES` in `backend/settings/base.py`). `deploy/broadcast-worker.service`
+   runs `celery -A backend worker -Q broadcast -c 1 -l info` — **`-c 1` is
+   mandatory, not a tuning default**: `recover_orphans()` assumes any `running`
+   submission at startup is orphaned, so a second concurrent worker could race
+   a live queue-drain. A `broadcast-orphan-recovery` beat task (seeded by
+   migration `0009_seed_orphan_recovery_beat.py`) sweeps orphaned submissions
+   every 6 hours as a crash-recovery net; normal stalled-target recovery is
+   client-driven from the SPA (`POST /broadcast/jobs/<id>/retry-stuck`) and
+   doesn't involve this worker restarting.
    ```bash
    cd /home/ubuntu/thecommons
    sudo cp deploy/broadcast-worker.service /etc/systemd/system/
@@ -384,7 +402,7 @@ also runs standalone: `/snap/bin/uv run python manage.py healthcheck [--json]`.
 | `redis-server` | Celery broker + cache | `/etc/redis/redis.conf` | localhost-bound, password-protected, 512 MB allkeys-lru |
 | `celery` | Async task worker | `deploy/celery.service` | `/snap/bin/uv run celery -A backend worker`, concurrency 2, drains Redis DB 0 |
 | `celerybeat` | Scheduler | `deploy/celerybeat.service` | DatabaseScheduler; **exactly one** process |
-| `broadcast-worker` | Playwright form-filler | `deploy/broadcast-worker.service` | `run_broadcast_worker`, MemoryMax 2G |
+| `broadcast-worker` | Playwright form-filler | `deploy/broadcast-worker.service` | `celery -A backend worker -Q broadcast -c 1`, MemoryMax 2G, drains the dedicated `broadcast` queue only |
 | `scrape-worker` | Ingestion scraper (Playwright) | `deploy/scrape-worker.service` | `celery -A backend worker -Q scrape -c 1`, MemoryMax 2G, drains the dedicated `scrape` queue only |
 
 ```bash

@@ -123,6 +123,18 @@ export const retryJob = (
     site_keys: siteKeys,
   });
 
+// Self-heal path for a stuck queued/in_progress target — unlike retryJob, the
+// backend will reset an in_progress target back to pending (subject to its own
+// 60s floor on started_at) so a hung worker doesn't block the site forever.
+export const retryStuck = (
+  auth: ApiAuth,
+  jobId: string,
+  siteKeys: string[],
+): Promise<{ job_id: string; requeued: number }> =>
+  post(`/broadcast/jobs/${jobId}/retry-stuck`, auth, {
+    site_keys: siteKeys,
+  });
+
 // Promote dry-run targets to a real submission within an existing job. The
 // backend flips dry_run=false and re-queues only the sites still in dry run.
 export const submitReal = (

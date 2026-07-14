@@ -28,6 +28,11 @@ class Scraper:
     # Human-readable English name of the source site, used to attribute published
     # events (Event.source_name) — e.g. "Visit Pittsboro", not "visitpittsboro.com".
     name: str = ""
+    # CSS selector `render_page` should wait for before snapshotting the DOM.
+    # Only needed when the event markup itself is injected by a client-side
+    # XHR that fires after "domcontentloaded" (e.g. a widget that calls a REST
+    # API on mount) — plain server-rendered pages can leave this None.
+    wait_selector: str | None = None
 
     def extract(self, html: str) -> list[RawEventData]:
         raise NotImplementedError

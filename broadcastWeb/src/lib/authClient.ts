@@ -1,10 +1,20 @@
+import { inferAdditionalFields } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
 const AUTH_URL =
   import.meta.env.VITE_BETTER_AUTH_URL || "http://localhost:3000";
 
+// Mirrors the `user.additionalFields.user_type` shape declared in
+// theCommonsWeb/src/lib/auth.ts. Declared inline (not imported) since that
+// file pulls in server-only deps (drizzle db connection) unsuitable for a
+// browser bundle.
 export const authClient = createAuthClient({
   baseURL: AUTH_URL,
+  plugins: [
+    inferAdditionalFields({
+      user: { user_type: { type: "string" } },
+    }),
+  ],
 });
 
 // Mint a short-lived JWT from an active Better Auth session cookie.

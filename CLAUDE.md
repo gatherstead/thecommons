@@ -29,7 +29,7 @@ cd theCommonsWeb && pnpm install && pnpm dev
 - If a doc contradicts the code, **trust the code** and flag the doc drift.
 - In task recaps, include the **ticket name** if given (10.2, T12, etc.).
 - Run `python manage.py migrate` after model changes — but never for `neon_auth` mirrors (`managed = False`).
-- Async work runs on Redis + Celery (DB 0 = broker/results, DB 1 = cache); the `broadcast` worker is separate (its own DB queue, not Celery). Keep `broadcast/` isolated — `routing.py` must not import from `events`, and never use the ORM inside `sync_playwright`.
+- Async work runs on Redis + Celery (DB 0 = broker/results, DB 1 = cache); broadcast dispatch now runs on Celery too, via a dedicated `broadcast` queue drained by a single `-c 1` worker (on-demand `transaction.on_commit(process_broadcast_queue.delay)`, not a poll loop). Keep `broadcast/` isolated — `routing.py` must not import from `events`, and never use the ORM inside `sync_playwright`.
 - Frontend type-checks with `pnpm build`. Backend tests run under the test settings: `DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test` (Postgres test DB; `--tag=fast` for the no-DB tier, `--tag=db` for the DB tier). See [`backendServer/AGENTS.md`](backendServer/AGENTS.md#testing).
 
 ## Notion sync (keep the Kanban board in step)

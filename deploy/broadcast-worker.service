@@ -1,21 +1,27 @@
 # Broadcast Playwright worker — copy to /etc/systemd/system/broadcast-worker.service
 # then: sudo systemctl daemon-reload && sudo systemctl enable --now broadcast-worker
 #
-# Mirrors the gunicorn service pattern (runs as ubuntu, restart on failure).
-# The worker claims queued BroadcastSubmissions from Postgres (FOR UPDATE SKIP
-# LOCKED) and drives bundled Chromium — one submission at a time, sequential
-# targets. Chromium lives in /home/ubuntu/.cache/ms-playwright/ (installed via
-# `uv run playwright install chromium` as the ubuntu user — NEVER "chrome").
+# Drains the dedicated `broadcast` queue (broadcast.tasks, routed via
+# CELERY_TASK_ROUTES in backend/settings/base.py) and drives bundled Chromium —
+# one submission at a time, sequential targets. Chromium lives in
+# /home/ubuntu/.cache/ms-playwright/ (installed via `uv run playwright install
+# chromium` as the ubuntu user — NEVER "chrome").
+#
+# -c 1 is mandatory, not a tuning default: recover_orphans() assumes a single
+# worker (any 'running' submission at startup is necessarily orphaned), so
+# concurrency > 1 would let a live queue-drain race orphan recovery.
 
 [Unit]
 Description=The Commons broadcast worker (Playwright form-filler)
-After=network.target
+After=network.target redis-server.service
+Requires=redis-server.service
 
 [Service]
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/thecommons/backendServer
-ExecStart=/snap/bin/uv run python manage.py run_broadcast_worker
+EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
+ExecStart=/snap/bin/uv run celery -A backend worker -Q broadcast -c 1 -l info
 Restart=on-failure
 RestartSec=5
 # Screenshot/download dirs (BROADCAST_SCREENSHOT_DIR / BROADCAST_DOWNLOAD_DIR

@@ -40,7 +40,7 @@ class ScraperImporterTests(TestCase):
     def test_parses_page_into_raw_events(self):
         with self._patched_render() as render:
             created = fetch_scraper_source(self.source)
-        render.assert_called_once_with(self.source.url)
+        render.assert_called_once_with(self.source.url, wait_selector=None)
         self.assertEqual(len(created), 3)
 
         titles = set(RawEvent.objects.values_list("raw_title", flat=True))

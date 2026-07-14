@@ -103,12 +103,19 @@ class AccessCode(models.Model):
     than metered by uses. UPGRADE codes are redeemed only by a logged-in user
     via POST /broadcast/redeem and permanently set that account's
     BroadcastAccess.tier; they never touch the anonymous path.
+
+    `code` is stored in plaintext so operators can copy a code after creation
+    (e.g. to hand it to a user) — a deliberate convenience-over-defense-in-depth
+    tradeoff for this low-stakes access gate. Validation never reads `code`;
+    resolve_access()/redeem_upgrade_code() only ever compare against
+    `code_hash`. Null for codes created before this field existed.
     """
 
     KIND_TRIAL = "trial"
     KIND_UPGRADE = "upgrade"
     KIND_CHOICES = [(KIND_TRIAL, "Trial (anonymous)"), (KIND_UPGRADE, "Upgrade (account)")]
 
+    code = models.CharField(max_length=64, unique=True, null=True, blank=True)
     code_hash = models.CharField(max_length=64, unique=True)
     label = models.CharField(max_length=64)
     kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=KIND_TRIAL)

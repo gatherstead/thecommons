@@ -1,10 +1,10 @@
 """Evergreen sales-facing access codes — see SalesCodeSlot in models.py.
 
-Unlike AccessCode elsewhere (hash-only, raw code shown once at generation),
-these three slots deliberately keep the raw code around so the admin can
-always display a live, copyable code with no CLI involved. Rotating creates
-a brand-new AccessCode and repoints the slot at it — the old code is left
-active (not revoked), so anyone who already has it keeps working.
+These three slots keep the raw code on SalesCodeSlot.raw_code (in addition to
+AccessCode.code) so the admin can always display a live, copyable code with
+no CLI involved. Rotating creates a brand-new AccessCode and repoints the
+slot at it — the old code is left active (not revoked), so anyone who
+already has it keeps working.
 """
 
 import secrets
@@ -27,6 +27,7 @@ def rotate_sales_slot(slot: str) -> SalesCodeSlot:
     )
 
     code = AccessCode.objects.create(
+        code=raw,
         code_hash=hash_code(raw),
         label=f"sales-{slot}",
         kind=kind,

@@ -1,6 +1,7 @@
 """Persistence for broadcast submissions. Views stay thin; logic lives here."""
 
-from django.conf import settings
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -8,14 +9,11 @@ from broadcast.models import BroadcastSubmission, BroadcastTarget
 from broadcast.schema import CanonicalEvent, event_from_submission
 
 
-def _maybe_autospawn_worker() -> None:
-    """Kick a one-shot worker after commit, if auto-spawn is enabled (dev/single
-    box). Prod leaves this off and relies on the systemd broadcast-worker."""
-    if not getattr(settings, "BROADCAST_AUTOSPAWN_WORKER", False):
-        return
-    from broadcast.worker import spawn_worker_once
+def _dispatch_worker() -> None:
+    """Kick the Celery broadcast queue-drain after this transaction commits."""
+    from broadcast.tasks import process_broadcast_queue  # local import avoids app-load cycle
 
-    transaction.on_commit(spawn_worker_once)
+    transaction.on_commit(process_broadcast_queue.delay)
 
 
 @transaction.atomic
@@ -53,7 +51,7 @@ def create_submission(
     # the DB constraint backstops any race.
     for site_key in dict.fromkeys(site_keys):
         BroadcastTarget.objects.create(submission=submission, site_key=site_key, dry_run=dry_run)
-    _maybe_autospawn_worker()
+    _dispatch_worker()
     return submission
 
 
@@ -73,7 +71,29 @@ def retry_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
         submission.status = "queued"
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
-        _maybe_autospawn_worker()
+        _dispatch_worker()
+    return updated
+
+
+@transaction.atomic
+def force_retry_stuck_target(submission: BroadcastSubmission, site_keys: list[str]) -> int:
+    """Recover targets orphaned by a worker that died mid-run.
+
+    Only resets targets that are still in_progress AND whose started_at is
+    older than a 60s server-side floor — an independent guard so a genuinely
+    active target can't be clobbered by a client-side detection race.
+    """
+    cutoff = timezone.now() - timedelta(seconds=60)
+    updated = submission.targets.filter(
+        site_key__in=site_keys,
+        status="in_progress",
+        started_at__lt=cutoff,
+    ).update(status="pending", error="", external_url="", screenshot_path="")
+    if updated:
+        submission.status = "queued"
+        submission.finished_at = None
+        submission.save(update_fields=["status", "finished_at"])
+        _dispatch_worker()
     return updated
 
 
@@ -94,7 +114,7 @@ def submit_real_targets(submission: BroadcastSubmission, site_keys: list[str]) -
         submission.status = "queued"
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
-        _maybe_autospawn_worker()
+        _dispatch_worker()
     return updated
 
 
@@ -137,6 +157,7 @@ def job_payload(submission: BroadcastSubmission) -> dict:
                 "attempts": t.attempts,
                 "dry_run": t.dry_run,
                 "error": t.error,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
                 "external_url": t.external_url,
                 "screenshot_url": (
                     f"/broadcast/jobs/{submission.id}/screenshots/{t.site_key}"

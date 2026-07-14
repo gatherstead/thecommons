@@ -78,14 +78,16 @@ class SetBroadcastAccessTest(TestCase):
 class GenerateAccessCodeTest(TestCase):
     def test_raw_code_in_output(self):
         out = _call("generate_access_code")
-        self.assertIn("Store it now", out)
-        # The raw code block appears between "ACCESS CODE (copy now):" and "Store it now"
-        self.assertIn("ACCESS CODE", out)
+        self.assertIn("ACCESS CODE (copy now):", out)
 
-    def test_db_stores_hash_not_raw(self):
-        _call("generate_access_code", label="hashtest")
+    def test_db_stores_hash_and_raw(self):
+        out = _call("generate_access_code", label="hashtest")
         code = AccessCode.objects.get(label="hashtest")
         self.assertEqual(len(code.code_hash), 64)
+        lines = out.splitlines()
+        raw = lines[lines.index("ACCESS CODE (copy now):") + 1].strip()
+        self.assertEqual(code.code, raw)
+        self.assertEqual(hash_code(raw), code.code_hash)
 
     def test_default_kind_is_trial_tier_2_unlimited_uses_3_day_expiry(self):
         _call("generate_access_code", label="defaults")

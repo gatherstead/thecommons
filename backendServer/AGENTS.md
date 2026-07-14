@@ -1,6 +1,6 @@
 # backendServer — Agent Map
 
-Django 6 + DRF backend. Python 3.13, managed by `uv`. Four apps: `events` (public API + digests), `ingestion` (LLM pipeline), `broadcast` (event syndication), `backend` (config + auth bridge + Celery). Database is Postgres on Neon. Async on Redis + Celery; broadcast runs its own DB-queue worker. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for cross-cutting detail.
+Django 6 + DRF backend. Python 3.13, managed by `uv`. Four apps: `events` (public API + digests), `ingestion` (LLM pipeline), `broadcast` (event syndication), `backend` (config + auth bridge + Celery). Database is Postgres on Neon. Async on Redis + Celery; broadcast dispatch is on-demand Celery too, routed to its own single-concurrency `broadcast` queue (mirrors the `scrape` queue) rather than a polling worker. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for cross-cutting detail.
 
 ## Directory Map
 
@@ -36,11 +36,12 @@ backendServer/
 ├── broadcast/                     # Event syndication (see ../docs/broadcast.md)
 │   ├── models.py                  #   BroadcastSubmission, BroadcastTarget, BroadcastAccess, AccessCode, AccessCodeUse
 │   ├── schema.py / routing.py     #   CanonicalEvent (ORM-decoupled); tag-based eligibility
-│   ├── services.py / worker.py    #   Submission persistence; DB-queue worker (SKIP LOCKED)
+│   ├── services.py / worker.py    #   Submission persistence + on-demand Celery dispatch; queue drain (SKIP LOCKED)
+│   ├── tasks.py                   #   Celery: process_broadcast_queue, recover_broadcast_orphans (routed to `broadcast` queue)
 │   ├── runner.py                  #   sync_playwright runner (no ORM inside)
 │   ├── views.py / serializers.py / permissions.py / access.py
 │   ├── adapters/                  #   One module per target site (10 Tier-1 + mock) + registry
-│   └── management/commands/       #   run_broadcast_worker, broadcast_dry_run, capture_broadcast_form,
+│   └── management/commands/       #   run_broadcast_worker (--once debug helper), broadcast_dry_run, capture_broadcast_form,
 │                                  #     check_recipes, scaffold_adapter, set_broadcast_access,
 │                                  #     generate_access_code, list_access_codes, revoke_access_code
 ├── templates/                     # admin docs pages (docs/) + email digests (email/)
@@ -76,17 +77,22 @@ Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `
 
 - **events:** `devserver` (auto-port runserver), `seed_dev`, `healthcheck [--json]`, `delete_user --email`, `send_digest`, `send_test_digest --email`, `send_weekly_digest`.
 - **ingestion:** `ingest_events` (full pipeline; `--skip-*`, `--shard N/M`), `cleanup_old_events`.
-- **broadcast:** `run_broadcast_worker [--once]`, `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`, `set_broadcast_access <email> <0|1|2>`, `generate_access_code [--tier] [--label] [--expires] [--uses|--unlimited]`, `list_access_codes`, `revoke_access_code <label|id>`.
+- **broadcast:** `run_broadcast_worker [--once]` (debug helper — drains one submission without Celery, not a service entrypoint), `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`, `set_broadcast_access <email> <0|1|2>`, `generate_access_code [--tier] [--label] [--expires] [--uses|--unlimited]`, `list_access_codes`, `revoke_access_code <label|id>`.
 
 ## Redis + Celery (local)
 
 One Redis instance: **DB 0** = Celery broker + results (`REDIS_URL`), **DB 1** = Django cache (`REDIS_CACHE_URL`). Beat schedules live in Postgres (`django_celery_beat`, seeded by migrations). Run alongside `runserver`:
 
 ```bash
-uv run celery -A backend worker -l info        # async tasks (digests, ingestion)
-uv run celery -A backend beat -l info          # scheduler
-uv run python manage.py run_broadcast_worker   # broadcast queue (separate from Celery)
+uv run celery -A backend worker -l info              # async tasks (digests, ingestion)
+uv run celery -A backend beat -l info                # scheduler
+uv run celery -A backend worker -Q broadcast -c 1 -l info   # dedicated broadcast queue (on-demand dispatch)
 ```
+
+`BROADCAST_AUTOSPAWN_WORKER` no longer exists — broadcast dispatch is on-demand Celery
+(`transaction.on_commit(process_broadcast_queue.delay)`, routed to the `broadcast`
+queue), so without the worker above running (or `CELERY_TASK_ALWAYS_EAGER=True`, as
+`settings/test.py` sets), broadcast jobs enqueue but never drain locally.
 
 See [`../docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) and [`../docs/broadcast.md`](../docs/broadcast.md).
 

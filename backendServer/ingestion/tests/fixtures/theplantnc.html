@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Events - The Plant NC</title></head>
+<body>
+<div id="SITE_CONTAINER">
+<!-- Trimmed real sample of Wix's server-rendered `wix-warmup-data` blob from
+     https://www.theplantnc.com/events. Real pages nest the Wix Events app's
+     event list under appsWarmupData/<appDefId>/<widgetCompId>/events/events,
+     and the page renders two Wix Events widgets (calendar + list view) that
+     both warm up from the *same* underlying events, hence the duplicate
+     "Tween Tuesdays" id across widgetcomp-aaa111/widgetcomp-bbb222 below —
+     real fixture data confirmed this dedup case. One event's startDate was
+     hand-edited to 2020 to exercise the past-event filter; everything else
+     is copied verbatim from a real fetch. -->
+<script type="application/json" id="wix-warmup-data">
+{"appsWarmupData":{"140603ad-af8d-84a5-2c80-a0f60cb47351":{"widgetcomp-aaa111":{"events":{"events":[
+{"id":"113be0b5-da7d-4c0c-9eb6-27bb21368d3c","slug":"tween-tuesdays-animal-collages-roam-paint-press-2026-07-14-11-00","title":"Tween Tuesdays: Animal Collages @ Roam Paint Press","description":"Ages 8-12","scheduling":{"config":{"scheduleTbd":false,"startDate":"2026-07-14T15:00:00.000Z","endDate":"2026-07-14T16:00:00.000Z","timeZoneId":"America/New_York","endDateHidden":false,"showTimeZone":false,"recurrences":{"occurrences":[],"status":2}},"formatted":"July 14, 2026, 11:00 AM – 12:00 PM"},"location":{"name":"The Plant","address":"220 Lorax Ln, Pittsboro, NC 27312, USA","type":0}},
+{"id":"old-past-event-0001","slug":"member-mixer-2020","title":"Member Mixer","description":"An old member mixer.","scheduling":{"config":{"scheduleTbd":false,"startDate":"2020-01-15T18:00:00.000Z","endDate":"2020-01-15T20:00:00.000Z","timeZoneId":"America/New_York","endDateHidden":false,"showTimeZone":false,"recurrences":{"occurrences":[],"status":0}},"formatted":"January 15, 2020, 1:00 – 3:00 PM"},"location":{"name":"The Plant","address":"220 Lorax Ln, Pittsboro, NC 27312, USA","type":0}}
+]}}},"140603ad-af8d-84a5-2c80-a0f60cb47352":{"widgetcomp-bbb222":{"events":{"events":[
+{"id":"113be0b5-da7d-4c0c-9eb6-27bb21368d3c","slug":"tween-tuesdays-animal-collages-roam-paint-press-2026-07-14-11-00","title":"Tween Tuesdays: Animal Collages @ Roam Paint Press","description":"Ages 8-12","scheduling":{"config":{"scheduleTbd":false,"startDate":"2026-07-14T15:00:00.000Z","endDate":"2026-07-14T16:00:00.000Z","timeZoneId":"America/New_York","endDateHidden":false,"showTimeZone":false,"recurrences":{"occurrences":[],"status":2}},"formatted":"July 14, 2026, 11:00 AM – 12:00 PM"},"location":{"name":"The Plant","address":"220 Lorax Ln, Pittsboro, NC 27312, USA","type":0}},
+{"id":"12dddcc7-388f-4f77-926c-bd9fcc9cda42","slug":"chatham-tomato-festival-1","title":"Chatham Tomato Festival","description":"Get ready to celebrate all things tomatoes at the Chatham Tomato Festival! We are dedicating the day to one of our very favorite summer crops.","scheduling":{"config":{"scheduleTbd":false,"startDate":"2026-08-09T16:00:00.000Z","endDate":"2026-08-09T22:00:00.000Z","timeZoneId":"America/New_York","endDateHidden":false,"showTimeZone":false,"recurrences":{"occurrences":[],"status":0}},"formatted":"August 9, 2026, 12:00 – 6:00 PM"},"location":{"name":"The Plant","address":"Lorax Ln, Pittsboro, NC 27312, USA","type":0}}
+]}}}}}
+</script>
+</div>
+</body>
+</html>

@@ -1,4 +1,4 @@
-"""Generate a hashed access code and print the raw code exactly once.
+"""Generate an access code — printed once, and stored in plaintext (`code`) for later lookup.
 
 Two kinds of code:
   --kind trial   (default) Anonymous, always tier 2, time-boxed. Defaults to
@@ -24,7 +24,7 @@ from broadcast.models import AccessCode
 
 
 class Command(BaseCommand):
-    help = "Generate a new access code (prints raw code once; only the hash is stored)."
+    help = "Generate a new access code (prints the raw code; also stored in plaintext for lookup)."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -133,6 +133,7 @@ class Command(BaseCommand):
         label = options["label"]
 
         AccessCode.objects.create(
+            code=raw,
             code_hash=code_hash,
             label=label,
             kind=kind,
@@ -141,11 +142,10 @@ class Command(BaseCommand):
             expires_at=expires_at,
         )
 
-        # Print the raw code prominently — this is the only time it appears.
+        # Print the raw code prominently — also readable later via `code` on the row.
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS("ACCESS CODE (copy now):"))
         self.stdout.write(self.style.SUCCESS(f"  {raw}"))
-        self.stdout.write(self.style.WARNING("Store it now — it will not be shown again."))
         self.stdout.write("")
         self.stdout.write(f"  label : {label or '(none)'}")
         self.stdout.write(f"  kind  : {kind}")

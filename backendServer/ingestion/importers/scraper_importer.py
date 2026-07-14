@@ -65,9 +65,20 @@ def _fetch_via_http(url: str) -> str:
 def fetch_scraper_source(source: EventSource, *, limit: int | None = None) -> list[RawEvent]:
     """Render a scraper-type source's page with a headless browser, then extract
     and save events. See `_ingest_with_scraper` for the shared body.
+
+    Looks up the scraper up front (rather than leaving it to `_ingest_with_scraper`)
+    so its optional `wait_selector` can reach `render_page` -- pages whose event
+    markup is injected by a post-load XHR need that to avoid snapshotting the
+    DOM before the content arrives.
     """
     assert source.source_type == "scraper", "Source must be scraper type"
-    return _ingest_with_scraper(source, render_page, limit=limit)
+    scraper = get_scraper(source.scraper_key)
+    wait_selector = getattr(scraper, "wait_selector", None) if scraper else None
+
+    def fetch_html(url: str) -> str:
+        return render_page(url, wait_selector=wait_selector)
+
+    return _ingest_with_scraper(source, fetch_html, limit=limit)
 
 
 def fetch_http_source(source: EventSource, *, limit: int | None = None) -> list[RawEvent]:

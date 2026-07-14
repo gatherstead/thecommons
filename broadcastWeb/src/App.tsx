@@ -494,7 +494,8 @@ export default function App() {
   // Access flow: one step active at a time; done steps collapse to a summary
   // line, upcoming steps stay visible but dimmed so the path ahead is clear.
   const step2: "todo" | "active" | "done" = !signedIn ? "todo" : hasAccess ? "done" : "active";
-  const step3: "todo" | "active" = hasAccess ? "active" : "todo";
+  const step3: "todo" | "active" | "done" = !hasAccess ? "todo" : preview ? "done" : "active";
+  const step4: "todo" | "active" = preview ? "active" : "todo";
   const stepClass = (state: "todo" | "active" | "done") => `access-step access-step-${state}`;
 
   const codeEntry = (
@@ -546,7 +547,7 @@ export default function App() {
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
 
-      <section className={`section${locked ? " form-dim" : ""}`}>
+      <section className="section">
         <h2>Access</h2>
         <ol className="access-steps">
           {/* Step 1 — sign in */}
@@ -613,12 +614,20 @@ export default function App() {
           {/* Step 3 — contact info */}
           <li className={stepClass(step3)}>
             <p className="step-label">Confirm your contact info</p>
-            {step3 === "todo" ? (
+            {step3 === "todo" && (
               <p className="hint">
                 Name, email, and phone shown as the organizer contact on each calendar —
                 prefilled from your account.
               </p>
-            ) : (
+            )}
+            {step3 === "done" && (
+              <p className="step-summary">
+                {draft.organizer_name}
+                {draft.contact_email ? ` · ${draft.contact_email}` : ""}
+                {draft.contact_phone ? ` · ${draft.contact_phone}` : ""}
+              </p>
+            )}
+            {step3 === "active" && (
               <div className="contact-row">
                 <div className="field">
                   <label htmlFor="contact-name">Name</label>
@@ -654,12 +663,19 @@ export default function App() {
                     maxLength={40}
                   />
                 </div>
-
-                <p className="hint contact-hint">
-                  Shown as the organizer contact on every calendar. Remembered on this
-                  device and reused for your next event.
-                </p>
               </div>
+            )}
+          </li>
+
+          {/* Step 4 — autofill & submit */}
+          <li className={stepClass(step4)}>
+            <p className="step-label">Autofill &amp; submit your events</p>
+            {step4 === "todo" ? (
+              <p className="hint">
+                Preview your event below to see which calendars it&rsquo;s eligible for.
+              </p>
+            ) : (
+              <p className="step-summary">Scroll down to autofill and submit your events.</p>
             )}
           </li>
         </ol>

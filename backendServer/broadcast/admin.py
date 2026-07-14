@@ -92,7 +92,7 @@ class AccessCodeAdminForm(forms.ModelForm):
 
 @admin.register(AccessCode)
 class AccessCodeAdmin(ModelAdmin):
-    """Self-serve code generation — the raw code is shown once, on creation, via a banner.
+    """Self-serve code generation — the raw code is shown on creation and stays copyable on the row.
 
     Also hosts the sales dashboard (3 evergreen codes, one per tier — see
     SalesCodeSlot) as a panel above the changelist table via list_before_template.
@@ -102,6 +102,7 @@ class AccessCodeAdmin(ModelAdmin):
     list_before_template = "admin/broadcast/accesscode/sales_slots.html"
     list_display = (
         "label",
+        "code",
         "kind",
         "tier",
         "use_count",
@@ -111,8 +112,8 @@ class AccessCodeAdmin(ModelAdmin):
         "created_at",
     )
     list_filter = ("kind", "tier", "is_active")
-    search_fields = ("label",)
-    readonly_fields = ("code_hash", "created_at", "updated_at")
+    search_fields = ("label", "code")
+    readonly_fields = ("code", "code_hash", "created_at", "updated_at")
     inlines = [AccessCodeUseInline, AccessCodeRedemptionInline]
 
     def get_fields(self, request, obj=None):
@@ -125,6 +126,7 @@ class AccessCodeAdmin(ModelAdmin):
             "max_uses",
             "is_active",
             "expires_at",
+            "code",
             "code_hash",
             "created_at",
             "updated_at",
@@ -143,6 +145,7 @@ class AccessCodeAdmin(ModelAdmin):
         raw = None
         if not change:
             raw = secrets.token_urlsafe(24)
+            obj.code = raw
             obj.code_hash = hash_code(raw)
             trial_days = form.cleaned_data.get("trial_days")
             if trial_days:
@@ -153,7 +156,8 @@ class AccessCodeAdmin(ModelAdmin):
         if raw is not None:
             self.message_user(
                 request,
-                f"Access code for '{obj.label or '(no label)'}' — copy now, shown only once: {raw}",
+                f"Access code for '{obj.label or '(no label)'}': {raw} "
+                "— also visible on this row's Code column anytime.",
                 level=messages.SUCCESS,
             )
 

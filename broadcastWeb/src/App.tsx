@@ -5,9 +5,9 @@ import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
-import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
+import { clearDraft, clearSession, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
-import { authClient, fetchJwt } from "./lib/authClient";
+import { authClient, fetchJwt, JWT_FRESH_MS } from "./lib/authClient";
 import {
   type ApiAuth,
   ApiError,
@@ -155,6 +155,13 @@ const restoreFillStatus = (
 
 export default function App() {
   const session = authClient.useSession();
+  // The minted JWT itself lives in a ref, not state — minting is now lazy
+  // (see getJwt below) and happens outside React's render cycle, so there's
+  // nothing for state to trigger a re-render over. `jwt` state still exists
+  // for the handful of call sites that build ApiAuth synchronously (the
+  // JobProgress prop, the poll snapshot) and just mirrors the ref's value.
+  const jwtRef = useRef<string | null>(null);
+  const jwtMintedAtRef = useRef<number>(0);
   const [jwt, setJwt] = useState<string | null>(null);
   const [tier, setTier] = useState<0 | 1 | 2>(0);
   const [isTrial, setIsTrial] = useState(false);
@@ -205,6 +212,22 @@ export default function App() {
   const [exhaustedStuckKeys, setExhaustedStuckKeys] = useState<Set<string>>(new Set());
   const { installed: extInstalled, extensionId, recheck: recheckExt } = useExtension();
 
+  // Lazy JWT mint: returns the cached token if it's still fresh, else mints a
+  // new one and caches it. Called right before an authed request fires (not
+  // eagerly on every session change) so idle re-renders never hit the token
+  // endpoint. `force` re-mints even if the cache looks fresh — used right
+  // after sign-in when we need a token synchronously in hand for the first
+  // getAccess call.
+  const getJwt = async (force = false): Promise<string | null> => {
+    const fresh = jwtRef.current && Date.now() - jwtMintedAtRef.current < JWT_FRESH_MS;
+    if (fresh && !force) return jwtRef.current;
+    const token = await fetchJwt();
+    jwtRef.current = token;
+    jwtMintedAtRef.current = Date.now();
+    setJwt(token);
+    return token;
+  };
+
   // A trial code authenticates per-request via header; a permanent account
   // tier authenticates via JWT. Whichever granted the tier wins.
   const auth: ApiAuth =
@@ -220,9 +243,23 @@ export default function App() {
   // Access always requires a login; a verified trial code alone is not enough.
   const hasAccess = signedIn && tier >= 1;
 
+  // Access resolution is keyed on *identity*, not on session.data's object
+  // identity — Better Auth hands back a new object on every refresh even
+  // when the signed-in user hasn't changed, and each resolution used to cost
+  // a getAccess round trip (a Neon read) plus a JWT mint. Re-resolve only
+  // when the signed-in email, logged-out state, or the verified trial code
+  // actually changes.
+  const identity = `${session.data?.user?.email ?? ""}::${accessVerified ? verifiedCode : ""}`;
+  const lastResolvedIdentityRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (session.isPending) return;
+    if (lastResolvedIdentityRef.current === identity) return;
+    lastResolvedIdentityRef.current = identity;
+
     if (!session.data) {
+      jwtRef.current = null;
+      jwtMintedAtRef.current = 0;
       setJwt(null);
       setTier(0);
       setIsTrial(false);
@@ -230,8 +267,7 @@ export default function App() {
       setAccessSource(null);
       return;
     }
-    fetchJwt().then(async (token) => {
-      setJwt(token);
+    getJwt(true).then(async (token) => {
       if (!token) return;
       try {
         const access = await getAccess({ jwt: token });
@@ -264,7 +300,11 @@ export default function App() {
       setUsesRemaining(null);
       setAccessSource(null);
     });
-  }, [session.data, session.isPending]);
+    // Deliberately keyed on `identity` (a derived string), not session.data/
+    // accessVerified/verifiedCode directly — those would restore per-render
+    // re-resolution. The ref guard above is the actual dedupe; this dep array
+    // just needs to re-run the effect when identity's value changes.
+  }, [identity, session.isPending]);
 
   // Prefill the contact fields from the account once access unlocks —
   // only fills blanks, never overwrites what the user typed.
@@ -306,25 +346,28 @@ export default function App() {
 
   useEffect(() => {
     if (!jobActive || !jobIdRef.current) return;
-    const authSnap: ApiAuth =
-      accessSource === "code" && verifiedCode
-        ? { accessCode: verifiedCode }
-        : jwt
-          ? { jwt }
-          : { accessCode: verifiedCode };
     const id = setInterval(() => {
       const currentJobId = jobIdRef.current!;
-      getJob(authSnap, currentJobId)
-        .then((fresh) => {
-          setJob(fresh);
-          detectAndHealStuck(authSnap, currentJobId, fresh);
-        })
-        .catch(() => {
-          /* transient poll failure — keep polling */
-        });
+      // Re-derive per tick (not captured once at effect-setup) so a poll that
+      // outlives the JWT's freshness window picks up a re-minted token rather
+      // than authenticating with a stale one.
+      const authSnapPromise: Promise<ApiAuth> =
+        accessSource === "code" && verifiedCode
+          ? Promise.resolve({ accessCode: verifiedCode })
+          : getJwt().then((token) => (token ? { jwt: token } : { accessCode: verifiedCode }));
+      authSnapPromise.then((authSnap) => {
+        getJob(authSnap, currentJobId)
+          .then((fresh) => {
+            setJob(fresh);
+            detectAndHealStuck(authSnap, currentJobId, fresh);
+          })
+          .catch(() => {
+            /* transient poll failure — keep polling */
+          });
+      });
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [jobActive, verifiedCode, jwt, accessSource]);
+  }, [jobActive, verifiedCode, accessSource]);
 
   // Stuck-target self-heal: with server-side polling gone, this client loop is
   // the primary detector. A job stuck "queued" too long (dispatch should be
@@ -382,10 +425,12 @@ export default function App() {
   // bound to the account), and if the backend rejects that, as a TRIAL code
   // (per-request header auth). Either way the user sees a single Verify step.
   const handleVerifyCode = async () => {
-    if (!accessCode.trim() || !jwt) return;
+    if (!accessCode.trim() || !session.data) return;
+    const token = await getJwt();
+    if (!token) return;
     setAccessError("");
     try {
-      const result = await redeemAccessCode({ jwt }, accessCode);
+      const result = await redeemAccessCode({ jwt: token }, accessCode);
       setTier(result.tier);
       setIsTrial(false);
       setUsesRemaining(null);
@@ -410,6 +455,10 @@ export default function App() {
       setIsTrial(access.is_trial);
       setUsesRemaining(access.uses_remaining);
       setShowCodeEntry(false);
+      // This just resolved access for the new identity (email + this code)
+      // directly — mark it resolved so the access effect doesn't immediately
+      // re-run and redo the same getAccess round trip.
+      lastResolvedIdentityRef.current = `${session.data?.user?.email ?? ""}::${accessCode}`;
     } catch {
       setAccessVerified(false);
       setAccessError("Access code not recognized. Check the code and try again.");
@@ -418,6 +467,8 @@ export default function App() {
 
   const handleSignOut = async () => {
     await authClient.signOut();
+    jwtRef.current = null;
+    jwtMintedAtRef.current = 0;
     setJwt(null);
     setTier(0);
     setIsTrial(false);
@@ -537,6 +588,32 @@ export default function App() {
   const startOver = resetCore;
 
   const resetForm = resetCore;
+
+  // Escape hatch for operators soft-locked by stale cache: clears every bit of
+  // client state (draft, preview, job, statuses, access-code inputs, both
+  // localStorage bundles) and signs the current user out. The server account
+  // is never touched — the same user can sign back in right after.
+  const handleResetSite = async () => {
+    resetCore();
+    clearDraft();
+    clearSession();
+
+    setAccessCode("");
+    setAccessVerified(false);
+    setVerifiedCode("");
+    setAccessError("");
+    setShowCodeEntry(false);
+    setAccessSource(null);
+
+    setDraft((prev) => ({
+      ...prev,
+      organizer_name: "",
+      contact_email: "",
+      contact_phone: "",
+    }));
+
+    await handleSignOut();
+  };
 
   const handleAiAutofill = async () => {
     setAiBusy(true);
@@ -677,11 +754,18 @@ export default function App() {
             {step2 === "done" && (
               <>
                 <p className="step-summary">
-                  {accessSource === "code" && isTrial && usesRemaining !== null ? (
-                    <>
-                      Trial access — {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining.
-                      One use per event previewed; edits are free.
-                    </>
+                  {accessSource === "code" && isTrial ? (
+                    usesRemaining !== null ? (
+                      <>
+                        Trial access — {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining.
+                        One use per event previewed; edits are free.
+                      </>
+                    ) : (
+                      <>
+                        Trial access — this code is active for a limited time (about 3 days).
+                        Preview and fill as many events as you like until it expires.
+                      </>
+                    )
                   ) : (
                     <>Tier {tier} access on this account.</>
                   )}{" "}
@@ -764,6 +848,16 @@ export default function App() {
             ) : (
               <p className="step-summary">Scroll down to autofill and submit your events.</p>
             )}
+            <p>
+              <button
+                type="button"
+                className="reset-form-inline"
+                onClick={handleResetSite}
+                title="Clear all saved form/session data on this device and sign out"
+              >
+                Reset site
+              </button>
+            </p>
           </li>
         </ol>
       </section>
@@ -895,7 +989,7 @@ export default function App() {
                       <span className="target-status pending">opening…</span>
                     )}
                     {status === "submitted" && (
-                      <span className="target-status submitted">submitted</span>
+                      <span className="target-status submitted">filled</span>
                     )}
                     {status === "unavailable" && (
                       <span className="target-status unavailable">not available</span>
@@ -968,7 +1062,7 @@ export default function App() {
                     }}
                     disabled={busy || selected.size === 0}
                   >
-                    Submit events!
+                    populate forms!
                   </button>
                 </div>
               )}
@@ -1032,7 +1126,7 @@ export default function App() {
               rel="noopener noreferrer"
               className="btn"
             >
-              Have suggestions?
+              Give feedback
             </a>
           </div>
         </section>

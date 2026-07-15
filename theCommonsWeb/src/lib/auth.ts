@@ -4,6 +4,7 @@ import { nextCookies } from 'better-auth/next-js';
 import { jwt } from 'better-auth/plugins';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
+import { redis } from './redis';
 import * as schema from './auth-schema';
 import { lazyAuth } from './lazy-auth-plugin';
 
@@ -11,6 +12,7 @@ const BASE_TRUSTED_ORIGINS = [
     'https://thecommons.town',
     'https://www.thecommons.town',
     'https://broadcast.thecommons.town',
+    'https://auth.thecommons.town',
     'http://localhost:3000',
     'http://localhost:5173',
 ];
@@ -41,7 +43,25 @@ export const auth = betterAuth({
             verification: schema.verification,
             jwks: schema.jwks,
         },
+        // drizzle-orm/neon-http has no db.transaction() support (the HTTP
+        // driver is stateless). This is already the adapter's default, but
+        // set explicitly so it can't silently flip to true on a
+        // better-auth upgrade and start throwing on signup.
+        transaction: false,
     }),
+    // Sessions live in Redis (db 2 — db 0 is Celery, db 1 is the Django
+    // cache), not Neon, so session reads/writes never wake the DB and
+    // revocation is instant. See src/lib/redis.ts.
+    secondaryStorage: {
+        get: async (key) => (await redis.get(key)) ?? null,
+        set: async (key, value, ttl) => {
+            if (ttl) await redis.set(key, value, 'EX', ttl);
+            else await redis.set(key, value);
+        },
+        delete: async (key) => {
+            await redis.del(key);
+        },
+    },
     // Neon pre-creates neon_auth.user.id as a real UUID column. Better Auth's
     // ID generator only reads advanced.database.generateId (not advanced.generateId).
     // cookieDomain is only set in prod (.thecommons.town); in dev it is unset so

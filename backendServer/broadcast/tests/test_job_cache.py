@@ -16,6 +16,7 @@ from rest_framework.test import APIClient
 from broadcast import cache as broadcast_cache
 from broadcast.access import hash_code
 from broadcast.models import AccessCode, BroadcastAccess, BroadcastSubmission, BroadcastTarget
+from broadcast.schema import CanonicalEvent
 from broadcast.services import (
     cancel_submission,
     create_submission,
@@ -23,7 +24,6 @@ from broadcast.services import (
     refresh_job_cache,
     retry_targets,
 )
-from broadcast.schema import CanonicalEvent
 
 
 def make_submission(status="queued", site_keys=("a_site",)):

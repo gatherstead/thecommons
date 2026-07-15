@@ -74,12 +74,15 @@ export const getAccess = async (
   return body as { tier: 0 | 1 | 2; is_trial: boolean; uses_remaining: number | null };
 };
 
-// Requires auth.jwt — upgrade codes are only redeemable while logged in.
-export const redeemAccessCode = (
+// Requires auth.jwt. Tries UPGRADE (permanent) first, then TRIAL — binding
+// either to the account so a later getAccess({jwt}) restores it without the
+// code being re-entered, on any device.
+export const verifyCode = (
   auth: ApiAuth,
   accessCode: string,
-): Promise<{ tier: 0 | 1 | 2 }> =>
-  post<{ tier: 0 | 1 | 2 }>("/broadcast/redeem", auth, { access_code: accessCode });
+  draftId?: string,
+): Promise<{ tier: 0 | 1 | 2; is_trial: boolean; uses_remaining: number | null }> =>
+  post("/broadcast/verify-code", auth, { access_code: accessCode, draft_id: draftId });
 
 export const previewBroadcast = (
   auth: ApiAuth,

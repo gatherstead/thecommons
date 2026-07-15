@@ -75,7 +75,12 @@ class JWTPathCacheTest(TestCase):
 
         with _patch_jwt({"email": "nobody@example.com"}):
             first = resolve_access(req1)
-            with self.assertNumQueries(0):
+            # The permanent-grant lookup is cached (0 queries), but a tier-0
+            # account always gets a live bound-trial-code check (1 query) —
+            # same "never cache consumption/liveness" policy as the anonymous
+            # code path, so an expired/revoked bound trial can't serve stale
+            # access from cache.
+            with self.assertNumQueries(1):
                 second = resolve_access(req2)
 
         self.assertEqual(first.tier, 0)

@@ -10,7 +10,6 @@ import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import { authClient, fetchJwt, JWT_FRESH_MS } from "./lib/authClient";
 import {
   type ApiAuth,
-  ApiError,
   aiAutofill,
   cancelJob,
   directRecipe,
@@ -18,10 +17,10 @@ import {
   getAccess,
   getJob,
   previewBroadcast,
-  redeemAccessCode,
   retryJob,
   retryStuck,
   submitReal,
+  verifyCode,
 } from "./services/broadcastApi";
 
 const DEV_FIXTURE: EventDraft = {
@@ -421,46 +420,26 @@ export default function App() {
       });
   };
 
-  // One code box, two code kinds: try it as an UPGRADE code first (permanent,
-  // bound to the account), and if the backend rejects that, as a TRIAL code
-  // (per-request header auth). Either way the user sees a single Verify step.
+  // One code box, two code kinds: the backend tries UPGRADE (permanent) first,
+  // then TRIAL — either way it binds the code to this account (redeem_upgrade_code
+  // / bind_trial_code), so a later getAccess({jwt}) restores it with no
+  // re-entry, on any device. Nothing needs to be persisted client-side anymore.
   const handleVerifyCode = async () => {
     if (!accessCode.trim() || !session.data) return;
     const token = await getJwt();
     if (!token) return;
     setAccessError("");
     try {
-      const result = await redeemAccessCode({ jwt: token }, accessCode);
+      const result = await verifyCode({ jwt: token }, accessCode, draft.draft_id);
       setTier(result.tier);
-      setIsTrial(false);
-      setUsesRemaining(null);
+      setIsTrial(result.is_trial);
+      setUsesRemaining(result.uses_remaining);
       setAccessSource("jwt");
       setAccessVerified(false);
+      setVerifiedCode("");
       setAccessCode("");
       setShowCodeEntry(false);
-      return;
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 403)) {
-        setAccessError("Could not verify the access code. Try again.");
-        return;
-      }
-    }
-    try {
-      const access = await getAccess({ accessCode });
-      if (access.tier === 0) throw new ApiError(403, "code grants no access");
-      setAccessVerified(true);
-      setVerifiedCode(accessCode);
-      setAccessSource("code");
-      setTier(access.tier);
-      setIsTrial(access.is_trial);
-      setUsesRemaining(access.uses_remaining);
-      setShowCodeEntry(false);
-      // This just resolved access for the new identity (email + this code)
-      // directly — mark it resolved so the access effect doesn't immediately
-      // re-run and redo the same getAccess round trip.
-      lastResolvedIdentityRef.current = `${session.data?.user?.email ?? ""}::${accessCode}`;
     } catch {
-      setAccessVerified(false);
       setAccessError("Access code not recognized. Check the code and try again.");
     }
   };
@@ -754,7 +733,7 @@ export default function App() {
             {step2 === "done" && (
               <>
                 <p className="step-summary">
-                  {accessSource === "code" && isTrial ? (
+                  {isTrial ? (
                     usesRemaining !== null ? (
                       <>
                         Trial access — {usesRemaining} use{usesRemaining !== 1 ? "s" : ""} remaining.
@@ -1062,7 +1041,7 @@ export default function App() {
                     }}
                     disabled={busy || selected.size === 0}
                   >
-                    populate forms!
+                    Populate Forms!
                   </button>
                 </div>
               )}

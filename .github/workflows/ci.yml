@@ -125,6 +125,10 @@ jobs:
           NEXT_PUBLIC_BETTER_AUTH_URL: http://localhost:3000
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
           NEXT_PUBLIC_THE_COMMONS_API_KEY: build-placeholder
+          # src/lib/redis.ts throws at import time if unset (it backs Better Auth's
+          # secondaryStorage). ioredis connects lazily/async here, so a bogus host
+          # never actually needs to succeed for the build to complete.
+          BETTER_AUTH_REDIS_URL: redis://build:build@localhost:6379/2
         run: pnpm build
       - name: Tests (fast tier)
         run: pnpm test:fast

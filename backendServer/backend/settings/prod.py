@@ -25,5 +25,8 @@ DATABASES = {
         "HOST": _db.hostname,
         "PORT": 5432,
         "OPTIONS": dict(parse_qsl(_db.query)),
+        # Deliberately not pooling: 0 means Django closes the connection after each
+        # request, so idle Django holds no open connection and Neon compute can autosuspend.
+        "CONN_MAX_AGE": 0,
     }
 }

@@ -128,16 +128,18 @@ Extension internals: buildless MV3, no static content scripts (dormant until mes
 
 Two independent code pools, distinguished by `AccessCode.kind`:
 
-- **TRIAL** (`kind="trial"`) — redeemed **anonymously**, no account required. Always tier 2 (`AccessCode.save()` forces it). Time-boxed via `expires_at` rather than metered by uses — `generate_access_code` defaults trial codes to unlimited uses + a 3-day expiry. This is the frictionless "hand someone a code and they're trying the product in 10 seconds" path; nothing here writes to a user account.
-- **UPGRADE** (`kind="upgrade"`) — redeemed only by a **logged-in** user via `POST /broadcast/redeem`, and permanently sets that account's `BroadcastAccess.tier` (last code entered wins — no downgrade protection, by design, so support/sales can just say "enter this code"). Never resolves anonymously. Defaults to tier 2, 3 uses, no expiry.
+- **TRIAL** (`kind="trial"`) — redeemed **anonymously** (no account needed, via `X-Broadcast-Access-Code`), or **bound to a logged-in account** via `POST /broadcast/verify-code`. Always tier 2 (`AccessCode.save()` forces it). Time-boxed via `expires_at` rather than metered by uses — `generate_access_code` defaults trial codes to unlimited uses + a 3-day expiry.
+- **UPGRADE** (`kind="upgrade"`) — redeemed only by a **logged-in** user via `POST /broadcast/redeem` or `POST /broadcast/verify-code`, and permanently sets that account's `BroadcastAccess.tier` (last code entered wins — no downgrade protection, by design, so support/sales can just say "enter this code"). Never resolves anonymously. Defaults to tier 2, 3 uses, no expiry.
 
-`resolve_access(request, draft_id=None) -> AccessResult(tier, identity, is_trial, uses_remaining, client_label, code)` — the **anonymous/per-request** resolver, used by every gated endpoint except `/broadcast/redeem`:
+`resolve_access(request, draft_id=None) -> AccessResult(tier, identity, is_trial, uses_remaining, client_label, code)` — the **per-request** resolver, used by every gated endpoint except `/broadcast/redeem` and `/broadcast/verify-code`:
 
-1. **Bearer JWT** (`Authorization: Bearer <jwt>`) — verified statelessly via `backend/jwt_auth.py` (JWKS); `email` claim → `BroadcastAccess.tier` (default 0 if no row). A JWT header present but invalid → 403; does **not** fall through to the code path.
-2. **Access code** (`X-Broadcast-Access-Code` header or body `access_code`) → SHA-256 constant-time match against active **TRIAL-kind only** `AccessCode` rows. UPGRADE codes never match here.
+1. **Bearer JWT** (`Authorization: Bearer <jwt>`) — verified statelessly via `backend/jwt_auth.py` (JWKS); `email` claim → `BroadcastAccess.tier` (default 0 if no row). If there's no permanent grant, falls back to a **bound TRIAL code** for that email (`_resolve_bound_trial`, live expiry/max_uses check — see below). A JWT header present but invalid → 403; does **not** fall through to the code path.
+2. **Access code** (`X-Broadcast-Access-Code` header or body `access_code`) → SHA-256 constant-time match against active **TRIAL-kind only** `AccessCode` rows, resolved anonymously (no account, no binding). UPGRADE codes never match here.
 3. **No credentials** → tier 0, 200 (not an error).
 
-`redeem_upgrade_code(email, raw_code) -> int | None` — the **account-permanent** path, called only from `POST /broadcast/redeem` (requires login via `RequiresBroadcastLogin`). Matches UPGRADE-kind codes only; on success, `BroadcastAccess.objects.update_or_create(email=..., tier=code.tier)` and records an `AccessCodeRedemption`. Redemption is idempotent per email (re-entering the same code doesn't consume another `max_uses` slot).
+`redeem_upgrade_code(email, raw_code) -> int | None` — the **account-permanent** path, called from `POST /broadcast/redeem` and `POST /broadcast/verify-code` (both require login via `RequiresBroadcastLogin`). Matches UPGRADE-kind codes only; on success, `BroadcastAccess.objects.update_or_create(email=..., tier=code.tier)` and records an `AccessCodeRedemption`. Redemption is idempotent per email (re-entering the same code doesn't consume another `max_uses` slot).
+
+`bind_trial_code(email, raw_code, draft_id=None) -> AccessResult | None` — the **account-bound-but-temporary** path, called only from `POST /broadcast/verify-code` after an UPGRADE match fails. Matches TRIAL-kind codes only; on success, records an `AccessCodeRedemption` for that email (reusing the same table UPGRADE redemptions use) but **never writes `BroadcastAccess`** — the grant stays temporary and expires with the code. Once bound, `resolve_access`'s JWT path (step 1 above) resolves it on any later request/device with no code re-entry, closing the gap where a TRIAL code used to live only in the browser's `localStorage` and vanish on a new device or a cleared session.
 
 | Tier | Who | Fill + broadcast | AI autofill |
 |---|---|---|---|
@@ -149,9 +151,9 @@ Permission classes: `RequiresBroadcastTier1` (preview / submit / recipe / job en
 
 **Metering:** TRIAL codes are metered **only at `POST /broadcast/preview`** — `AccessCodeUse.objects.get_or_create(code, draft_id)` (idempotent). Trial callers must include `draft_id` in the preview body; missing → 400. Re-submitting the same `draft_id` (edits) is free. UPGRADE codes are metered by distinct redeeming email (`AccessCodeRedemption`), checked in `redeem_upgrade_code`. Logged-in JWT sessions are never metered on preview.
 
-**`client_label`** on `BroadcastSubmission`: email for JWT users; `AccessCode.label` for TRIAL-code users. Access codes are stored only in the database — there is no env-var code list. `GET /broadcast/access` lets the SPA query the caller's tier and remaining trial uses (JWT or TRIAL code); `POST /broadcast/redeem` is how a logged-in user applies an UPGRADE code.
+**`client_label`** on `BroadcastSubmission`: email for JWT users; `AccessCode.label` for TRIAL-code users. Access codes are stored only in the database — there is no env-var code list. `GET /broadcast/access` lets the SPA query the caller's tier and remaining trial uses (JWT or TRIAL code); `POST /broadcast/redeem` is how a logged-in user applies an UPGRADE code; `POST /broadcast/verify-code` is the single entry point the SPA actually calls — it tries `redeem_upgrade_code` first, then `bind_trial_code`, so either code kind ends up bound to the account.
 
-**Frontend (`broadcastWeb`):** one textfield does double duty, labeled by login state — logged out it's "Access Code" (`getAccess`, anonymous TRIAL resolution, persisted in localStorage); logged in it relabels to "Upgrade Account" (`redeemAccessCode` → `POST /broadcast/redeem`, permanent, nothing persisted client-side since the grant now lives server-side against the account).
+**Frontend (`broadcastWeb`):** sign-in is required before the code box appears at all (`App.tsx`, "Access" step 2). Entering a code calls `verifyCode` → `POST /broadcast/verify-code` once — nothing is persisted client-side for either code kind anymore (no `localStorage`, no re-entry required on logout/login or on a different device); the grant lives entirely server-side (`BroadcastAccess` for UPGRADE, a bound `AccessCodeRedemption` for TRIAL) and `getAccess({jwt})` restores it on every subsequent login.
 
 **Admin (`/admin/broadcast/accesscode/`):** self-serve code creation — `AccessCodeAdmin.save_model` generates and hashes a fresh raw code on creation and shows it once via a success message banner (never stored, never shown again). A `trial_days` convenience field on the add form sets `expires_at` relative to now. `BroadcastAccess` is also registered for visibility into current permanent grants.
 
@@ -163,6 +165,7 @@ Auth: Bearer JWT or `X-Broadcast-Access-Code` header/body (resolved as a tier). 
 |--------|------|------|---------|
 | GET | `/broadcast/access` | open (30/m) | Caller's tier + trial metadata — drives the SPA's access UI |
 | POST | `/broadcast/redeem` | login required (10/m) | Redeem an UPGRADE code — permanently sets the caller's `BroadcastAccess.tier` |
+| POST | `/broadcast/verify-code` | login required (10/m) | Verify a code and bind it to the caller's account — UPGRADE (permanent) first, then TRIAL (temporary, tied to the account). What the SPA actually calls. |
 | POST | `/broadcast/preview` | tier ≥ 1 (10/m) | Eligible/excluded target sites for an event; meters trial use by `draft_id` |
 | POST | `/broadcast/ai-autofill` | tier ≥ 2 (5/m) | LLM-extract event fields from pasted text into the form draft |
 | **POST** | **`/broadcast/direct-recipe`** | **tier ≥ 1 (30/m)** | **Recipe JSON for a site from event data — no job required** |

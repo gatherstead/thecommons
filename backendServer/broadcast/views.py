@@ -14,7 +14,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from broadcast import cache as broadcast_cache
-from broadcast.access import redeem_upgrade_code, resolve_access
+from broadcast.access import bind_trial_code, redeem_upgrade_code, resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
 from broadcast.models import AccessCodeUse, BroadcastSubmission
@@ -323,6 +323,38 @@ def redeem(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return Response({"tier": new_tier})
+
+
+@ratelimit(key="ip", rate="10/m", method="POST", block=True)
+@api_view(["POST"])
+@permission_classes([RequiresBroadcastLogin])
+def verify_code(request):
+    """Verify a code for a logged-in account — tries UPGRADE (permanent) first,
+    then TRIAL (bound to the account via bind_trial_code).
+
+    One endpoint for the SPA's single code box: either kind now survives
+    logout/login (and a device change) without the client holding onto the
+    raw code, since resolve_access() restores both from the JWT alone.
+    """
+    raw_code = request.data.get("access_code") if isinstance(request.data, dict) else None
+    if not raw_code or not isinstance(raw_code, str):
+        return Response({"access_code": "required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    new_tier = redeem_upgrade_code(request.broadcast_email, raw_code)
+    if new_tier is not None:
+        return Response({"tier": new_tier, "is_trial": False, "uses_remaining": None})
+
+    draft_id = _draft_id_from(request)
+    result = bind_trial_code(request.broadcast_email, raw_code, draft_id=draft_id)
+    if result is not None:
+        return Response(
+            {"tier": result.tier, "is_trial": True, "uses_remaining": result.uses_remaining}
+        )
+
+    return Response(
+        {"detail": "Access code not recognized, expired, or already used up."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def mock_form(request):

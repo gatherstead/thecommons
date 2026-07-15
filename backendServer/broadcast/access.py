@@ -55,12 +55,67 @@ def authenticated_email(request) -> str | None:
     return email.lower() if email else None
 
 
+def _trial_liveness(code: AccessCode, draft_id: str | None, now) -> tuple[bool, int | None]:
+    """Live expiry + max_uses check for a TRIAL code. Returns (ok, uses_remaining).
+
+    Shared by the anonymous code path and the account-bound path below, so
+    both honor the same expiry/metering rules. Never cached — consumption
+    counts must always be live (see cache.py docstring).
+    """
+    if code.expires_at is not None and code.expires_at < now:
+        return False, None
+    used = code.uses.count()
+    if code.max_uses is None:
+        return True, None
+    uses_remaining = max(code.max_uses - used, 0)
+    if used >= code.max_uses:
+        already_counted = draft_id is not None and code.uses.filter(draft_id=draft_id).exists()
+        if not already_counted:
+            return False, uses_remaining
+    return True, uses_remaining
+
+
+def _resolve_bound_trial(email: str, draft_id: str | None, now) -> AccessResult | None:
+    """An account-bound TRIAL code (see bind_trial_code) resolved via JWT.
+
+    Lets a TRIAL code survive logout/login — and travel across devices —
+    without the client persisting or re-entering it, the same way an UPGRADE
+    code's permanent tier already does. Unlike UPGRADE, this stays temporary:
+    it never writes BroadcastAccess and expires when the code does.
+    """
+    redemption = (
+        AccessCodeRedemption.objects.filter(
+            email=email, access_code__kind=AccessCode.KIND_TRIAL, access_code__is_active=True
+        )
+        .select_related("access_code")
+        .order_by("-created_at")
+        .first()
+    )
+    if redemption is None:
+        return None
+    code = redemption.access_code
+    ok, uses_remaining = _trial_liveness(code, draft_id, now)
+    if not ok:
+        return None
+    return AccessResult(
+        tier=code.tier,
+        identity=email,
+        is_trial=True,
+        uses_remaining=uses_remaining,
+        client_label=code.label,
+        code=code,
+    )
+
+
 def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noqa: C901  # tiered auth resolution; complexity is inherent
     """Resolve tiered access from a request.
 
     Resolution order:
-      1. Authorization: Bearer <jwt>  → JWT path (verify claims, BroadcastAccess lookup)
-      2. X-Broadcast-Access-Code header or request.data["access_code"] → TRIAL code path
+      1. Authorization: Bearer <jwt>  → JWT path: BroadcastAccess permanent
+         tier, falling back to an account-bound TRIAL code (see
+         bind_trial_code) if there's no permanent grant.
+      2. X-Broadcast-Access-Code header or request.data["access_code"] →
+         anonymous TRIAL code path (not yet bound to any account)
       3. No credentials → tier 0, no identity
 
     Read-only — never creates AccessCodeUse rows.
@@ -81,8 +136,20 @@ def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noq
                     tier = 0
                 cached = {"tier": tier, "identity": email, "client_label": email}
                 access_cache.set_jwt_access(email, cached)
+            if cached["tier"] > 0:
+                return AccessResult(
+                    tier=cached["tier"],
+                    identity=cached["identity"],
+                    is_trial=False,
+                    uses_remaining=None,
+                    client_label=cached["client_label"],
+                    code=None,
+                )
+            bound = _resolve_bound_trial(email, draft_id, timezone.now())
+            if bound is not None:
+                return bound
             return AccessResult(
-                tier=cached["tier"],
+                tier=0,
                 identity=cached["identity"],
                 is_trial=False,
                 uses_remaining=None,
@@ -130,20 +197,9 @@ def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noq
             matched = AccessCode.objects.filter(id=cached_meta["code_id"]).first()
 
         if matched is not None:
-            if matched.expires_at is not None and matched.expires_at < now:
+            ok, uses_remaining = _trial_liveness(matched, draft_id, now)
+            if not ok:
                 return AccessResult(0, None, False, None, None, None)
-
-            used = matched.uses.count()
-            if matched.max_uses is not None:
-                uses_remaining = max(matched.max_uses - used, 0)
-                if used >= matched.max_uses:
-                    already_counted = (
-                        draft_id is not None and matched.uses.filter(draft_id=draft_id).exists()
-                    )
-                    if not already_counted:
-                        return AccessResult(0, None, False, None, None, None)
-            else:
-                uses_remaining = None
 
             label = matched.label
             return AccessResult(
@@ -194,3 +250,43 @@ def redeem_upgrade_code(email: str, raw_code: str) -> int | None:
     AccessCodeRedemption.objects.get_or_create(access_code=matched, email=email)
     access_cache.invalidate_jwt_access(email)
     return matched.tier
+
+
+def bind_trial_code(email: str, raw_code: str, draft_id: str | None = None) -> AccessResult | None:
+    """Bind a TRIAL code to a logged-in account, called from POST /broadcast/verify-code.
+
+    Unlike redeem_upgrade_code, this never writes BroadcastAccess — trial
+    access stays temporary and expires with the code, it just no longer
+    requires the client to hold the raw code (localStorage) to keep it: once
+    bound, _resolve_bound_trial() resolves it straight from the JWT on any
+    device, so logout/login (or a new browser) doesn't need re-entry.
+    Idempotent per email via AccessCodeRedemption's unique_together.
+
+    Returns the resolved AccessResult, or None if the code is
+    invalid/inactive/expired/exhausted.
+    """
+    email = email.lower()
+    incoming_hash = hash_code(raw_code)
+    now = timezone.now()
+
+    matched = None
+    for code in AccessCode.objects.filter(is_active=True, kind=AccessCode.KIND_TRIAL):
+        if hmac.compare_digest(code.code_hash, incoming_hash):
+            matched = code
+
+    if matched is None:
+        return None
+
+    ok, uses_remaining = _trial_liveness(matched, draft_id, now)
+    if not ok:
+        return None
+
+    AccessCodeRedemption.objects.get_or_create(access_code=matched, email=email)
+    return AccessResult(
+        tier=matched.tier,
+        identity=email,
+        is_trial=True,
+        uses_remaining=uses_remaining,
+        client_label=matched.label,
+        code=matched,
+    )

@@ -282,6 +282,7 @@ def bind_trial_code(email: str, raw_code: str, draft_id: str | None = None) -> A
         return None
 
     AccessCodeRedemption.objects.get_or_create(access_code=matched, email=email)
+    access_cache.invalidate_jwt_access(email)
     return AccessResult(
         tier=matched.tier,
         identity=email,

@@ -11,6 +11,7 @@ import { authClient, fetchJwt, JWT_FRESH_MS } from "./lib/authClient";
 import {
   type ApiAuth,
   aiAutofill,
+  ApiError,
   cancelJob,
   directRecipe,
   directSubmit,
@@ -425,12 +426,13 @@ export default function App() {
   // / bind_trial_code), so a later getAccess({jwt}) restores it with no
   // re-entry, on any device. Nothing needs to be persisted client-side anymore.
   const handleVerifyCode = async () => {
-    if (!accessCode.trim() || !session.data) return;
+    const trimmedCode = accessCode.trim();
+    if (!trimmedCode || !session.data) return;
     const token = await getJwt();
     if (!token) return;
     setAccessError("");
     try {
-      const result = await verifyCode({ jwt: token }, accessCode, draft.draft_id);
+      const result = await verifyCode({ jwt: token }, trimmedCode, draft.draft_id);
       setTier(result.tier);
       setIsTrial(result.is_trial);
       setUsesRemaining(result.uses_remaining);
@@ -439,8 +441,14 @@ export default function App() {
       setVerifiedCode("");
       setAccessCode("");
       setShowCodeEntry(false);
-    } catch {
-      setAccessError("Access code not recognized. Check the code and try again.");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        setAccessError("Your session may have expired — sign in again.");
+      } else {
+        setAccessError(
+          "Couldn't verify that code — check the code, or sign in again if your session expired.",
+        );
+      }
     }
   };
 
@@ -454,6 +462,16 @@ export default function App() {
     setUsesRemaining(null);
     setAccessSource(null);
     setAccessError("");
+
+    resetCore();
+    clearSession();
+
+    setDraft((prev) => ({
+      ...prev,
+      organizer_name: "",
+      contact_email: "",
+      contact_phone: "",
+    }));
   };
 
   const handleDraftChange = (next: EventDraft) => {
@@ -573,23 +591,12 @@ export default function App() {
   // localStorage bundles) and signs the current user out. The server account
   // is never touched — the same user can sign back in right after.
   const handleResetSite = async () => {
-    resetCore();
-    clearDraft();
-    clearSession();
-
     setAccessCode("");
     setAccessVerified(false);
     setVerifiedCode("");
     setAccessError("");
     setShowCodeEntry(false);
     setAccessSource(null);
-
-    setDraft((prev) => ({
-      ...prev,
-      organizer_name: "",
-      contact_email: "",
-      contact_phone: "",
-    }));
 
     await handleSignOut();
   };
@@ -653,7 +660,7 @@ export default function App() {
             setAccessError("");
           }}
           autoComplete="off"
-          disabled={busy || job !== null || locked}
+          disabled={busy || job !== null || locked || !isDraftEmpty(draft)}
           placeholder="Provided by The Commons"
           aria-label="Access code"
         />
@@ -751,7 +758,10 @@ export default function App() {
                   <button
                     type="button"
                     className="linklike"
-                    onClick={() => setShowCodeEntry((v) => !v)}
+                    onClick={() => {
+                      if (!showCodeEntry) resetForm();
+                      setShowCodeEntry((v) => !v);
+                    }}
                   >
                     Have another code?
                   </button>
@@ -832,9 +842,9 @@ export default function App() {
                 type="button"
                 className="reset-form-inline"
                 onClick={handleResetSite}
-                title="Clear all saved form/session data on this device and sign out"
+                title="Clear all saved form/session data on this device and sign out — a hard reset of the whole site"
               >
-                Reset site
+                Hard Reset Site
               </button>
             </p>
           </li>
@@ -883,18 +893,7 @@ export default function App() {
 
       {/* ── The Event form ── */}
       <section className="section">
-        <div className="section-title-row">
-          <h2>The Event</h2>
-          <button
-            type="button"
-            className="reset-form-inline"
-            onClick={resetForm}
-            disabled={busy || aiBusy || job !== null || !hasAccess || locked}
-            title="Clear the form and start over"
-          >
-            Reset form
-          </button>
-        </div>
+        <h2>The Event</h2>
         <div className={hasAccess && !locked ? "" : "form-dim"}>
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
@@ -1052,7 +1051,7 @@ export default function App() {
           )}
           {extInstalled && (
             <p className="section-note calendar-request">
-              Don't see a calendar you expect?{" "}
+              Don't see a calendar you'd like?{" "}
               <a
                 href="https://docs.google.com/forms/d/e/1FAIpQLSfCZeSLpDLnKwZt-dFDnfRfdIvFUlEoYPE_OMRdPQnxpyGxlA/viewform?usp=dialog"
                 target="_blank"

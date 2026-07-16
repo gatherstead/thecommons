@@ -667,6 +667,32 @@ class BindTrialCodeTest(TestCase):
         self.assertEqual(result.tier, 1)
         self.assertFalse(result.is_trial)
 
+    def test_bind_invalidates_stale_cached_tier_0_for_new_session(self):
+        """Bug 6 regression: a stale cached tier-0 jwt-access entry (e.g. from
+        a pre-bind resolve_access call in an earlier session) must not shadow
+        a trial code bound afterward — bind_trial_code has to invalidate the
+        cache the same way redeem_upgrade_code already does."""
+        _make_code(raw="BINDRAW11", max_uses=None)
+
+        # Simulate an earlier session's cache-populating call, before any
+        # code is bound — this seeds a cached tier-0 entry for the email.
+        req = _make_request(auth_header="Bearer faketoken")
+        with _patch_jwt({"email": "alice@example.com"}):
+            pre_bind_result = resolve_access(req)
+        self.assertEqual(pre_bind_result.tier, 0)
+
+        # Now bind a trial code to the account (e.g. from a second tab/device).
+        bind_result = bind_trial_code("alice@example.com", "BINDRAW11")
+        self.assertIsNotNone(bind_result)
+
+        # A brand-new session (logout/login) resolves via JWT alone.
+        new_req = _make_request(auth_header="Bearer faketoken")
+        with _patch_jwt({"email": "alice@example.com"}):
+            result = resolve_access(new_req)
+
+        self.assertEqual(result.tier, 2)
+        self.assertTrue(result.is_trial)
+
 
 # ---------------------------------------------------------------------------
 # POST /broadcast/verify-code endpoint

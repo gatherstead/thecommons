@@ -9,8 +9,8 @@ export function HeaderAuthNav() {
     const router = useRouter();
     const pathname = usePathname();
     const isOnHome = pathname === '/';
-    const isOnLogin = pathname === '/auth/login';
-    const isOnSignup = pathname === '/auth/signup';
+    const isOnLogin = pathname === '/signin';
+    const isOnSignup = pathname === '/join';
 
     if (isInitializing) return null;
 
@@ -24,13 +24,13 @@ export function HeaderAuthNav() {
 
         if (isOnLogin) {
             left = <Link href="/" className={navLinkClass}>Home</Link>;
-            right = <Link href="/auth/signup" className={navLinkClass}>Sign Up</Link>;
+            right = <Link href="/join" className={navLinkClass}>Sign Up</Link>;
         } else if (isOnSignup) {
-            left = <Link href="/auth/login" className={navLinkClass}>Log In</Link>;
+            left = <Link href="/signin" className={navLinkClass}>Log In</Link>;
             right = <Link href="/" className={navLinkClass}>Home</Link>;
         } else {
-            left = <Link href={`/auth/login?redirect=${next}`} className={navLinkClass}>Log In</Link>;
-            right = <Link href={`/auth/signup?redirect=${next}`} className={navLinkClass}>Sign Up</Link>;
+            left = <Link href={`/signin?redirect_to=${next}`} className={navLinkClass}>Log In</Link>;
+            right = <Link href={`/join?redirect_to=${next}`} className={navLinkClass}>Sign Up</Link>;
         }
 
         return (

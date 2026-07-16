@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `29`
+**Next suite number:** `30`
 
 ## Suite ledger
 
@@ -27,6 +27,7 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 26 | Broadcast touch-up (login, codes, copy, reset) | Needs QA | 26.1–26.5 | _(pending)_ |
 | 27 | Neon autosuspend / query-rate reduction | Needs QA | 27.1–27.7 (27.8 Open — manual validation) | _(pending)_ |
 | 28 | Broadcast touch-up 2 (form lifecycle, code verify, trial persistence) | Needs QA | 28.1–28.2 | _(pending)_ |
+| 29 | Standalone auth portal (auth.thecommons.town) | Needs QA | 29.1–29.7 | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

@@ -11,6 +11,9 @@
   --color-border: #1a1a1a;
   --color-border-light: #c8c3b8;
   --color-accent: #8b0000;
+  /* Warm gilt tone — used only by the standalone auth portal (tree-painting
+     palette): active-tab underline, input focus/placeholder accents. */
+  --color-gold: #b0864a;
 
   /* Readable serif stack -- Georgia is on every system, no network requests */
   --font-headline: Georgia, "Times New Roman", Times, serif;

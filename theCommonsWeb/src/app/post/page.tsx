@@ -101,13 +101,7 @@ export default function PostEventPage() {
 
         if (!isAuthenticated) {
             try { sessionStorage.setItem(PENDING_EVENT_KEY, JSON.stringify(payload)); } catch { /* ignore */ }
-            const params = new URLSearchParams({
-                redirect: '/post',
-                intent: 'post-event',
-                heading: 'Almost there…',
-                subheading: 'We just need an account so we can credit your post and let you manage it later.',
-            });
-            router.push(`/auth/signup?${params.toString()}`);
+            router.push('/join?redirect_to=%2Fpost');
             return;
         }
 

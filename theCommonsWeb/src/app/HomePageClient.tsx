@@ -116,7 +116,7 @@ export default function HomePageClient() {
     selectedTags,
     onTagToggle: toggleTag,
     currentUser: user,
-    onSignIn: () => router.push('/auth/login?redirect=/'),
+    onSignIn: () => router.push('/signin?redirect_to=/'),
     onSignOut: logout,
   };
 

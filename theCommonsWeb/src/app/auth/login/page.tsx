@@ -1,10 +1,14 @@
-import { Suspense } from 'react';
-import { AuthFlow } from '../AuthFlow';
+import { redirect } from 'next/navigation';
 
-export default function LoginPage() {
-    return (
-        <Suspense fallback={null}>
-            <AuthFlow defaultSignIn={true} />
-        </Suspense>
-    );
+export default async function LoginPage({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+    const sp = await searchParams;
+    const explicitRedirect = typeof sp.redirect === 'string' ? sp.redirect : undefined;
+    const intent = typeof sp.intent === 'string' ? sp.intent : undefined;
+    const redirectTo = explicitRedirect ?? (intent === 'digest' ? '/profile#digest' : undefined);
+
+    redirect(redirectTo ? `/signin?redirect_to=${encodeURIComponent(redirectTo)}` : '/signin');
 }

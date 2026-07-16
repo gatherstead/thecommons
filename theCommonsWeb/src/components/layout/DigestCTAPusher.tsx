@@ -6,13 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useMessageStack } from '../../hooks/useMessageStack';
 import { getProfile, type EmailPreference } from '../../services/profileService';
 
-const DIGEST_HEADING = 'Get the Weekly Digest';
-const DIGEST_SUBHEADING = "Enter your email — we'll send local events to your inbox each week.";
-
-export const DIGEST_SIGNUP_HREF =
-    `/auth/signup?intent=digest&type=local` +
-    `&heading=${encodeURIComponent(DIGEST_HEADING)}` +
-    `&subheading=${encodeURIComponent(DIGEST_SUBHEADING)}`;
+export const DIGEST_SIGNUP_HREF = '/join?redirect_to=%2Fprofile%23digest';
 
 interface DigestCTAPusherProps {
     delaySeconds?: number;

@@ -219,10 +219,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const logout = useCallback(async () => {
         try { await authClient.signOut(); } catch { /* best-effort */ }
-        setSessionUser(null);
-        setToken(null);
-        queryClient.removeQueries({ queryKey: ['profile'] });
-    }, [queryClient]);
+        // Hard reset: a full-page load to home wipes every trace of the signed-out
+        // user (React Query cache, in-memory session/token, mounted pages) so no
+        // state leaks across accounts. This intentionally leaves the SPA.
+        window.location.assign('/');
+    }, []);
 
     const value = useMemo<AuthContextValue>(
         () => ({

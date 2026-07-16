@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import AuthModal from "./components/AuthModal";
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import { clearDraft, clearSession, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
-import { authClient, fetchJwt, JWT_FRESH_MS } from "./lib/authClient";
+import { AUTH_URL, authClient, fetchJwt, JWT_FRESH_MS } from "./lib/authClient";
 import {
   type ApiAuth,
   aiAutofill,
@@ -179,8 +178,6 @@ export default function App() {
   const [accessSource, setAccessSource] = useState<"jwt" | "code" | null>(null);
   const [accessError, setAccessError] = useState("");
   const [showCodeEntry, setShowCodeEntry] = useState(false);
-
-  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
@@ -695,8 +692,6 @@ export default function App() {
         <div className="rule-double" />
       </header>
 
-      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
-
       <section className="section">
         <h2>Access</h2>
         <ol className="access-steps">
@@ -715,7 +710,13 @@ export default function App() {
             ) : (
               <>
                 <p className="hint">Use your account, or create one in a few seconds.</p>
-                <button type="button" onClick={() => setShowAuthModal(true)}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const portalUrl = `${AUTH_URL}/signin?redirect_to=${encodeURIComponent(window.location.href)}`;
+                    window.location.href = portalUrl;
+                  }}
+                >
                   Sign in / Create account
                 </button>
               </>

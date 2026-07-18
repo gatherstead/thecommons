@@ -13,7 +13,6 @@ from django.db import transaction
 
 from broadcast.models import BroadcastSubmission
 from broadcast.runner import run_submission
-from broadcast.services import refresh_job_cache
 
 logger = logging.getLogger("broadcast")
 
@@ -31,7 +30,6 @@ def claim_next() -> BroadcastSubmission | None:
             return None
         submission.status = "running"
         submission.save(update_fields=["status"])
-        refresh_job_cache(submission)
         return submission
 
 
@@ -50,7 +48,6 @@ def recover_orphans() -> int:
             submission.targets.filter(status="in_progress").update(status="pending")
             submission.status = "queued"
             submission.save(update_fields=["status"])
-            refresh_job_cache(submission)
             logger.warning("re-queued orphaned submission %s", submission.id)
     return len(orphans)
 
@@ -67,5 +64,4 @@ def run_once() -> bool:
         submission.refresh_from_db()
         submission.status = "failed"
         submission.save(update_fields=["status"])
-        refresh_job_cache(submission)
     return True

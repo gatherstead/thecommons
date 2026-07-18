@@ -6,7 +6,7 @@ Local events aggregator for small NC towns (Chapel Hill / Carrboro / Pittsboro).
 
 ## Tech stack, and why
 
-**Core** — Postgres (Neon), Django + DRF, Next.js, uv/pnpm
+**Core** — Postgres (Neon), Django + DRF, Next.js, uv/pnpm, Oracle Cloud
 
 **Extras**
 
@@ -17,23 +17,9 @@ Local events aggregator for small NC towns (Chapel Hill / Carrboro / Pittsboro).
 - **Playwright + Chrome extension** — autofills third-party calendar forms.
 
 
-
-## Pieces
-
-One Oracle Cloud VM behind nginx runs everything:
-
-- **Next.js site** (theCommonsWeb + Better Auth) — public frontend
-- **Django API** (backendServer + DRF) — public API, ingestion, broadcast, async
-- **Redis + Celery** — job queue + read cache
-- **Broadcast subsystem** (Playwright + Chrome extension console) — pushes events to other calendars
-- **Postgres (Neon)** — system of record
-
 ## How an event gets published
 
-1. Daily poll of each source's ICS calendar feed (or a direct/broadcast submission).
-2. **Gemini** standardizes it into title, description, tags, price, town.
-3. Fuzzy dedup catches repeats across sources.
-4. A safety score auto-publishes clean events; flags the rest for manual review.
+Poll feed → Gemini standardizes → dedup → safety score auto-publishes or flags for review.
 
 More: [`docs/ingestion-pipeline.md`](docs/ingestion-pipeline.md) · [`docs/broadcast.md`](docs/broadcast.md) · [`docs/redis-celery-handoff.md`](docs/redis-celery-handoff.md)
 

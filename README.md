@@ -6,26 +6,21 @@ Local events aggregator for small NC towns (Chapel Hill / Carrboro / Pittsboro).
 
 ## Tech stack, and why
 
-**Core**
-
-- **Postgres (Neon)** — managed/serverless, no DB ops; branching gives free isolated dev DB.
-- **Django + DRF** — admin UI for reviewing scraped events, and API + ingestion pipeline share one codebase.
-- **Next.js (App Router)** — server-rendered pages for SEO, client interactivity where it matters.
-- **uv / pnpm** — faster, more reproducible installs than pip/npm.
+**Core** — Postgres (Neon), Django + DRF, Next.js, uv/pnpm
 
 **Extras**
 
-- **Redis** — significantly improves query times for the clients  by caching serverside
-- **Celery** — keeps slow work (LLM calls, scraping, emails) out of the request cycle.
-- **TanStack Query** — frontend API caching/refetching, no hand-rolled loading state.
-- **Better Auth** — drop-in auth in Next.js, issues JWTs Django verifies statelessly.
-- **Google Gemini** — turns messy scraped text into structured events and flags unsafe content.
-- **Playwright + Chrome extension** — third-party calendars have no API, only forms; extension autofills, human clicks submit.
-- **Brevo** — transactional + digest email, no mail server to run.
+- **Redis** — server-side caching for fast API responses.
+- **Celery** — runs scraping/LLM/email jobs off the request cycle.
+- **TanStack Query** — frontend caching/refetching, no hand-rolled loading state.
+- **Gemini** — structures scraped event text, flags unsafe content.
+- **Playwright + Chrome extension** — autofills third-party calendar forms.
+
+
 
 ## Pieces
 
-One Oracle Cloud VM behind nginx runs all of it:
+One Oracle Cloud VM behind nginx runs everything:
 
 - **Next.js site** (theCommonsWeb + Better Auth) — public frontend
 - **Django API** (backendServer + DRF) — public API, ingestion, broadcast, async

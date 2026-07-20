@@ -31,10 +31,3 @@ export async function fetchJwt(): Promise<string | null> {
     return null;
   }
 }
-
-// Better Auth's jwt() plugin defaults to a 15-minute expirationTime (see
-// better-auth/plugins/jwt/sign.ts) and this app never overrides it. Treat a
-// cached token as fresh for well under that window so callers never hand the
-// API a token that expires mid-flight — re-mint once the cache is older than
-// this, not on every render.
-export const JWT_FRESH_MS = 10 * 60 * 1000;

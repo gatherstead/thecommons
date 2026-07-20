@@ -168,11 +168,6 @@ CACHES = {
     }
 }
 
-# Sessions (admin-only) live in the Redis cache (DB 1), not the Neon django_session
-# table, so idle Django holds no DB-backed session traffic — trade-off: a Redis
-# flush logs admins out, which is acceptable since sessions here are admin-only.
-SESSION_ENGINE = "django.contrib.sessions.backends.cache"
-
 BETTER_AUTH_JWKS_URL = os.environ.get("BETTER_AUTH_JWKS_URL", "")
 BETTER_AUTH_ISSUER = os.environ.get("BETTER_AUTH_ISSUER", "")
 BETTER_AUTH_AUDIENCE = os.environ.get("BETTER_AUTH_AUDIENCE", "")

@@ -5,7 +5,6 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from broadcast import cache as broadcast_cache
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from broadcast.schema import CanonicalEvent, event_from_submission
 
@@ -53,7 +52,6 @@ def create_submission(
     for site_key in dict.fromkeys(site_keys):
         BroadcastTarget.objects.create(submission=submission, site_key=site_key, dry_run=dry_run)
     _dispatch_worker()
-    refresh_job_cache(submission)
     return submission
 
 
@@ -74,7 +72,6 @@ def retry_targets(submission: BroadcastSubmission, site_keys: list[str]) -> int:
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
         _dispatch_worker()
-        refresh_job_cache(submission)
     return updated
 
 
@@ -97,7 +94,6 @@ def force_retry_stuck_target(submission: BroadcastSubmission, site_keys: list[st
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
         _dispatch_worker()
-        refresh_job_cache(submission)
     return updated
 
 
@@ -119,7 +115,6 @@ def submit_real_targets(submission: BroadcastSubmission, site_keys: list[str]) -
         submission.finished_at = None
         submission.save(update_fields=["status", "finished_at"])
         _dispatch_worker()
-        refresh_job_cache(submission)
     return updated
 
 
@@ -137,7 +132,6 @@ def cancel_submission(submission: BroadcastSubmission) -> int:
     submission.status = "canceled"
     submission.finished_at = timezone.now()
     submission.save(update_fields=["status", "finished_at"])
-    refresh_job_cache(submission)
     return skipped
 
 
@@ -180,11 +174,3 @@ def job_payload(submission: BroadcastSubmission) -> dict:
         "finished_at": submission.finished_at.isoformat() if submission.finished_at else None,
         "targets": targets,
     }
-
-
-def refresh_job_cache(submission: BroadcastSubmission) -> None:
-    """Write the current job_payload through to Redis so job_detail() polls
-    (every 3s while broadcastWeb watches a running job) are served from cache
-    instead of re-hitting Neon. Call this immediately after every status
-    transition — see cache.py's module docstring for the full call-site list."""
-    broadcast_cache.set_job_payload(str(submission.id), job_payload(submission))

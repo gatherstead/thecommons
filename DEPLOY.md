@@ -458,7 +458,6 @@ BETTER_AUTH_SECRET=
 BETTER_AUTH_URL=https://auth.thecommons.town
 NEXT_PUBLIC_BETTER_AUTH_URL=https://auth.thecommons.town
 BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town   # enables cross-subdomain sessions (SameSite=None; Secure)
-BETTER_AUTH_REDIS_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/2  # session storage; same Redis host, DB 2 (DB 0/1 taken by Celery/cache)
 ```
 
 ### `broadcastWeb/.env`

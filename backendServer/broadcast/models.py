@@ -152,13 +152,7 @@ class AccessCodeUse(models.Model):
 
 
 class AccessCodeRedemption(models.Model):
-    """One row per email that has redeemed/bound a code to their account.
-
-    For UPGRADE codes this meters max_uses (see redeem_upgrade_code). For
-    TRIAL codes it's how bind_trial_code() ties an otherwise-anonymous code
-    to a logged-in account so resolve_access() can restore it from the JWT
-    alone — no client-side persistence needed, and it works across devices.
-    """
+    """One row per email that has redeemed an UPGRADE code — meters max_uses."""
 
     access_code = models.ForeignKey(
         AccessCode, related_name="redemptions", on_delete=models.CASCADE

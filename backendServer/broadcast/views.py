@@ -13,6 +13,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
+from broadcast import cache as broadcast_cache
 from broadcast.access import redeem_upgrade_code, resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
@@ -98,11 +99,20 @@ def submit(request):
 @api_view(["GET"])
 @permission_classes([RequiresBroadcastTier1])
 def job_detail(request, job_id):
+    """Poll target — broadcastWeb hits this every 3s while a job runs, so a
+    cache hit must never touch Neon. Miss path (cold cache) falls back to the
+    DB and repopulates the cache for subsequent polls."""
+    cached = broadcast_cache.get_job_payload(job_id)
+    if cached is not None:
+        return Response(cached)
+
     try:
         submission = BroadcastSubmission.objects.get(id=job_id)
     except BroadcastSubmission.DoesNotExist:
         raise Http404 from None
-    return Response(job_payload(submission))
+    payload = job_payload(submission)
+    broadcast_cache.set_job_payload(job_id, payload)
+    return Response(payload)
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)

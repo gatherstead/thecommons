@@ -21,6 +21,7 @@ from broadcast.adapters import get_adapter
 from broadcast.adapters.base import RunContext, TargetResult
 from broadcast.models import BroadcastSubmission
 from broadcast.schema import event_from_submission
+from broadcast.services import refresh_job_cache
 
 logger = logging.getLogger("broadcast")
 
@@ -33,6 +34,7 @@ def run_submission(submission: BroadcastSubmission) -> None:
     submission.status = "running"  # idempotent if the worker already claimed it
     submission.started_at = timezone.now()
     submission.save(update_fields=["status", "started_at"])
+    refresh_job_cache(submission)
 
     ev = event_from_submission(submission)
     targets = list(submission.targets.filter(status="pending").order_by("site_key"))
@@ -48,6 +50,7 @@ def run_submission(submission: BroadcastSubmission) -> None:
         target.attempts += 1
         target.started_at = timezone.now()
         target.save(update_fields=["status", "attempts", "started_at"])
+        refresh_job_cache(submission)
 
         result = _run_target(target, ev)
 
@@ -65,6 +68,7 @@ def run_submission(submission: BroadcastSubmission) -> None:
                 "finished_at",
             ]
         )
+        refresh_job_cache(submission)
         if result.status == "failed":
             any_failed = True
         logger.info("broadcast %s → %s: %s", submission.id, target.site_key, result.status)
@@ -75,11 +79,13 @@ def run_submission(submission: BroadcastSubmission) -> None:
         submission.targets.filter(status="pending").update(status="skipped")
         submission.finished_at = timezone.now()
         submission.save(update_fields=["finished_at"])
+        refresh_job_cache(submission)
         return
 
     submission.status = "failed" if any_failed else "done"
     submission.finished_at = timezone.now()
     submission.save(update_fields=["status", "finished_at"])
+    refresh_job_cache(submission)
 
 
 def _run_target(target, ev) -> TargetResult:

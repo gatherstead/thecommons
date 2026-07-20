@@ -895,7 +895,7 @@ export default function App() {
                       <span className="target-status pending">opening…</span>
                     )}
                     {status === "submitted" && (
-                      <span className="target-status submitted">submitted</span>
+                      <span className="target-status submitted">filled</span>
                     )}
                     {status === "unavailable" && (
                       <span className="target-status unavailable">not available</span>
@@ -968,7 +968,7 @@ export default function App() {
                     }}
                     disabled={busy || selected.size === 0}
                   >
-                    Submit events!
+                    Populate Forms!
                   </button>
                 </div>
               )}

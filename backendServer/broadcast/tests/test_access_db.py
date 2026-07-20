@@ -520,3 +520,39 @@ class RedeemEndpointTest(TestCase):
                 HTTP_AUTHORIZATION="Bearer faketoken",
             )
         self.assertEqual(resp.status_code, 403)
+
+    def test_upgrade_tier2_redemption_survives_reload_via_jwt_path(self):
+        """Regression for 26.2: redeeming a real --kind upgrade --tier 2 code must
+        permanently set BroadcastAccess.tier, and a *later, separate* request on the
+        JWT path (GET /broadcast/access, simulating a page reload) must read that same
+        tier back — including when the email claim's casing differs between the two
+        requests (write path lowercases via request.broadcast_email /
+        authenticated_email; read path must do the same on the JWT claim)."""
+        _make_upgrade_code(raw="RELOADRAW", tier=2)
+
+        # Step 1: logged-in user redeems the upgrade code (JWT claim uppercase).
+        with _patch_jwt({"email": "UPPER@Example.com"}):
+            redeem_resp = self.client.post(
+                "/broadcast/redeem",
+                {"access_code": "RELOADRAW"},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
+        self.assertEqual(redeem_resp.status_code, 200)
+        self.assertEqual(redeem_resp.json()["tier"], 2)
+
+        # BroadcastAccess row is permanent, keyed by lowercased email.
+        grant = BroadcastAccess.objects.get(email="upper@example.com")
+        self.assertEqual(grant.tier, 2)
+
+        # Step 2: a brand new request (simulating reload) hits the JWT read path with
+        # a differently-cased email claim — must still resolve to tier 2, not tier 0.
+        with _patch_jwt({"email": "Upper@EXAMPLE.com"}):
+            reload_resp = self.client.get(
+                "/broadcast/access",
+                HTTP_AUTHORIZATION="Bearer faketoken",
+            )
+        self.assertEqual(reload_resp.status_code, 200)
+        body = reload_resp.json()
+        self.assertEqual(body["tier"], 2)
+        self.assertFalse(body["is_trial"])

@@ -242,6 +242,7 @@ class RetryStuckJobTest(TestCase):
         target.save()
         submission.status = "running"
         submission.save()
+        cache.clear()  # bypass write-through: this test mutates status directly on the row
 
         resp = self._retry_stuck(job_id, ["explore_pittsboro"])
         self.assertEqual(resp.status_code, 200)

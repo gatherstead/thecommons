@@ -1,0 +1,271 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Ingestion & Broadcast Monitor — Devtools{% endblock %}
+
+{% block content %}
+<style>
+  .monitor { max-width: 1100px; }
+  .monitor h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .monitor h2 { font-size: 1.15rem; font-weight: 700; margin: 2rem 0 0.75rem; }
+  .monitor .description { color: #6b7280; margin: 0.5rem 0 1.5rem; line-height: 1.65; }
+
+  .monitor .controls {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+  }
+  .monitor .controls label { font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+  .monitor .controls select { padding: 0.3rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem; }
+  .monitor .controls .db-label.prod-active { color: #dc2626; }
+
+  .monitor table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 0.5rem; }
+  .monitor th, .monitor td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; text-align: left; }
+  .monitor th { background: #f3f4f6; font-weight: 700; }
+  .monitor tr.source-row { cursor: pointer; }
+  .monitor tr.source-row:hover { background: #f9fafb; }
+  .monitor tr.source-row.inactive { color: #9ca3af; }
+  .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
+
+  .monitor .summary-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .monitor .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.5rem 0.9rem; font-size: 0.85rem; }
+  .monitor .stat strong { display: block; font-size: 1.15rem; }
+
+  .monitor .drilldown-row td { background: #fafafa; padding: 0; }
+  .monitor .drilldown-wrap { padding: 0.75rem 1rem; }
+  .monitor .drilldown-wrap .loading { color: #6b7280; font-size: 0.8rem; }
+  .monitor .drilldown-wrap table { margin-bottom: 0; }
+  .monitor .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; background: #e5e7eb; }
+  .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved { background: #dcfce7; color: #166534; }
+  .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled { background: #fee2e2; color: #991b1b; }
+  .monitor .badge.pending, .monitor .badge.queued, .monitor .badge.running, .monitor .badge.in_progress { background: #fef3c7; color: #92400e; }
+  .monitor .badge.duplicate, .monitor .badge.skipped, .monitor .badge.needs_manual { background: #e0e7ff; color: #3730a3; }
+</style>
+
+<div class="monitor">
+  <h1>Ingestion &amp; Broadcast Monitor</h1>
+  <p class="description">
+    Per-collector and per-broadcast event counts for the selected window. Click a row to see the
+    underlying raw events (or broadcast submissions).
+  </p>
+
+  <div class="controls">
+    <label>
+      Window
+      <select id="window-select">
+        <option value="7d" {% if window == "7d" %}selected{% endif %}>Last 7 days</option>
+        <option value="30d" {% if window == "30d" %}selected{% endif %}>Last 30 days</option>
+        <option value="90d" {% if window == "90d" %}selected{% endif %}>Last 90 days</option>
+      </select>
+    </label>
+    <label>
+      <input type="checkbox" id="db-toggle" style="width:auto;" {% if db == "prod_readonly" %}checked{% endif %} {% if not prod_readonly_configured %}disabled{% endif %} />
+      <span class="db-label {% if db == 'prod_readonly' %}prod-active{% endif %}" id="db-toggle-label">
+        {% if prod_readonly_configured %}Prod DB (read-only){% else %}Prod DB (not configured){% endif %}
+      </span>
+    </label>
+  </div>
+
+  <h2>Collectors</h2>
+  {% if collectors %}
+  <table id="collectors-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Active</th>
+        <th>Last polled</th>
+        <th class="num">Raw</th>
+        <th class="num">Pending</th>
+        <th class="num">Approved</th>
+        <th class="num">Rejected</th>
+        <th class="num">Duplicate</th>
+        <th class="num">Published</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in collectors %}
+      <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="collector" data-key="{{ c.id }}">
+        <td>{{ c.name }}</td>
+        <td>{{ c.source_type }}</td>
+        <td>{{ c.active|yesno:"yes,no" }}</td>
+        <td>{{ c.last_polled|default:"—" }}</td>
+        <td class="num">{{ c.raw_count }}</td>
+        <td class="num">{{ c.staged_by_status.pending }}</td>
+        <td class="num">{{ c.staged_by_status.approved }}</td>
+        <td class="num">{{ c.staged_by_status.rejected }}</td>
+        <td class="num">{{ c.staged_by_status.duplicate }}</td>
+        <td class="num">{{ c.published_count }}</td>
+      </tr>
+      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="10"></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-note">No collectors found for this window/database.</p>
+  {% endif %}
+
+  <h2>Broadcast — inbound (direct submissions)</h2>
+  {% if inbound %}
+  <table id="inbound-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Active</th>
+        <th>Last polled</th>
+        <th class="num">Raw</th>
+        <th class="num">Pending</th>
+        <th class="num">Approved</th>
+        <th class="num">Rejected</th>
+        <th class="num">Duplicate</th>
+        <th class="num">Published</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in inbound %}
+      <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="inbound" data-key="{{ c.id }}">
+        <td>{{ c.name }}</td>
+        <td>{{ c.active|yesno:"yes,no" }}</td>
+        <td>{{ c.last_polled|default:"—" }}</td>
+        <td class="num">{{ c.raw_count }}</td>
+        <td class="num">{{ c.staged_by_status.pending }}</td>
+        <td class="num">{{ c.staged_by_status.approved }}</td>
+        <td class="num">{{ c.staged_by_status.rejected }}</td>
+        <td class="num">{{ c.staged_by_status.duplicate }}</td>
+        <td class="num">{{ c.published_count }}</td>
+      </tr>
+      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="9"></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-note">No direct/inbound submissions for this window/database.</p>
+  {% endif %}
+
+  <h2>Broadcast — outbound (syndication)</h2>
+  <div class="summary-stats">
+    <div class="stat"><strong>{{ outbound.total|default:0 }}</strong>submissions</div>
+    {% for status, count in outbound.by_status.items %}
+    <div class="stat"><strong>{{ count }}</strong>{{ status }}</div>
+    {% endfor %}
+  </div>
+  <div class="summary-stats">
+    {% for status, count in outbound.targets_by_status.items %}
+    <div class="stat"><strong>{{ count }}</strong>targets: {{ status }}</div>
+    {% endfor %}
+  </div>
+  <table id="outbound-table">
+    <tbody>
+      <tr class="source-row" data-kind="outbound" data-key="">
+        <td>All outbound submissions in window</td>
+      </tr>
+      <tr class="drilldown-row" data-for="outbound:" style="display:none;"><td colspan="1"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function () {
+  var windowSelect = document.getElementById("window-select");
+  var dbToggle = document.getElementById("db-toggle");
+  var dbToggleLabel = document.getElementById("db-toggle-label");
+
+  function currentDb() {
+    return (dbToggle && dbToggle.checked) ? "prod_readonly" : "default";
+  }
+
+  function reload() {
+    var params = new URLSearchParams();
+    params.set("db", currentDb());
+    params.set("window", windowSelect.value);
+    window.location.search = params.toString();
+  }
+
+  if (windowSelect) {
+    windowSelect.addEventListener("change", reload);
+  }
+  if (dbToggle) {
+    dbToggle.addEventListener("change", reload);
+  }
+  if (dbToggleLabel && dbToggle && dbToggle.checked) {
+    dbToggleLabel.classList.add("prod-active");
+  }
+
+  var STATUS_KEYS = ["published", "approved", "succeeded", "done", "rejected", "failed", "canceled",
+    "pending", "queued", "running", "in_progress", "duplicate", "skipped", "needs_manual"];
+
+  function badge(status) {
+    if (!status) return "—";
+    return '<span class="badge ' + status + '">' + status + "</span>";
+  }
+
+  function renderSourceDrilldown(rows) {
+    if (!rows.length) return '<p class="empty-note">No raw events in this window.</p>';
+    var html = "<table><thead><tr><th>Title</th><th>Created</th><th>Processed</th><th>Staged status</th><th>Published</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      html += "<tr><td>" + (r.raw_title || "") + "</td><td>" + (r.raw_created_at || "") + "</td>" +
+        "<td>" + (r.processed ? "yes" : "no") + "</td><td>" + badge(r.staged_status) + "</td>" +
+        "<td>" + (r.published ? badge("published") : "no") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function renderOutboundDrilldown(rows) {
+    if (!rows.length) return '<p class="empty-note">No submissions in this window.</p>';
+    var html = "<table><thead><tr><th>Title</th><th>Client</th><th>Status</th><th>Created</th><th>Targets</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var targets = (r.targets || []).map(function (t) {
+        return t.site_key + " " + badge(t.status);
+      }).join("<br>");
+      html += "<tr><td>" + (r.title || "") + "</td><td>" + (r.client_label || "") + "</td>" +
+        "<td>" + badge(r.status) + "</td><td>" + (r.created_at || "") + "</td><td>" + targets + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  document.querySelectorAll("tr.source-row").forEach(function (row) {
+    row.addEventListener("click", function () {
+      var kind = row.getAttribute("data-kind");
+      var key = row.getAttribute("data-key");
+      var drilldownRow = document.querySelector('tr.drilldown-row[data-for="' + kind + ":" + key + '"]');
+      if (!drilldownRow) return;
+
+      var isOpen = drilldownRow.style.display !== "none";
+      if (isOpen) {
+        drilldownRow.style.display = "none";
+        return;
+      }
+
+      var cell = drilldownRow.querySelector("td");
+      cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
+      drilldownRow.style.display = "";
+
+      var params = new URLSearchParams();
+      params.set("db", currentDb());
+      params.set("window", windowSelect.value);
+      params.set("kind", kind);
+      params.set("key", key);
+
+      fetch("/devtools/monitor/data?" + params.toString())
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var rows = data.rows || [];
+          var body = kind === "outbound" ? renderOutboundDrilldown(rows) : renderSourceDrilldown(rows);
+          cell.innerHTML = '<div class="drilldown-wrap">' + body + "</div>";
+        })
+        .catch(function () {
+          cell.innerHTML = '<div class="drilldown-wrap"><span class="empty-note">Failed to load.</span></div>';
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

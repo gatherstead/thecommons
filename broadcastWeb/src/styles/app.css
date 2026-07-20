@@ -553,7 +553,7 @@ button.verify.is-verified {
 .optional-unfilled {
   font-size: 0.78rem;
   font-style: italic;
-  color: var(--color-text-muted);
+  color: var(--color-accent);
 }
 
 /* Anchor styled as a button — used for external links in action rows */

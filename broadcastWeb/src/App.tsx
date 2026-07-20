@@ -5,7 +5,7 @@ import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
-import { clearDraft, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
+import { clearDraft, clearSession, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import { authClient, fetchJwt } from "./lib/authClient";
 import {
@@ -103,6 +103,15 @@ export const unfilledOptionalFields = (draft: EventDraft): string[] => {
 };
 
 const POLL_MS = 3000;
+// Poll backoff: widen the delay when a tick brings no change, so an idle tab
+// (job stuck, or nothing left to check) lets Neon's DB spin down instead of
+// getting pinged every 3s forever. Any change resets to POLL_MS.
+const POLL_BACKOFF_FACTOR = 1.5;
+const POLL_MAX_MS = 30_000;
+// Stop polling a single job after this long — a job that's still "active"
+// after 6 hours is not going to resolve itself; surface a neutral affordance
+// instead of polling Neon indefinitely.
+const POLL_HARD_CAP_MS = 6 * 60 * 60 * 1000;
 
 // Self-heal thresholds — deliberately more aggressive than the backend's own
 // 60s floor on started_at (see broadcast/routing.py); the server is the final
@@ -110,6 +119,12 @@ const POLL_MS = 3000;
 const QUEUED_STUCK_MS = 30_000; // dispatch is near-instant now, so 30s is generous
 const RUNNING_STUCK_MS = 90_000; // 3x BROADCAST_TIMEOUT_MS (30s default)
 const MAX_AUTO_RETRIES_PER_SITE = 2;
+
+// Cheap fingerprint of "did anything worth re-rendering-for change" — job
+// status plus each target's status, in order. Used to decide whether the
+// next poll tick should back off or reset to the base cadence.
+const jobFingerprint = (job: JobDetail): string =>
+  `${job.status}|${job.targets.map((t) => t.status).join(",")}`;
 
 const SESSION = loadSession();
 const DRAFT = loadDraft();
@@ -172,6 +187,7 @@ export default function App() {
   const [accessSource, setAccessSource] = useState<"jwt" | "code" | null>(null);
   const [accessError, setAccessError] = useState("");
   const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
 
@@ -192,6 +208,16 @@ export default function App() {
   );
   const [speedSubmit, setSpeedSubmit] = useState(DRAFT.speedSubmit ?? false);
   const jobIdRef = useRef<string | null>(DRAFT.jobId ?? null);
+  // Poll cadence state: current delay (backs off on unchanged ticks, resets
+  // to POLL_MS on any change), the fingerprint from the previous successful
+  // poll, and when the current job first became active (for the 6h hard cap).
+  const pollDelayRef = useRef(POLL_MS);
+  const lastFingerprintRef = useRef<string | null>(null);
+  const firstActiveAtRef = useRef<Map<string, number>>(new Map());
+  const [pollTimedOut, setPollTimedOut] = useState(false);
+  // De-dupes the access-resolution effect: only re-run fetchJwt+getAccess when
+  // the signed-in identity actually changes, not on every session.data reference churn.
+  const resolvedIdentityRef = useRef<string | null | undefined>(undefined);
   // Auto-retry counters per site_key, capped at MAX_AUTO_RETRIES_PER_SITE.
   // A ref (not state) so bumping it doesn't re-trigger the poll effect, and
   // survives re-renders across ticks of the same interval.
@@ -222,6 +248,10 @@ export default function App() {
 
   useEffect(() => {
     if (session.isPending) return;
+    const identity = session.data?.user?.email ?? null;
+    if (resolvedIdentityRef.current === identity) return;
+    resolvedIdentityRef.current = identity;
+
     if (!session.data) {
       setJwt(null);
       setTier(0);
@@ -242,8 +272,13 @@ export default function App() {
           setAccessSource("jwt");
           return;
         }
-      } catch {
-        // account lookup failed — fall through to a previously verified code
+        // Tier 0 on a logged-in account is a legitimate "enter your access
+        // code" state, not an error — fall through without setting accessError.
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 403) {
+          setAccessError("We couldn't verify your session — please sign out and sign in again.");
+        }
+        // other errors — fall through to a previously verified code
       }
       // No permanent tier on the account — re-validate a persisted trial code.
       if (accessVerified && verifiedCode) {
@@ -312,19 +347,81 @@ export default function App() {
         : jwt
           ? { jwt }
           : { accessCode: verifiedCode };
-    const id = setInterval(() => {
-      const currentJobId = jobIdRef.current!;
+
+    const currentJobId = jobIdRef.current;
+    if (!firstActiveAtRef.current.has(currentJobId)) {
+      firstActiveAtRef.current.set(currentJobId, Date.now());
+    }
+    pollDelayRef.current = POLL_MS;
+    // Seed from the job already in state so the very first tick can detect
+    // "unchanged" and widen immediately, instead of always resetting once.
+    lastFingerprintRef.current = job ? jobFingerprint(job) : null;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const tick = () => {
+      if (cancelled) return;
+      // Pause while the tab is hidden — resumes via the visibilitychange
+      // listener below rather than firing requests into a backgrounded tab.
+      if (document.hidden) return;
+
+      const firstActiveAt = firstActiveAtRef.current.get(currentJobId);
+      if (firstActiveAt !== undefined && Date.now() - firstActiveAt > POLL_HARD_CAP_MS) {
+        setPollTimedOut(true);
+        return;
+      }
+
       getJob(authSnap, currentJobId)
         .then((fresh) => {
+          if (cancelled) return;
           setJob(fresh);
           detectAndHealStuck(authSnap, currentJobId, fresh);
+          const fingerprint = jobFingerprint(fresh);
+          if (lastFingerprintRef.current !== null && lastFingerprintRef.current === fingerprint) {
+            pollDelayRef.current = Math.min(pollDelayRef.current * POLL_BACKOFF_FACTOR, POLL_MAX_MS);
+          } else {
+            pollDelayRef.current = POLL_MS;
+          }
+          lastFingerprintRef.current = fingerprint;
         })
         .catch(() => {
-          /* transient poll failure — keep polling */
+          /* transient poll failure — keep polling at the current cadence */
+        })
+        .finally(() => {
+          if (!cancelled) schedule();
         });
-    }, POLL_MS);
-    return () => clearInterval(id);
+    };
+
+    const schedule = () => {
+      timeoutId = setTimeout(tick, pollDelayRef.current);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        timeoutId = null;
+      } else if (timeoutId === null) {
+        // Tab became visible again — poll right away, then resume the schedule.
+        tick();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (!document.hidden) schedule();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [jobActive, verifiedCode, jwt, accessSource]);
+
+  // New job (or job cleared) — the hard-cap timer and timed-out flag are
+  // per-job, so start clean rather than carrying over from a prior submission.
+  useEffect(() => {
+    setPollTimedOut(false);
+  }, [job?.job_id]);
 
   // Stuck-target self-heal: with server-side polling gone, this client loop is
   // the primary detector. A job stuck "queued" too long (dispatch should be
@@ -424,6 +521,19 @@ export default function App() {
     setUsesRemaining(null);
     setAccessSource(null);
     setAccessError("");
+  };
+
+  // Full hard reset: clears local persistence and the auth session, then
+  // reloads for a guaranteed-clean mount rather than manually resetting every
+  // field. try/finally so the reload still fires even if signOut rejects.
+  const handleHardReset = async () => {
+    clearDraft();
+    clearSession();
+    try {
+      await authClient.signOut();
+    } finally {
+      window.location.reload();
+    }
   };
 
   const handleDraftChange = (next: EventDraft) => {
@@ -766,6 +876,21 @@ export default function App() {
             )}
           </li>
         </ol>
+        <div className="actions">
+          {confirmReset ? (
+            <button type="button" className="danger" onClick={handleHardReset}>
+              Click again to confirm — this logs you out and clears everything
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="linklike"
+              onClick={() => setConfirmReset(true)}
+            >
+              Reset everything
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="section">
@@ -895,7 +1020,7 @@ export default function App() {
                       <span className="target-status pending">opening…</span>
                     )}
                     {status === "submitted" && (
-                      <span className="target-status submitted">submitted</span>
+                      <span className="target-status submitted">filled</span>
                     )}
                     {status === "unavailable" && (
                       <span className="target-status unavailable">not available</span>
@@ -968,7 +1093,7 @@ export default function App() {
                     }}
                     disabled={busy || selected.size === 0}
                   >
-                    Submit events!
+                    Populate Forms!
                   </button>
                 </div>
               )}
@@ -996,6 +1121,11 @@ export default function App() {
       {job && (
         <section className="section">
           <h2>Progress</h2>
+          {pollTimedOut && (
+            <p className="section-note">
+              Still working after a while — refresh the page to check the latest status.
+            </p>
+          )}
           <JobProgress
             job={job}
             auth={auth}
@@ -1032,7 +1162,7 @@ export default function App() {
               rel="noopener noreferrer"
               className="btn"
             >
-              Have suggestions?
+              Give feedback
             </a>
           </div>
         </section>

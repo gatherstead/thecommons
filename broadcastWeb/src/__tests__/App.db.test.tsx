@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, act } from "@testing-library/react";
 import App from "../App";
+import { clearDraft, clearSession } from "../lib/persist";
 
 // vi.hoisted ensures these mock fn references are available inside vi.mock factories
 // (which are hoisted above regular imports).
-const { useSessionMock, fetchJwtMock, getAccessMock } = vi.hoisted(() => ({
+const { useSessionMock, fetchJwtMock, getAccessMock, getJobMock, signOutMock } = vi.hoisted(() => ({
   useSessionMock: vi.fn(() => ({ data: null as Record<string, unknown> | null, isPending: false })),
   fetchJwtMock: vi.fn(async () => null as string | null),
   getAccessMock: vi.fn(async () => ({
@@ -12,6 +13,15 @@ const { useSessionMock, fetchJwtMock, getAccessMock } = vi.hoisted(() => ({
     is_trial: false,
     uses_remaining: null as number | null,
   })),
+  getJobMock: vi.fn(async () => ({
+    job_id: "j1",
+    status: "done" as "queued" | "running" | "done" | "failed" | "canceled",
+    targets: [] as { site_key: string; status: string }[],
+    created_at: "",
+    started_at: null as string | null,
+    finished_at: null as string | null,
+  })),
+  signOutMock: vi.fn(async () => {}),
 }));
 
 vi.mock("../lib/authClient", () => ({
@@ -19,10 +29,19 @@ vi.mock("../lib/authClient", () => ({
     useSession: useSessionMock,
     signIn: { email: vi.fn(async () => ({ data: null, error: null })) },
     signUp: { email: vi.fn(async () => ({ data: null, error: null })) },
-    signOut: vi.fn(async () => {}),
+    signOut: signOutMock,
   },
   fetchJwt: fetchJwtMock,
 }));
+
+vi.mock("../lib/persist", async () => {
+  const actual = await vi.importActual<typeof import("../lib/persist")>("../lib/persist");
+  return {
+    ...actual,
+    clearDraft: vi.fn(actual.clearDraft),
+    clearSession: vi.fn(actual.clearSession),
+  };
+});
 
 vi.mock("../services/broadcastApi", () => ({
   ApiError: class ApiError extends Error {
@@ -36,14 +55,7 @@ vi.mock("../services/broadcastApi", () => ({
   getAccess: getAccessMock,
   previewBroadcast: vi.fn(async () => ({ eligible: [], excluded: [] })),
   directSubmit: vi.fn(async () => ({ status: "ok", draft_id: "x" })),
-  getJob: vi.fn(async () => ({
-    job_id: "j1",
-    status: "done",
-    targets: [],
-    created_at: "",
-    started_at: null,
-    finished_at: null,
-  })),
+  getJob: getJobMock,
   retryJob: vi.fn(async () => ({})),
   submitReal: vi.fn(async () => ({})),
   cancelJob: vi.fn(async () => ({})),
@@ -54,9 +66,19 @@ vi.mock("../services/broadcastApi", () => ({
 }));
 
 beforeEach(() => {
-  useSessionMock.mockReturnValue({ data: null, isPending: false });
-  fetchJwtMock.mockResolvedValue(null);
-  getAccessMock.mockResolvedValue({ tier: 0, is_trial: false, uses_remaining: null });
+  useSessionMock.mockReset().mockReturnValue({ data: null, isPending: false });
+  fetchJwtMock.mockReset().mockResolvedValue(null);
+  getAccessMock.mockReset().mockResolvedValue({ tier: 0, is_trial: false, uses_remaining: null });
+  getJobMock.mockReset().mockResolvedValue({
+    job_id: "j1",
+    status: "done",
+    targets: [],
+    created_at: "",
+    started_at: null,
+    finished_at: null,
+  });
+  signOutMock.mockReset().mockResolvedValue(undefined);
+  localStorage.clear();
 });
 
 afterEach(cleanup);
@@ -147,5 +169,204 @@ describe("trial uses remaining", () => {
 
     // Default state: no uses-remaining hint (tier 0)
     expect(screen.queryByText(/uses remaining/i)).toBeNull();
+  });
+});
+
+describe("T6: tier-0 and access-resolution error handling", () => {
+  it("does not show an access error banner when a logged-in user resolves to tier 0", async () => {
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "new@example.com" } },
+      isPending: false,
+    });
+    fetchJwtMock.mockResolvedValue("fake.jwt.token");
+    getAccessMock.mockResolvedValue({ tier: 0, is_trial: false, uses_remaining: null });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/This account has no broadcast access yet/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/We couldn't verify your session/i)).toBeNull();
+    expect(document.querySelector(".field-error")).toBeNull();
+  });
+
+  it("shows a re-login message when getAccess rejects with a 403 ApiError", async () => {
+    const { ApiError } = await import("../services/broadcastApi");
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "broken@example.com" } },
+      isPending: false,
+    });
+    fetchJwtMock.mockResolvedValue("fake.jwt.token");
+    getAccessMock.mockRejectedValue(new ApiError(403, "forbidden"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/We couldn't verify your session — please sign out and sign in again\./i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("does not refetch access on a re-render with the same signed-in identity", async () => {
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "stable@example.com" } },
+      isPending: false,
+    });
+    fetchJwtMock.mockResolvedValue("fake.jwt.token");
+    getAccessMock.mockResolvedValue({ tier: 1, is_trial: false, uses_remaining: null });
+
+    const { rerender } = render(<App />);
+    await waitFor(() => expect(fetchJwtMock).toHaveBeenCalledTimes(1));
+
+    // Re-render with a *new* object reference for session.data but the same
+    // identity (email) — the resolve effect should not refire.
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "stable@example.com" } },
+      isPending: false,
+    });
+    rerender(<App />);
+    await act(async () => {});
+
+    expect(fetchJwtMock).toHaveBeenCalledTimes(1);
+    expect(getAccessMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("T7: polling behavior", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const activeJob = (overrides: Partial<Record<string, unknown>> = {}) => ({
+    job_id: "job-active",
+    status: "running" as const,
+    targets: [{ site_key: "a", status: "in_progress" }],
+    created_at: new Date().toISOString(),
+    started_at: new Date().toISOString(),
+    finished_at: null,
+    ...overrides,
+  });
+
+  it("does not poll while the tab is hidden", async () => {
+    getJobMock.mockResolvedValue(activeJob());
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(getJobMock).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+  });
+
+  // App reads its persisted draft (including any in-flight job) from
+  // localStorage into a module-level constant at import time, so the module
+  // must be freshly imported *after* localStorage is seeded.
+  const renderWithActiveJob = async () => {
+    localStorage.setItem(
+      "broadcast:draft:v1",
+      JSON.stringify({ job: activeJob(), jobId: "job-active" }),
+    );
+    vi.resetModules();
+    const { default: FreshApp } = await import("../App");
+    return render(<FreshApp />);
+  };
+
+  it("widens the poll delay when consecutive ticks are unchanged, and resets on change", async () => {
+    getJobMock.mockResolvedValue(activeJob());
+
+    await renderWithActiveJob();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const callsAfterMount = getJobMock.mock.calls.length;
+
+    // First tick at base POLL_MS (3000) — unchanged job, so backoff kicks in.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(getJobMock.mock.calls.length).toBe(callsAfterMount + 1);
+
+    // Next tick should be scheduled at 3000 * 1.5 = 4500ms, not another 3000ms.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(getJobMock.mock.calls.length).toBe(callsAfterMount + 1); // no new call yet
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(getJobMock.mock.calls.length).toBe(callsAfterMount + 2);
+  });
+
+  it("sets pollTimedOut and stops polling after the 6-hour hard cap", async () => {
+    getJobMock.mockResolvedValue(activeJob());
+
+    await renderWithActiveJob();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 + 60_000);
+    });
+
+    expect(
+      screen.getByText(/Still working after a while — refresh the page to check the latest status\./i),
+    ).toBeInTheDocument();
+
+    const callsAtTimeout = getJobMock.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(getJobMock.mock.calls.length).toBe(callsAtTimeout);
+  });
+});
+
+describe("T8: hard reset", () => {
+  it("requires a second click to confirm, then clears draft/session, signs out, and reloads", async () => {
+    const reloadMock = vi.fn();
+    const originalLocation = window.location;
+    // jsdom's window.location.reload throws — stub it out for this test.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, reload: reloadMock },
+    });
+
+    render(<App />);
+    await act(async () => {});
+
+    const resetButton = screen.getByRole("button", { name: /^Reset everything$/i });
+    resetButton.click();
+
+    const confirmButton = await screen.findByRole(
+      "button",
+      { name: /Click again to confirm — this logs you out and clears everything/i },
+    );
+
+    await act(async () => {
+      confirmButton.click();
+    });
+
+    await waitFor(() => {
+      expect(clearDraft).toHaveBeenCalled();
+      expect(clearSession).toHaveBeenCalled();
+      expect(signOutMock).toHaveBeenCalled();
+      expect(reloadMock).toHaveBeenCalled();
+    });
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
   });
 });

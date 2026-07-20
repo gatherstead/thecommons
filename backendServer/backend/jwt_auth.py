@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Any
 
@@ -5,6 +6,8 @@ import jwt
 import requests
 from django.conf import settings
 from jwt import PyJWKClient
+
+logger = logging.getLogger(__name__)
 
 _JWKS_TTL_SECONDS = 600
 _JWKS_STALE_GRACE_SECONDS = 3600
@@ -63,5 +66,10 @@ def verify_better_auth_jwt(token: str) -> dict | None:
             audience=audience,
             options={"verify_aud": bool(audience)},
         )
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        # Temporary diagnostic aid (see inspect_broadcast_jwt) — logs the failure
+        # reason only, never the token, so prod logs reveal *why* verification failed.
+        logger.warning(
+            "Better Auth JWT verification failed [diagnostic]: %s: %s", type(e).__name__, e
+        )
         return None

@@ -2,12 +2,14 @@ import ipaddress
 import queue
 import socket
 import threading
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from django.conf import settings
 from django.db import transaction
 from django.http import Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 
 from events.models import Event, Town
@@ -20,12 +22,22 @@ from ingestion.scraping.scrapers import list_scrapers
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
 
+from .monitoring import (
+    broadcast_inbound_summary,
+    broadcast_outbound_summary,
+    collector_summary,
+    drilldown,
+)
 from .pipeline_runner import _event_dict, _resolve_source_name, run_pipeline_into_queue
 from .sse import sse_frame
 
 # ── SSRF guard ────────────────────────────────────────────────────────────────
 
 _BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+_WINDOW_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 
 
 def _validate_url(url):
@@ -335,3 +347,64 @@ def add_source(request):
             "name": source.name,
         }
     )
+
+
+def _resolve_db(request):
+    db = request.GET.get("db", "default")
+    if db not in ("default", "prod_readonly") or db not in settings.DATABASES:
+        db = "default"
+    return db
+
+
+def _resolve_window(request):
+    window = request.GET.get("window", "30d")
+    if window not in _WINDOW_DAYS:
+        window = "30d"
+    end = timezone.now()
+    start = end - timedelta(days=_WINDOW_DAYS[window])
+    return window, start, end
+
+
+def monitor(request):
+    if not settings.DEBUG:
+        raise Http404
+
+    db = _resolve_db(request)
+    window, start, end = _resolve_window(request)
+
+    return render(
+        request,
+        "devtools/monitor.html",
+        {
+            "collectors": collector_summary(db, start, end),
+            "inbound": broadcast_inbound_summary(db, start, end),
+            "outbound": broadcast_outbound_summary(db, start, end),
+            "db": db,
+            "window": window,
+            "prod_readonly_configured": "prod_readonly" in settings.DATABASES,
+        },
+    )
+
+
+def monitor_data(request):
+    if not settings.DEBUG:
+        raise Http404
+
+    kind = request.GET.get("kind", "")
+    if kind not in ("collector", "inbound", "outbound"):
+        return JsonResponse({"error": f"invalid kind '{kind}'"}, status=400)
+
+    db = _resolve_db(request)
+    _, start, end = _resolve_window(request)
+
+    key = request.GET.get("key", "")
+    if kind != "outbound":
+        key = int(key) if key.isdigit() else None
+    else:
+        key = key or None
+
+    limit_raw = request.GET.get("limit", "").strip()
+    limit = min(int(limit_raw), 100) if limit_raw.isdigit() else 100
+
+    rows = drilldown(db, kind, key, start, end, limit=limit)
+    return JsonResponse({"rows": rows, "db": db})

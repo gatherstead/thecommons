@@ -521,14 +521,17 @@ export default function App() {
     }
   };
 
+  // Signing out wipes the form entirely — clear both persistence scopes and
+  // reload for a guaranteed-clean, stale-data-free mount (same approach as
+  // handleHardReset). try/finally so the reload still fires if signOut rejects.
   const handleSignOut = async () => {
-    await authClient.signOut();
-    setJwt(null);
-    setTier(0);
-    setIsTrial(false);
-    setUsesRemaining(null);
-    setAccessSource(null);
-    setAccessError("");
+    clearDraft();
+    clearSession();
+    try {
+      await authClient.signOut();
+    } finally {
+      window.location.reload();
+    }
   };
 
   // Full hard reset: clears local persistence and the auth session, then

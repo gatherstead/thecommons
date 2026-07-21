@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 _JWKS_TTL_SECONDS = 600
 _JWKS_STALE_GRACE_SECONDS = 3600
 
+# Cloudflare (in front of auth.thecommons.town) 403s the default "Python-urllib"
+# User-Agent that PyJWKClient sends. Present a browser-like UA so the JWKS fetch
+# is allowed; without this, every Better Auth JWT fails verification.
+_JWKS_USER_AGENT = "Mozilla/5.0 (compatible; TheCommons/1.0)"
+_JWKS_HEADERS = {"User-Agent": _JWKS_USER_AGENT}
+
 _jwks_cache: dict[str, Any] = {
     "client": None,
     "fetched_at": 0.0,
@@ -36,8 +42,13 @@ def _get_jwks_client() -> PyJWKClient | None:
         return cached
 
     try:
-        requests.get(jwks_url, timeout=3).raise_for_status()
-        client = PyJWKClient(jwks_url, cache_jwk_set=True, lifespan=_JWKS_TTL_SECONDS)
+        requests.get(jwks_url, timeout=3, headers=_JWKS_HEADERS).raise_for_status()
+        client = PyJWKClient(
+            jwks_url,
+            cache_jwk_set=True,
+            lifespan=_JWKS_TTL_SECONDS,
+            headers=_JWKS_HEADERS,
+        )
         _jwks_cache["client"] = client
         _jwks_cache["fetched_at"] = now
         _jwks_cache["stale_after"] = now + _JWKS_TTL_SECONDS + _JWKS_STALE_GRACE_SECONDS

@@ -41,7 +41,14 @@ export function authHeaders(auth: ApiAuth): Record<string, string> {
 }
 
 const messageFor = (status: number, body: unknown): string => {
-  if (status === 403) return "Access denied — check your credentials or access code.";
+  // Prefer the backend's own `detail` (e.g. an expired/exhausted access code)
+  // so the specific message reaches the user instead of a generic 403 string.
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (status === 403) {
+    return typeof detail === "string"
+      ? detail
+      : "Access denied — check your credentials or access code.";
+  }
   if (status === 400) return `The form has a problem: ${JSON.stringify(body)}`;
   return `Request failed (${status}).`;
 };

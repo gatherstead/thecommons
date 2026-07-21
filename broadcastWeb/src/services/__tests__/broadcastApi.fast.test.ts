@@ -110,12 +110,17 @@ describe("getAccess", () => {
     expect((init.headers as Record<string, string>)["X-Broadcast-Access-Code"]).toBe("CODE");
   });
 
-  it("throws ApiError on 403", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ detail: "Invalid credentials." }, { ok: false, status: 403 }));
+  it("throws ApiError on 403, surfacing the backend detail", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { detail: "This access code has expired — please contact support." },
+        { ok: false, status: 403 },
+      ),
+    );
 
     await expect(getAccess(JWT_AUTH)).rejects.toMatchObject({
       status: 403,
-      message: expect.stringContaining("Access denied"),
+      message: "This access code has expired — please contact support.",
     });
   });
 

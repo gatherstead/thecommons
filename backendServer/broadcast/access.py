@@ -31,6 +31,10 @@ class AccessResult:
     uses_remaining: int | None
     client_label: str | None
     code: AccessCode | None = field(default=None)
+    # Why access was denied on a matched-but-dead TRIAL code: "expired" or
+    # "exhausted". None otherwise. Lets callers surface a specific message
+    # instead of a generic "Invalid credentials."
+    reason: str | None = field(default=None)
 
 
 def hash_code(raw: str) -> str:
@@ -55,24 +59,29 @@ def authenticated_email(request) -> str | None:
     return email.lower() if email else None
 
 
-def _trial_liveness(code: AccessCode, draft_id: str | None, now) -> tuple[bool, int | None]:
-    """Live expiry + max_uses check for a TRIAL code. Returns (ok, uses_remaining).
+def _trial_liveness(
+    code: AccessCode, draft_id: str | None, now
+) -> tuple[bool, int | None, str | None]:
+    """Live expiry + max_uses check for a TRIAL code.
+
+    Returns (ok, uses_remaining, reason). `reason` is None when ok, else
+    "expired" or "exhausted" so callers can surface a specific message.
 
     Factored out so it can be called against a cached code row without
     duplicating the expiry/metering logic. Never cached itself — consumption
     counts must always be live (see cache.py docstring).
     """
     if code.expires_at is not None and code.expires_at < now:
-        return False, None
+        return False, None, "expired"
     used = code.uses.count()
     if code.max_uses is None:
-        return True, None
+        return True, None, None
     uses_remaining = max(code.max_uses - used, 0)
     if used >= code.max_uses:
         already_counted = draft_id is not None and code.uses.filter(draft_id=draft_id).exists()
         if not already_counted:
-            return False, uses_remaining
-    return True, uses_remaining
+            return False, uses_remaining, "exhausted"
+    return True, uses_remaining, None
 
 
 def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noqa: C901  # tiered auth resolution; complexity is inherent
@@ -150,9 +159,9 @@ def resolve_access(request, draft_id: str | None = None) -> AccessResult:  # noq
             matched = AccessCode.objects.filter(id=cached_meta["code_id"]).first()
 
         if matched is not None:
-            ok, uses_remaining = _trial_liveness(matched, draft_id, now)
+            ok, uses_remaining, reason = _trial_liveness(matched, draft_id, now)
             if not ok:
-                return AccessResult(0, None, False, None, None, None)
+                return AccessResult(0, None, False, None, None, None, reason=reason)
 
             label = matched.label
             return AccessResult(

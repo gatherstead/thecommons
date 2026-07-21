@@ -499,7 +499,9 @@ export default function App() {
     }
     try {
       const access = await getAccess({ accessCode });
-      if (access.tier === 0) throw new ApiError(403, "code grants no access");
+      if (access.tier === 0) {
+        throw new ApiError(403, "Access code not recognized. Check the code and try again.");
+      }
       setAccessVerified(true);
       setVerifiedCode(accessCode);
       setAccessSource("code");
@@ -507,20 +509,29 @@ export default function App() {
       setIsTrial(access.is_trial);
       setUsesRemaining(access.uses_remaining);
       setShowCodeEntry(false);
-    } catch {
+    } catch (e) {
       setAccessVerified(false);
-      setAccessError("Access code not recognized. Check the code and try again.");
+      // Surface the backend's specific message (expired/exhausted → contact
+      // support) when present; fall back to a generic not-recognized message.
+      setAccessError(
+        e instanceof ApiError && e.status === 403 && e.message
+          ? e.message
+          : "Access code not recognized. Check the code and try again.",
+      );
     }
   };
 
+  // Signing out wipes the form entirely — clear both persistence scopes and
+  // reload for a guaranteed-clean, stale-data-free mount (same approach as
+  // handleHardReset). try/finally so the reload still fires if signOut rejects.
   const handleSignOut = async () => {
-    await authClient.signOut();
-    setJwt(null);
-    setTier(0);
-    setIsTrial(false);
-    setUsesRemaining(null);
-    setAccessSource(null);
-    setAccessError("");
+    clearDraft();
+    clearSession();
+    try {
+      await authClient.signOut();
+    } finally {
+      window.location.reload();
+    }
   };
 
   // Full hard reset: clears local persistence and the auth session, then

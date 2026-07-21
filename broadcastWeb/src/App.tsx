@@ -910,8 +910,13 @@ export default function App() {
           <p className="hint">
             Paste a raw event description, email, or flyer text below and the AI will fill
             the event fields for you.
-            {tier < 2 && <em> Available with Tier 2 access.</em>}
+            {tier === 0 && <em> Available with Tier 2 access.</em>}
           </p>
+          {tier === 1 && (
+            <p className="field-error">
+              Talk to support and upgrade your plan to access this feature.
+            </p>
+          )}
           <textarea
             className="ai-autofill-textarea"
             placeholder="Paste an event description / flyer text / email…"

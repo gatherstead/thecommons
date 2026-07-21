@@ -36,6 +36,13 @@ from broadcast.services import (
     submit_real_targets,
 )
 
+# Maps AccessResult.reason (set by resolve_access for a matched-but-dead trial
+# code) to the message shown to the caller. Falls back to a generic message.
+_ACCESS_DENIED_DETAIL = {
+    "expired": "This access code has expired — please contact support.",
+    "exhausted": "This access code has no uses remaining — please contact support.",
+}
+
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 @api_view(["POST"])
@@ -284,6 +291,7 @@ def access_info(request):
 
     No permission class — open to all. Returns 403 only when credentials
     were supplied but could not be validated (invalid JWT or unknown code).
+    A matched-but-dead trial code gets a specific message via result.reason.
     """
     result = resolve_access(request)
 
@@ -292,7 +300,8 @@ def access_info(request):
     credentials_supplied = auth_header.startswith("Bearer ") or bool(code_header)
 
     if credentials_supplied and result.identity is None:
-        return Response({"detail": "Invalid credentials."}, status=status.HTTP_403_FORBIDDEN)
+        detail = _ACCESS_DENIED_DETAIL.get(result.reason, "Invalid credentials.")
+        return Response({"detail": detail}, status=status.HTTP_403_FORBIDDEN)
 
     return Response(
         {

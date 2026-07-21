@@ -288,6 +288,30 @@ class AccessInfoEndpointTest(TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json()["detail"], "Invalid credentials.")
 
+    def test_expired_code_returns_403_with_specific_message(self):
+        _make_code(raw="EXPINFO", expires_at=timezone.now() - timedelta(hours=1))
+        resp = self.client.get(
+            "/broadcast/access",
+            HTTP_X_BROADCAST_ACCESS_CODE="EXPINFO",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(
+            resp.json()["detail"], "This access code has expired — please contact support."
+        )
+
+    def test_exhausted_code_returns_403_with_specific_message(self):
+        code = _make_code(raw="FULLINFO", max_uses=1)
+        AccessCodeUse.objects.create(access_code=code, draft_id="draft-used")
+        resp = self.client.get(
+            "/broadcast/access",
+            HTTP_X_BROADCAST_ACCESS_CODE="FULLINFO",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(
+            resp.json()["detail"],
+            "This access code has no uses remaining — please contact support.",
+        )
+
     def test_valid_code_returns_200_with_trial_info(self):
         _make_code(raw="INFOCODE", max_uses=3)
         resp = self.client.get(

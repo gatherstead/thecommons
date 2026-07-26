@@ -77,6 +77,11 @@ def _make_event():
         categories=["music"],
         event_url="https://example.com/jazz",
         organizer_name="Acme Org",
+        # ABC11 marks the submitter identity fields required, so an event
+        # missing these routes to needs_manual before we get to assert on
+        # what was filled.
+        contact_email="events@acme.example",
+        contact_phone="919-555-0100",
     )
 
 

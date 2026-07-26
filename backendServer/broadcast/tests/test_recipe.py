@@ -1,5 +1,6 @@
 """Recipe shape + conditional-field tests. No DB — pure adapter logic."""
 
+import tempfile
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -7,6 +8,8 @@ from django.test import SimpleTestCase, tag
 
 from broadcast.adapters import _helpers as h
 from broadcast.adapters import get_adapter
+from broadcast.adapters.abc11_community import Abc11CommunityAdapter
+from broadcast.adapters.base import RunContext
 from broadcast.schema import CanonicalEvent, event_from_submission
 
 RECIPE_KEYS = ["triangle_on_the_cheap", "triangle_weekender", "abc11_community", "chatham_arts"]
@@ -157,6 +160,94 @@ class ConditionalFieldsTest(SimpleTestCase):
         self.assertEqual(cat["type"], "select2_multi")
         self.assertIn("Arts", cat["value"])
         self.assertIn("Literary", cat["value"])
+
+
+class _StubLocator:
+    """Records fill() calls; everything else is inert so has_captcha()/
+    dismiss_consent()/_login_wall() (all wrapped in try/except in the
+    adapter/helpers) treat this as "nothing there" and move on."""
+
+    def __init__(self, page, selector):
+        self._page = page
+        self._selector = selector
+
+    @property
+    def first(self):
+        return self
+
+    def is_visible(self, timeout=None):
+        return False
+
+    def fill(self, value, timeout=None):
+        self._page.filled[self._selector] = value
+
+    def click(self, timeout=None):
+        self._page.clicked.append(self._selector)
+
+
+class _StubPage:
+    """Minimal stand-in for playwright.sync_api.Page — just enough surface
+    for Abc11CommunityAdapter.fill_and_submit to run to completion."""
+
+    def __init__(self):
+        self.filled: dict[str, str] = {}
+        self.clicked: list[str] = []
+        self.url = "https://example.test/stub"
+
+    def goto(self, url, timeout=None):
+        pass
+
+    def wait_for_load_state(self, state, timeout=None):
+        pass
+
+    def locator(self, selector):
+        return _StubLocator(self, selector)
+
+    def get_by_role(self, role, name=None):
+        return _StubLocator(self, f"role:{role}")
+
+    def screenshot(self, path=None, full_page=False):
+        with open(path, "wb"):
+            pass
+
+
+@tag("fast")
+class Abc11SubmitterIdentityTest(SimpleTestCase):
+    """T2: the Submitter/Contact fields must come from the event, never a
+    hardcoded "The Commons" placeholder — and an event that can't supply them
+    must fail closed (needs_manual), not submit a fabricated identity."""
+
+    def test_submitter_and_contact_fields_resolve_from_event(self):
+        recipe = get_adapter("abc11_community").recipe(
+            _event(organizer_name="Jane's Studio", contact_email="jane@studio.test", contact_phone="555-1234")
+        )
+        by_selector = {f["selector"]: f["value"] for f in recipe["fields"]}
+        self.assertEqual(by_selector["#cf33704"], "Jane's Studio")
+        self.assertEqual(by_selector["#cf34384"], "555-1234")
+        self.assertEqual(by_selector["#cf34385"], "jane@studio.test")
+        self.assertEqual(by_selector["#cf35"], "Jane's Studio")
+        self.assertEqual(by_selector["#cf37"], "jane@studio.test")
+        self.assertEqual(by_selector["#cf36"], "555-1234")
+
+    def test_missing_organizer_and_contact_yields_needs_manual_on_server_path(self):
+        """No fallback identity exists anymore, so an event lacking organizer/
+        contact details must fail the required-field check in fill_and_submit
+        rather than quietly submitting a placeholder submitter."""
+        adapter = Abc11CommunityAdapter()
+        ev = _event(organizer_name="", contact_email="", contact_phone="")
+        page = _StubPage()
+
+        with tempfile.TemporaryDirectory() as shots, tempfile.TemporaryDirectory() as dl:
+            ctx = RunContext(
+                dry_run=True, screenshot_dir=shots, download_dir=dl, submission_id="test"
+            )
+            result = adapter.fill_and_submit(page, ev, ctx)
+
+        self.assertEqual(result.status, "needs_manual")
+        self.assertIn("#cf35", result.error)
+        self.assertIn("#cf37", result.error)
+        self.assertIn("#cf36", result.error)
+        self.assertNotIn("The Commons", str(page.filled.values()))
 
 
 def _submission(start_utc, end_utc=None, all_day=False):

@@ -33,7 +33,6 @@ _GOOD_RESPONSE = {
     "ticket_url": "",
     "price": "$10",
     "is_free": False,
-    "image_url": "",
     "organizer_name": "Makrs Events",
     "contact_email": "info@example.com",
     "contact_phone": "",
@@ -90,7 +89,6 @@ class CoerceTest(SimpleTestCase):
             "ticket_url",
             "price",
             "is_free",
-            "image_url",
             "organizer_name",
             "contact_email",
             "contact_phone",
@@ -129,6 +127,16 @@ class CoerceTest(SimpleTestCase):
     def test_valid_datetime_string_preserved(self):
         result = _coerce({"start_datetime": "2026-08-15T19:30"})
         self.assertEqual(result["start_datetime"], "2026-08-15T19:30")
+
+    def test_image_url_not_in_result(self):
+        result = _coerce({})
+        self.assertNotIn("image_url", result)
+
+    def test_hallucinated_image_url_ignored(self):
+        # A model can still hallucinate an image_url key; it must be dropped,
+        # not passed through — images only come from the upload endpoint.
+        result = _coerce({"image_url": "https://drive.google.com/file/d/abc/view"})
+        self.assertNotIn("image_url", result)
 
 
 @tag("fast")
@@ -198,12 +206,21 @@ class ExtractEventFieldsTest(SimpleTestCase):
             "ticket_url",
             "price",
             "is_free",
-            "image_url",
             "organizer_name",
             "contact_email",
             "contact_phone",
         ):
             self.assertIn(key, result, f"missing key: {key}")
+
+    @override_settings(GEMINI_API_KEY="test")
+    def test_hallucinated_image_url_ignored_end_to_end(self):
+        # Even if the model hallucinates an image_url despite the prompt
+        # telling it not to, extract_event_fields must not surface it.
+        payload = dict(_GOOD_RESPONSE, image_url="https://drive.google.com/file/d/abc/view")
+        client_inst = self._mock_client(payload)
+        with patch("broadcast.autofill.genai.Client", return_value=client_inst):
+            result = extract_event_fields("some event text")
+        self.assertNotIn("image_url", result)
 
     @override_settings(GEMINI_API_KEY="test")
     def test_llm_exception_propagates_as_runtime_error(self):

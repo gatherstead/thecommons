@@ -33,7 +33,6 @@ _DEFAULTS = {
     "ticket_url": "",
     "price": "",
     "is_free": False,
-    "image_url": "",
     "organizer_name": "",
     "contact_email": "",
     "contact_phone": "",
@@ -64,7 +63,6 @@ or "" if unknown. Assume America/New_York wall-clock; do not convert.
 - "ticket_url"     : string — full URL to purchase tickets, or ""
 - "price"          : string — human-readable price (e.g. "$10", "Free", "$5-$15"), or ""
 - "is_free"        : boolean — true if the event is explicitly free or $0
-- "image_url"      : string — full URL to an event image, or ""
 - "organizer_name" : string — name of the organizing group/person, or ""
 - "contact_email"  : string — contact email, or ""
 - "contact_phone"  : string — contact phone, or ""
@@ -73,6 +71,8 @@ RULES:
 - locality and categories MUST contain only slugs from the lists above. \
 Return [] if none apply.
 - Do not invent details not present in the raw text.
+- Do not include an "image_url" key or any image URL — images are uploaded \
+separately and any such key will be ignored.
 - Respond with ONLY the JSON object.
 
 Raw event text:
@@ -122,7 +122,6 @@ def _coerce(data: dict) -> dict:
     result["ticket_url"] = str(data.get("ticket_url") or "")
     result["price"] = str(data.get("price") or "")
     result["is_free"] = bool(data.get("is_free", False))
-    result["image_url"] = str(data.get("image_url") or "")
     result["organizer_name"] = str(data.get("organizer_name") or "")
     result["contact_email"] = str(data.get("contact_email") or "")
     result["contact_phone"] = str(data.get("contact_phone") or "")

@@ -3,9 +3,10 @@ page; the real form is a Trumba ESF (third-party React form), so we target the
 Trumba URL directly (captured via capture_broadcast_form abc11_community).
 
 The form is submittable anonymously — it collects submitter Name/Email/Phone
-(required) instead of requiring a Disney sign-in — so we hardcode a single
-"The Commons" submitter identity (_SUBMITTER). Later this becomes a per-client
-lookup keyed by an access code — see TODO(per-client-access-codes).
+(required) instead of requiring a Disney sign-in. Organizer and contact details
+are required on the web form, so the Submitter fields resolve straight from the
+canonical event (organizer_name / contact_email / contact_phone); an event
+missing them yields needs_manual rather than submitting a fabricated identity.
 
 Field ids (cfN) and the submit button (value="save") are verified against the
 captured dump. Category (react-select) and image (custom uploader) are
@@ -21,13 +22,6 @@ _TRUMBA_URL = (
     "https://www.trumba.com/esf2/index.html?webname=whuzr6myd58044bc52a92byjc7"
     "&esfFrameID=trumbaSubmitEventForm&trumbaServer=https%3A%2F%2Fwww.trumba.com"
 )
-
-# TODO(per-client-access-codes): replace with a DB-backed identity lookup.
-_SUBMITTER = {
-    "name": "The Commons",
-    "email": "broadcast@thecommons.org",  # TODO confirm real address
-    "phone": "919-000-0000",  # TODO confirm real number
-}
 
 
 def _date(dt) -> str:
@@ -94,19 +88,17 @@ _RECIPE_FIELDS = [
     RecipeField("#cf5", "text", _location, label="Location"),
     RecipeField("#cf6", "text", lambda ev: ev.event_url, label="Web link"),
     RecipeField("#cf33293", "text", lambda ev: "0" if ev.is_free else ev.price, label="Cost"),
-    RecipeField(
-        "#cf33704", "text", lambda ev: ev.organizer_name or _SUBMITTER["name"], label="Contact Name"
-    ),
+    RecipeField("#cf33704", "text", lambda ev: ev.organizer_name, label="Contact Name"),
     RecipeField("#cf34384", "text", lambda ev: ev.contact_phone, label="Contact Phone"),
     RecipeField("#cf34385", "text", lambda ev: ev.contact_email, label="Contact Email"),
     RecipeField(
-        "#cf35", "text", lambda ev: _SUBMITTER["name"], required=True, label="Submitter Name"
+        "#cf35", "text", lambda ev: ev.organizer_name, required=True, label="Submitter Name"
     ),
     RecipeField(
-        "#cf37", "text", lambda ev: _SUBMITTER["email"], required=True, label="Submitter Email"
+        "#cf37", "text", lambda ev: ev.contact_email, required=True, label="Submitter Email"
     ),
     RecipeField(
-        "#cf36", "text", lambda ev: _SUBMITTER["phone"], required=True, label="Submitter Phone"
+        "#cf36", "text", lambda ev: ev.contact_phone, required=True, label="Submitter Phone"
     ),
     RecipeField(
         "#eventStartDate-label",

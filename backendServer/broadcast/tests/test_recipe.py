@@ -130,19 +130,11 @@ class ConditionalFieldsTest(SimpleTestCase):
         self.assertIn("Arts", cat["value"])
         self.assertIn("Festival", cat["value"])
 
-    def test_weekender_tag_field_emitted_when_categories_present(self):
+    def test_weekender_tag_field_never_in_recipe(self):
+        # Tags were removed (T4): the site's free-form tag vocabulary can't be
+        # matched reliably, so post_tag must never appear in the recipe.
         recipe = get_adapter("triangle_weekender").recipe(_event(categories=["music"]))
-        tag = next(
-            (
-                f
-                for f in recipe["fields"]
-                if f["selector"] == "select[name='tax_input[post_tag][]']"
-            ),
-            None,
-        )
-        self.assertIsNotNone(tag, "weekender tag select2_multi field missing")
-        self.assertEqual(tag["type"], "select2_multi")
-        self.assertIn("Music", tag["value"])
+        self.assertNotIn("select[name='tax_input[post_tag][]']", _selectors(recipe))
 
     def test_weekender_category_field_absent_when_no_categories(self):
         # select2_multi with empty value is dropped by recipe() — not required
@@ -150,7 +142,6 @@ class ConditionalFieldsTest(SimpleTestCase):
         recipe = get_adapter("triangle_weekender").recipe(_event(categories=[]))
         selectors = _selectors(recipe)
         self.assertNotIn("select[name='tax_input[tribe_events_cat][]']", selectors)
-        self.assertNotIn("select[name='tax_input[post_tag][]']", selectors)
 
     def test_chatham_arts_category_field_emitted_when_categories_present(self):
         recipe = get_adapter("chatham_arts").recipe(_event(categories=["arts", "literary"]))

@@ -132,6 +132,14 @@ class Abc11CommunityAdapter(SiteAdapter):
     eligibility = Eligibility(localities=TRIANGLE, categories=frozenset())
     recipe_fields = _RECIPE_FIELDS
     submit_selector = "button[type='submit'].clrCommit"
+    # The date/time widgets self-populate with a near-current default shortly
+    # after the page "completes" — waiting on the first field (as the default
+    # ready_selector does) can fire before that default-setting effect runs,
+    # so our fill loses the race on a slow connection. The submit button is
+    # the last element Trumba renders, so gating on it instead means the
+    # React tree (including the date/time defaults) has already settled by
+    # the time we start writing.
+    ready_selector = "button[type='submit'].clrCommit"
     captcha_hint = "Solve any captcha or Trumba/Disney sign-in shown before submitting."
 
     def recipe_field_specs(self, ev):

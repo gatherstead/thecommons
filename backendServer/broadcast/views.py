@@ -4,20 +4,24 @@ No global REST_FRAMEWORK config exists in this project; auth/permissions are
 applied per-view (house pattern). Rate limits blunt access-code brute force.
 """
 
+import io
 import os
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404, HttpResponse
 from django_ratelimit.decorators import ratelimit
+from PIL import Image, UnidentifiedImageError
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
 from broadcast import cache as broadcast_cache
 from broadcast.access import redeem_upgrade_code, resolve_access
 from broadcast.adapters import enabled_adapters, get_adapter, registry
 from broadcast.autofill import extract_event_fields
-from broadcast.models import AccessCodeUse, BroadcastSubmission
+from broadcast.models import AccessCodeUse, BroadcastImage, BroadcastSubmission
 from broadcast.permissions import (
     RequiresBroadcastLogin,
     RequiresBroadcastTier1,
@@ -25,7 +29,7 @@ from broadcast.permissions import (
     _draft_id_from,
 )
 from broadcast.routing import eligible_targets
-from broadcast.serializers import CanonicalEventSerializer
+from broadcast.serializers import BroadcastImageUploadSerializer, CanonicalEventSerializer
 from broadcast.services import (
     cancel_submission,
     create_submission,
@@ -35,6 +39,11 @@ from broadcast.services import (
     retry_targets,
     submit_real_targets,
 )
+
+# Re-encoded output caps — the source image is discarded, never stored as
+# received. Confirmed limits: 10 MB in (BroadcastImageUploadSerializer), 4000px
+# max edge out.
+MAX_IMAGE_EDGE_PX = 4000
 
 # Maps AccessResult.reason (set by resolve_access for a matched-but-dead trial
 # code) to the message shown to the caller. Falls back to a generic message.
@@ -259,6 +268,74 @@ def direct_recipe(request):
         return Response({"event": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(adapter.recipe(serializer.to_canonical()))
+
+
+@ratelimit(key="ip", rate="30/m", method="POST", block=True)
+@api_view(["POST"])
+@parser_classes([MultiPartParser])
+@permission_classes([RequiresBroadcastTier1])
+def upload_image(request):
+    """Self-host a client-uploaded event image so the extension can fetch it
+    reliably (third-party share links are often not direct image URLs and most
+    hosts send no CORS headers — see docs/broadcast.md). The upload is
+    re-encoded via Pillow rather than stored as received, and EXIF is dropped.
+    """
+    serializer = BroadcastImageUploadSerializer(data=request.data)
+    if not serializer.is_valid():
+        detail = next(iter(serializer.errors.get("image", [])), None) or "Invalid upload."
+        return Response({"detail": str(detail)}, status=status.HTTP_400_BAD_REQUEST)
+
+    upload = serializer.validated_data["image"]
+    try:
+        img = Image.open(upload)
+        img.verify()
+    except (UnidentifiedImageError, OSError):
+        return Response(
+            {"detail": "That file doesn't look like a valid image — please try a JPEG or PNG."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # verify() leaves the file unusable for further ops — reopen it.
+    upload.seek(0)
+    try:
+        img = Image.open(upload)
+        img.load()
+    except (UnidentifiedImageError, OSError):
+        return Response(
+            {"detail": "That file doesn't look like a valid image — please try a JPEG or PNG."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    if has_alpha:
+        img = img.convert("RGBA")
+        out_format, ext = "PNG", "png"
+    else:
+        img = img.convert("RGB")
+        out_format, ext = "JPEG", "jpg"
+
+    if img.width > MAX_IMAGE_EDGE_PX or img.height > MAX_IMAGE_EDGE_PX:
+        return Response(
+            {
+                "detail": (
+                    "That image is too large "
+                    f"({img.width}x{img.height}px) — please upload one no larger "
+                    f"than {MAX_IMAGE_EDGE_PX}px on a side."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    buffer = io.BytesIO()
+    save_kwargs = {"quality": 90, "optimize": True} if out_format == "JPEG" else {"optimize": True}
+    img.save(buffer, format=out_format, **save_kwargs)
+
+    record = BroadcastImage.objects.create(client_label=request.broadcast_client_label)
+    record.image.save(f"{record.id}.{ext}", ContentFile(buffer.getvalue()), save=True)
+
+    return Response(
+        {"url": request.build_absolute_uri(record.image.url)}, status=status.HTTP_201_CREATED
+    )
 
 
 @ratelimit(key="ip", rate="5/m", method="POST", block=True)

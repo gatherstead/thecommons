@@ -82,6 +82,9 @@ async function fetchImageAsDataUrl(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status} fetching image`);
   const blob = await response.blob();
+  if (!blob.type || !blob.type.startsWith("image/")) {
+    throw new Error(`expected an image, got content-type "${blob.type || "unknown"}"`);
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);

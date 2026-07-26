@@ -3,6 +3,21 @@ from rest_framework import serializers
 from broadcast.routing import CATEGORIES, LOCALITIES
 from broadcast.schema import CanonicalEvent, _to_local
 
+MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+class BroadcastImageUploadSerializer(serializers.Serializer):
+    """Validates the raw upload before Pillow re-encodes it (views.upload_image)."""
+
+    image = serializers.ImageField(max_length=None, use_url=False)
+
+    def validate_image(self, value):
+        if value.size > MAX_IMAGE_UPLOAD_BYTES:
+            raise serializers.ValidationError(
+                "That image is too large — please upload one under 10 MB."
+            )
+        return value
+
 
 class CanonicalEventSerializer(serializers.Serializer):
     """Validates the `event` object of preview/submit requests (§4 schema)."""

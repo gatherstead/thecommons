@@ -88,6 +88,14 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles_build", "static")
 
+# Self-hosted event image uploads (broadcast). MEDIA_ROOT defaults to a path
+# inside the repo checkout for local dev, but prod sets MEDIA_ROOT in .env to
+# a path outside the checkout (mirrors BROADCAST_SCREENSHOT_DIR) so `git pull`
+# during deploy can never touch uploaded files. Served by nginx in prod, never
+# by Django — see DEPLOY.md for the /media/ alias.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", os.path.join(BASE_DIR, "media"))
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

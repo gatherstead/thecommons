@@ -446,6 +446,7 @@ BROADCAST_MAX_CONCURRENCY=1
 BROADCAST_SCREENSHOT_DIR=/home/ubuntu/broadcast/screenshots
 BROADCAST_DOWNLOAD_DIR=/home/ubuntu/broadcast/downloads
 BROADCAST_TIMEOUT_MS=30000
+MEDIA_ROOT=/home/ubuntu/broadcast/media    # client-uploaded event images (T7) — outside the repo checkout so `git pull` never touches it
 ```
 
 ### `theCommonsWeb/.env.local`
@@ -475,7 +476,28 @@ VITE_BETTER_AUTH_URL=https://auth.thecommons.town
 - Routes: `thecommons.town` → `localhost:3000` (Next.js); `api.thecommons.town` →
   `unix:/run/gunicorn/gunicorn.sock` (Django); `www` → 301 to apex; HTTP → 301 to
   HTTPS; `api.thecommons.town/static/` → `backendServer/staticfiles/`;
+  `api.thecommons.town/media/` → `MEDIA_ROOT` (client-uploaded broadcast event
+  images, T7 — served by nginx directly, **never** by Django/gunicorn in prod);
   `broadcast.thecommons.town` → the block from `deploy/nginx-broadcast.conf.snippet`.
+
+  Add a sibling alias to the existing `/static/` block in the `api.thecommons.town`
+  server block:
+
+  ```nginx
+  location /media/ {
+      alias /home/ubuntu/broadcast/media/;
+  }
+  ```
+
+  `MEDIA_ROOT` (`/home/ubuntu/broadcast/media` by default — see env vars below)
+  must exist and be writable by the gunicorn user (`ubuntu`) before the first
+  upload: `mkdir -p /home/ubuntu/broadcast/media`. It lives outside the repo
+  checkout alongside `BROADCAST_SCREENSHOT_DIR`/`BROADCAST_DOWNLOAD_DIR` so a
+  `git pull` during deploy never touches it, and it survives deploys for the
+  same reason. **Uploaded images are kept indefinitely — no pruning job exists.**
+  `MEDIA_ROOT` grows without bound; at roughly 1–3 MB per event against the VPS
+  block volume this is negligible for the foreseeable future, but keep it in
+  mind at ops time (a prune command can be added later without a migration).
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx

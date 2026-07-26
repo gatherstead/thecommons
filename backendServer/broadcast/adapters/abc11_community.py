@@ -197,7 +197,8 @@ class Abc11CommunityAdapter(SiteAdapter):
                 screenshot_path=h.take_screenshot(page, ctx, self.key),
             )
 
-        missing = h.apply_specs(page, self.recipe_fields, ev, ctx.timeout_ms)
+        specs = self.recipe_field_specs(ev)
+        missing = h.apply_specs(page, specs, ev, ctx.timeout_ms)
         if missing:
             return TargetResult(
                 status="needs_manual",

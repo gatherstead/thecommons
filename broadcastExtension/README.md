@@ -12,6 +12,23 @@ Buildless plain JS — no bundler. Files:
 - `content.js` — per-field handlers (text/textarea/date/time/select/radio/checkbox/file/select2/terms).
 - `popup.html` — minimal "connected" popup.
 
+### `host_permissions`
+
+Lists the six calendar sites the extension is allowed to autofill, plus
+`https://api.thecommons.town/*` — our own media host. The background worker's
+`fetchImageAsDataUrl` (in `background.js`) fetches the event image cross-origin
+before attaching it to the form; without a matching host permission that fetch
+is blocked and the image silently fails to attach, on every site, not just one.
+
+**Dev/localhost:** a local backend serves media from `http://localhost:8000/media/`.
+To test image attach against a local backend, add `"http://localhost:8000/*"`
+to `host_permissions` in your **locally-unpacked** copy of `manifest.json` and
+reload the extension at `chrome://extensions`. Do **not** commit that entry —
+`manifest.json` in git should only ever list the production hosts above.
+`extensionzipper.sh` zips `manifest.json` as-is with no filtering, so anything
+left in the file at zip time ships to the Web Store, including a stray
+localhost entry if you forget to revert it before packaging.
+
 ## Local development (load unpacked)
 
 1. Visit `chrome://extensions`, enable **Developer mode**.
@@ -52,6 +69,13 @@ and review — **you** handle the account and submission.
 4. Add a short privacy policy: no PII is collected or transmitted by the
    extension; data flows SPA → extension → the target site form only.
 5. Submit for review.
+
+**Adding a `host_permissions` entry (like `api.thecommons.town` in v0.3.0)
+triggers a Chrome Web Store re-review**, and existing installs won't pick up
+the update until each user accepts the new permission prompt — Chrome disables
+auto-update for extensions that request broader permissions until the user
+re-approves. Expect a rollout gap between publishing and clients actually
+getting the fix; don't assume it's live everywhere right after approval.
 
 ## Out of scope (v1)
 

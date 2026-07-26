@@ -990,7 +990,12 @@ export default function App() {
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
-          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked || !hasAccess} />
+          <EventForm
+            draft={draft}
+            onChange={handleDraftChange}
+            disabled={busy || job !== null || locked || !hasAccess}
+            auth={auth}
+          />
         </div>
         <div className="actions">
           {preview ? (

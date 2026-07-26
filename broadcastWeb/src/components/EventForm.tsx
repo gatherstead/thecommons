@@ -1,10 +1,36 @@
+import { useRef, useState } from "react";
+
 import type { EventDraft } from "../models/broadcastModels";
 import { CATEGORIES, LOCALITIES } from "../models/broadcastModels";
+import { type ApiAuth, ApiError, uploadImage } from "../services/broadcastApi";
 
 interface Props {
   draft: EventDraft;
   onChange: (draft: EventDraft) => void;
   disabled: boolean;
+  auth: ApiAuth;
+}
+
+// Mirrors the server-side caps in broadcast/serializers.py
+// (MAX_IMAGE_UPLOAD_BYTES, 4000px max edge) so a bad file is rejected
+// instantly instead of round-tripping to the server first.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_EDGE = 4000;
+
+function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("That file doesn't look like a valid image — please try a JPEG or PNG."));
+    };
+    img.src = url;
+  });
 }
 
 function priceError(price: string | undefined): string {
@@ -31,7 +57,11 @@ function timeError(start: string, end: string | undefined): string {
   return "";
 }
 
-export default function EventForm({ draft, onChange, disabled }: Props) {
+export default function EventForm({ draft, onChange, disabled, auth }: Props) {
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageError, setImageError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const set = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) =>
     onChange({ ...draft, [key]: value });
 
@@ -60,6 +90,47 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
 
   const priceErr = priceError(draft.price);
   const timeErr = timeError(draft.start_datetime, draft.end_datetime);
+
+  const handleImageSelect = async (file: File | undefined) => {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!file) return;
+
+    setImageError("");
+
+    if (!file.type.startsWith("image/")) {
+      setImageError("That file doesn't look like a valid image — please try a JPEG or PNG.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError("That image is too large — please use a file under 10 MB.");
+      return;
+    }
+    try {
+      const { width, height } = await readImageDimensions(file);
+      if (width > MAX_IMAGE_EDGE || height > MAX_IMAGE_EDGE) {
+        setImageError(`That image is too large — please use one no larger than ${MAX_IMAGE_EDGE}px on a side.`);
+        return;
+      }
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "That file doesn't look like a valid image.");
+      return;
+    }
+
+    setImageUploading(true);
+    try {
+      const { url } = await uploadImage(auth, file);
+      set("image_url", url);
+    } catch (err) {
+      setImageError(err instanceof ApiError ? err.message : "Upload failed — please try again.");
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
+  const handleImageRemove = () => {
+    setImageError("");
+    set("image_url", "");
+  };
 
   return (
     <div className="field-grid">
@@ -275,16 +346,33 @@ export default function EventForm({ draft, onChange, disabled }: Props) {
         <label htmlFor="is-free">This event is free</label>
       </div>
 
-      <div className="field">
-        <label htmlFor="image-url">Image URL</label>
-        <input
-          id="image-url"
-          type="url"
-          value={draft.image_url ?? ""}
-          onChange={(e) => set("image_url", e.target.value)}
-          disabled={disabled}
-        />
-        <p className="hint">The extension auto-uploads this to sites with a standard file input. If that fails (non-standard widget or fetch error) the field is highlighted for manual upload instead.</p>
+      <div className="field span-2">
+        <label htmlFor="image-file">Event Image</label>
+        {draft.image_url ? (
+          <div className="image-preview">
+            <img src={draft.image_url} alt="" />
+            <button
+              type="button"
+              className="linklike"
+              onClick={handleImageRemove}
+              disabled={disabled || imageUploading}
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <input
+            id="image-file"
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(e) => void handleImageSelect(e.target.files?.[0])}
+            disabled={disabled || imageUploading}
+          />
+        )}
+        {imageUploading && <p className="hint">Uploading…</p>}
+        {imageError && <p className="field-error">{imageError}</p>}
+        <p className="hint">JPEG or PNG, up to 10 MB and 4000px on a side. The extension fills this on sites with a standard file input.</p>
       </div>
 
     </div>

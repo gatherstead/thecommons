@@ -29,6 +29,46 @@ class EventSource(models.Model):
         return f"{self.name} ({self.source_type})"
 
 
+class SourceRun(models.Model):
+    """One row per per-source poll attempt, recorded for observability."""
+
+    STATUS_CHOICES = [
+        ("ok", "Ok"),
+        ("failed", "Failed"),
+        ("refused", "Refused"),
+        ("skipped", "Skipped"),
+    ]
+
+    TRIGGER_CHOICES = [
+        ("scheduled", "Scheduled"),
+        ("probe", "Probe"),
+        ("manual", "Manual"),
+    ]
+
+    source = models.ForeignKey(EventSource, on_delete=models.CASCADE, related_name="runs")
+
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    trigger = models.CharField(max_length=20, choices=TRIGGER_CHOICES, default="scheduled")
+
+    items_fetched = models.IntegerField(default=0)
+    items_new = models.IntegerField(default=0)
+    items_duplicate = models.IntegerField(default=0)
+
+    error_class = models.CharField(max_length=255, blank=True)
+    error_message = models.TextField(blank=True)
+    traceback = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["source", "-started_at"])]
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"[{self.status}] run {self.pk} for source_id={self.source_id}"
+
+
 class RawEvent(models.Model):
     """Events as scraped, before LLM processing."""
 

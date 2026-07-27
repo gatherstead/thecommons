@@ -8,6 +8,13 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
+from ingestion.importers.errors import (
+    REFUSAL_EMPTY_FETCH,
+    REFUSAL_NON_PUBLIC_URL,
+    REFUSAL_UNKNOWN_SCRAPER_KEY,
+    SourceRefused,
+)
+from ingestion.importers.source_run import poll_sources_with_run_tracking
 from ingestion.models import EventSource, RawEvent
 from ingestion.scraping.browser import render_page
 from ingestion.scraping.scrapers import get_scraper
@@ -100,12 +107,12 @@ def _ingest_with_scraper(
     """
     if not _is_public_url(source.url):
         logger.warning(f"Refusing to poll non-public URL for {source.name}: {source.url}")
-        return []
+        raise SourceRefused(REFUSAL_NON_PUBLIC_URL, source.url)
 
     scraper = get_scraper(source.scraper_key)
     if scraper is None:
         logger.warning(f"Unknown or blank scraper_key for {source.name}: {source.scraper_key!r}")
-        return []
+        raise SourceRefused(REFUSAL_UNKNOWN_SCRAPER_KEY, source.scraper_key)
 
     # PHASE 1: fetch HTML (no ORM). Both fetchers return "" on any error.
     html = fetch_html(source.url)
@@ -113,7 +120,7 @@ def _ingest_with_scraper(
         # Bail before extract() — feeding empty HTML to a parser just raises a
         # cryptic "Document is empty" far from the real cause.
         logger.warning(f"Empty fetch for {source.name}: {source.url}")
-        return []
+        raise SourceRefused(REFUSAL_EMPTY_FETCH, source.url)
 
     # PHASE 2: pure extraction (no ORM, no browser).
     items = scraper.extract(html)
@@ -171,18 +178,6 @@ def poll_all_scraper_sources(shard: tuple[int, int] | None = None):
         sources = sources.extra(where=["id %% %s = %s"], params=[m, n])
         logger.info(f"Sharded poll: only sources with id %% {m} == {n}")
 
-    total_new = 0
-    for source in sources:
-        if source.last_polled:
-            hours_since = (timezone.now() - source.last_polled).total_seconds() / 3600
-            if hours_since < source.poll_interval_hours:
-                logger.debug(f"Skipping {source.name} (polled {hours_since:.1f}h ago)")
-                continue
-
-        try:
-            new_events = _SCRAPER_FETCHERS[source.source_type](source)
-            total_new += len(new_events)
-        except Exception as e:
-            logger.error(f"Error polling {source.name}: {e}")
-
-    return total_new
+    return poll_sources_with_run_tracking(
+        sources, lambda source: _SCRAPER_FETCHERS[source.source_type](source)
+    )

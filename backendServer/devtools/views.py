@@ -2,23 +2,34 @@ import ipaddress
 import queue
 import socket
 import threading
+import traceback
 from datetime import timedelta
 from urllib.parse import urlparse
 
+import requests
 from django.conf import settings
 from django.db import transaction
 from django.http import Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
+from icalendar import Calendar
 
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
+from ingestion.importers.errors import (
+    REFUSAL_EMPTY_FETCH,
+    REFUSAL_NON_PUBLIC_URL,
+    REFUSAL_NOTHING_TO_POLL,
+    REFUSAL_UNKNOWN_SCRAPER_KEY,
+    REFUSAL_UNKNOWN_SOURCE_TYPE,
+)
 from ingestion.importers.ics_importer import fetch_ics_feed
 from ingestion.importers.scraper_importer import fetch_http_source, fetch_scraper_source
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
-from ingestion.scraping.scrapers import list_scrapers
+from ingestion.scraping.browser import render_page
+from ingestion.scraping.scrapers import get_scraper, list_scrapers
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
 
@@ -163,6 +174,238 @@ def run_stream(request):
             "scraper_key": scraper_key,
             "skip_dedup": skip_dedup,
         },
+        daemon=True,
+    )
+    t.start()
+
+    def stream():
+        while True:
+            kind, payload = q.get()
+            if kind == "__end__":
+                break
+            yield sse_frame(kind, payload)
+
+    resp = StreamingHttpResponse(stream(), content_type="text/event-stream")
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
+
+
+# ── Probe (dry-run fetch+parse, no ORM writes) ─────────────────────────────────
+
+
+def _probe_ics(q, url):
+    q.put(("stage", {"stage": "fetch", "status": "start", "url": url}))
+    response = requests.get(
+        url,
+        timeout=30,
+        headers={"User-Agent": settings.INGEST_SCRAPER_USER_AGENT},
+    )
+    response.raise_for_status()
+    body = response.text
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "fetch",
+                "status": "end",
+                "http_status": response.status_code,
+                "bytes": len(response.content),
+            },
+        )
+    )
+
+    if not body:
+        q.put(("refused", {"reason": REFUSAL_EMPTY_FETCH, "detail": url}))
+        return
+
+    q.put(("stage", {"stage": "parse", "status": "start"}))
+    cal = Calendar.from_ical(body)
+    titles = []
+    count = 0
+    for component in cal.walk():
+        if component.name != "VEVENT":
+            continue
+        count += 1
+        if len(titles) < 3:
+            titles.append(str(component.get("SUMMARY", "Untitled Event")))
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "parse",
+                "status": "end",
+                "item_count": count,
+                "sample_titles": titles,
+            },
+        )
+    )
+
+
+def _probe_scraper(q, url, scraper_key):
+    scraper = get_scraper(scraper_key)
+    if not scraper_key or scraper is None:
+        q.put(("refused", {"reason": REFUSAL_UNKNOWN_SCRAPER_KEY, "detail": scraper_key}))
+        return
+
+    wait_selector = getattr(scraper, "wait_selector", None)
+    q.put(("stage", {"stage": "fetch", "status": "start", "url": url}))
+    html = render_page(url, wait_selector=wait_selector)
+    q.put(("stage", {"stage": "fetch", "status": "end", "bytes": len(html)}))
+
+    if not html:
+        q.put(("refused", {"reason": REFUSAL_EMPTY_FETCH, "detail": url}))
+        return
+
+    _probe_extract(q, scraper, html)
+
+
+def _probe_http(q, url, scraper_key):
+    scraper = get_scraper(scraper_key)
+    if not scraper_key or scraper is None:
+        q.put(("refused", {"reason": REFUSAL_UNKNOWN_SCRAPER_KEY, "detail": scraper_key}))
+        return
+
+    q.put(("stage", {"stage": "fetch", "status": "start", "url": url}))
+    response = requests.get(
+        url,
+        timeout=settings.INGEST_SCRAPER_TIMEOUT_MS / 1000,
+        headers={"User-Agent": settings.INGEST_SCRAPER_USER_AGENT},
+    )
+    response.raise_for_status()
+    html = response.text
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "fetch",
+                "status": "end",
+                "http_status": response.status_code,
+                "bytes": len(response.content),
+            },
+        )
+    )
+
+    if not html:
+        q.put(("refused", {"reason": REFUSAL_EMPTY_FETCH, "detail": url}))
+        return
+
+    _probe_extract(q, scraper, html)
+
+
+def _probe_extract(q, scraper, html):
+    q.put(("stage", {"stage": "parse", "status": "start"}))
+    items = scraper.extract(html)
+    titles = [item.title for item in items[:3]]
+    q.put(
+        (
+            "stage",
+            {
+                "stage": "parse",
+                "status": "end",
+                "item_count": len(items),
+                "sample_titles": titles,
+            },
+        )
+    )
+
+
+def _run_probe_into_queue(q, *, source_id, db):
+    try:
+        try:
+            source = EventSource.objects.using(db).get(pk=source_id)
+        except EventSource.DoesNotExist:
+            q.put(("error", {"message": f"EventSource {source_id} not found in db '{db}'"}))
+            return
+
+        # Read every field we need into plain locals now — render_page() opens
+        # its own sync_playwright context, and the ORM must not be touched again
+        # once that starts (see CLAUDE.md guardrail).
+        url = source.url
+        scraper_key = source.scraper_key
+        source_type = source.source_type
+        name = source.name
+
+        q.put(
+            (
+                "resolved",
+                {"source_id": source_id, "name": name, "source_type": source_type, "url": url},
+            )
+        )
+
+        if source_type in ("direct", "email"):
+            q.put(
+                (
+                    "refused",
+                    {
+                        "reason": REFUSAL_NOTHING_TO_POLL,
+                        "detail": f"source_type '{source_type}' has no fetch step",
+                    },
+                )
+            )
+            return
+
+        try:
+            _validate_url(url)
+        except ValueError as exc:
+            q.put(("refused", {"reason": REFUSAL_NON_PUBLIC_URL, "detail": str(exc)}))
+            return
+
+        if source_type == "ics":
+            _probe_ics(q, url)
+        elif source_type == "scraper":
+            _probe_scraper(q, url, scraper_key)
+        elif source_type == "http":
+            _probe_http(q, url, scraper_key)
+        else:
+            q.put(("refused", {"reason": REFUSAL_UNKNOWN_SOURCE_TYPE, "detail": source_type}))
+
+    except Exception as exc:
+        q.put(
+            (
+                "error",
+                {
+                    "exception_class": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        )
+    finally:
+        q.put(("done", {}))
+        q.put(("__end__", None))
+
+
+def probe_stream(request):
+    """Dry-run fetch+parse of a single EventSource, streamed as SSE.
+
+    Never writes RawEvent/StagedEvent/SourceRun rows and never touches
+    source.last_polled — that's the entire point (see ticket 32.2). This
+    reuses the same fetch/parse logic as the real importers but stops before
+    the ORM-write phase, so it's safe to point at `?db=prod_readonly`.
+    """
+    if not settings.DEBUG:
+        raise Http404
+
+    source_id_raw = request.GET.get("source_id", "").strip()
+    db = _resolve_db(request)
+
+    def _error_stream(message):
+        yield sse_frame("error", {"message": message})
+        yield sse_frame("done", {})
+
+    if not source_id_raw.isdigit():
+        return StreamingHttpResponse(
+            _error_stream("source_id is required and must be an integer"),
+            content_type="text/event-stream",
+        )
+    source_id = int(source_id_raw)
+
+    q = queue.Queue()
+    t = threading.Thread(
+        target=_run_probe_into_queue,
+        args=(q,),
+        kwargs={"source_id": source_id, "db": db},
         daemon=True,
     )
     t.start()

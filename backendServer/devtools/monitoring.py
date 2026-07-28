@@ -34,6 +34,10 @@ _CONSECUTIVE_FAILURE_THRESHOLD = 2
 # `skipped` run or two doesn't push a real failure out of the window.
 _RECENT_RUNS_PER_SOURCE = 5
 
+# Sort order for the health column: most severe first, `inactive` last since
+# those rows are intentionally excluded from alerting.
+_HEALTH_RANK = {"error": 0, "warn": 1, "ok": 2, "inactive": 3}
+
 
 def _db_ok(db):
     return db in settings.DATABASES
@@ -280,6 +284,13 @@ def _source_rows(db, start, end, source_type_filter):
         }
         row["health"] = source_health(health_input, recent_runs, now)
         results.append(row)
+
+    # Sort by health severity (error first, inactive last), then by name for
+    # a stable secondary order. Sorting happens here, not in the template:
+    # Django templates can't sort on a nested dict key, and the drilldown
+    # row is interleaved with each source row in the `{% for %}` loop, so
+    # reordering client-side would desync them from their drilldowns.
+    results.sort(key=lambda row: (_HEALTH_RANK[row["health"]["level"]], row["name"]))
     return results
 
 
@@ -372,6 +383,32 @@ def _drilldown_outbound(db, key, start, end, limit):
     return rows
 
 
+def _drilldown_runs(db, key, start, end, limit):
+    """Recent SourceRun rows for one source — "what has this source been
+    doing", not windowed by `start`/`end` (a source's run history matters
+    regardless of the funnel window currently selected). `start`/`end` are
+    accepted for signature symmetry with the other drilldown helpers only.
+    """
+    runs = (
+        SourceRun.objects.using(db)
+        .filter(source_id=key)
+        .order_by("-started_at")[:limit]
+    )
+    return [
+        {
+            "started_at": _iso(run.started_at),
+            "finished_at": _iso(run.finished_at),
+            "status": run.status,
+            "trigger": run.trigger,
+            "items_fetched": run.items_fetched,
+            "items_new": run.items_new,
+            "items_duplicate": run.items_duplicate,
+            "error_message": run.error_message,
+        }
+        for run in runs
+    ]
+
+
 def drilldown(db: str, kind: str, key, start, end, limit: int = 100) -> list[dict]:
     if not _db_ok(db):
         return []
@@ -380,4 +417,6 @@ def drilldown(db: str, kind: str, key, start, end, limit: int = 100) -> list[dic
         return _drilldown_source(db, key, start, end, limit)
     if kind == "outbound":
         return _drilldown_outbound(db, key, start, end, limit)
+    if kind == "runs":
+        return _drilldown_runs(db, key, start, end, limit)
     return []

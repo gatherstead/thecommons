@@ -8,6 +8,7 @@ Deep-dive guides beyond the root-level docs. Each file is a focused reference on
 | [ingestion-pipeline.md](ingestion-pipeline.md) | End-to-end walkthrough of the poll → standardize → stage → publish flow | Working on `ingestion/` or the cron pipeline |
 | [safety-scoring.md](safety-scoring.md) | How `safety_scorer.py` works and threshold tuning | Adjusting safety scoring or ingestion quality |
 | [devtools-ingestion-playground.md](devtools-ingestion-playground.md) | Plan for the dev-only ingestion playground (`devtools/`): replaying feeds through the poll → publish pipeline locally | Building or debugging ingestion tooling |
+| [ingestion-monitoring.md](ingestion-monitoring.md) | The `/devtools/monitor` funnel dashboard: bucket semantics, health-level thresholds, `SourceRun` statuses, the dry-run probe endpoint, prod read-only safety, and a triage runbook | Diagnosing a stuck or failing ingestion source, or building on the monitor/probe |
 | [admin-backend.md](admin-backend.md) | Guide to the django-unfold admin UI and review workflows | Modifying admin registration or review flows |
 | [redis-celery-handoff.md](redis-celery-handoff.md) | Redis + Celery setup: broker/cache, worker + beat, task conventions | Adding async tasks, scheduled jobs, or touching the worker |
 | [dev-db-isolation.md](dev-db-isolation.md) | Neon dev-branch setup — isolating local dev from the prod DB | Setting up a dev environment or running migrations |

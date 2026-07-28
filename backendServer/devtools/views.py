@@ -634,7 +634,7 @@ def monitor_data(request):
         raise Http404
 
     kind = request.GET.get("kind", "")
-    if kind not in ("collector", "inbound", "outbound"):
+    if kind not in ("collector", "inbound", "outbound", "runs"):
         return JsonResponse({"error": f"invalid kind '{kind}'"}, status=400)
 
     db = _resolve_db(request)

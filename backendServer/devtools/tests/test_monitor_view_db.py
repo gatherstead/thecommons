@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from devtools.views import monitor, monitor_data
 from events.tests.factories import make_event
-from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
 
 
 @tag("db")
@@ -110,6 +110,64 @@ class MonitorViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         data = json.loads(resp.content)
         self.assertEqual(data["db"], "default")
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_runs_returns_run_history(self):
+        SourceRun.objects.create(
+            source=self.source,
+            started_at=self.now - timedelta(hours=2),
+            finished_at=self.now - timedelta(hours=2),
+            status="failed",
+            trigger="scheduled",
+            items_fetched=3,
+            items_new=1,
+            items_duplicate=2,
+            error_message="boom",
+        )
+        SourceRun.objects.create(
+            source=self.source,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+            trigger="manual",
+            items_fetched=5,
+            items_new=5,
+            items_duplicate=0,
+        )
+        resp = monitor_data(
+            self._get(
+                "/devtools/monitor/data",
+                {"kind": "runs", "key": str(self.source.id), "window": "30d"},
+            )
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        rows = data["rows"]
+        self.assertEqual(len(rows), 2)
+        # Most recent first.
+        self.assertEqual(rows[0]["status"], "ok")
+        self.assertEqual(rows[0]["trigger"], "manual")
+        self.assertEqual(rows[1]["status"], "failed")
+        self.assertEqual(rows[1]["error_message"], "boom")
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_runs_not_windowed_by_start_end(self):
+        # Run history is "what has this source been doing", not scoped to
+        # the funnel window — an old run outside a narrow window still shows.
+        SourceRun.objects.create(
+            source=self.source,
+            started_at=self.now - timedelta(days=60),
+            finished_at=self.now - timedelta(days=60),
+            status="ok",
+        )
+        resp = monitor_data(
+            self._get(
+                "/devtools/monitor/data",
+                {"kind": "runs", "key": str(self.source.id), "window": "7d"},
+            )
+        )
+        data = json.loads(resp.content)
+        self.assertEqual(len(data["rows"]), 1)
 
     @override_settings(DEBUG=True)
     def test_monitor_window_param_narrows_results(self):

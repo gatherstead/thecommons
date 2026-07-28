@@ -362,6 +362,62 @@ class MonitoringQueryServiceTests(TestCase):
                 drilldown("prod_readonly", "collector", self.collector_a.id, self.start, self.end),
                 [],
             )
+            self.assertEqual(
+                drilldown("prod_readonly", "runs", self.collector_a.id, self.start, self.end),
+                [],
+            )
+
+    def test_drilldown_runs_returns_most_recent_first_unwindowed(self):
+        """Run history ignores the start/end funnel window entirely — it's
+        "what has this source been doing", not scoped to the current window.
+        """
+        old_run = SourceRun.objects.create(
+            source=self.collector_a,
+            started_at=self.now - timedelta(days=60),
+            finished_at=self.now - timedelta(days=60),
+            status="ok",
+            trigger="scheduled",
+            items_fetched=2,
+            items_new=2,
+        )
+        recent_run = SourceRun.objects.create(
+            source=self.collector_a,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="failed",
+            trigger="manual",
+            error_message="kaboom",
+        )
+        # Narrow window that would exclude both runs' created_at-equivalent
+        # if the runs helper (wrongly) windowed on started_at.
+        narrow_start = self.now - timedelta(minutes=1)
+        narrow_end = self.now + timedelta(minutes=1)
+        rows = drilldown(
+            "default", "runs", self.collector_a.id, narrow_start, narrow_end
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["error_message"], "kaboom")
+        self.assertEqual(rows[1]["status"], "ok")
+        self.assertIsNotNone(old_run.id)
+        self.assertIsNotNone(recent_run.id)
+
+    def test_drilldown_runs_respects_limit(self):
+        for i in range(3):
+            SourceRun.objects.create(
+                source=self.collector_a,
+                started_at=self.now - timedelta(hours=i),
+                finished_at=self.now - timedelta(hours=i),
+                status="ok",
+            )
+        rows = drilldown(
+            "default", "runs", self.collector_a.id, self.start, self.end, limit=2
+        )
+        self.assertEqual(len(rows), 2)
+
+    def test_drilldown_runs_unknown_source_returns_empty(self):
+        rows = drilldown("default", "runs", 999999, self.start, self.end)
+        self.assertEqual(rows, [])
 
     def test_rows_carry_health_and_last_run_keys(self):
         rows = collector_summary("default", self.start, self.end)
@@ -577,3 +633,95 @@ class SourceHealthIntegrationTests(TestCase):
         # fetch added by this ticket = 6 total, independent of source count.
         with self.assertNumQueries(6):
             collector_summary("default", self.start, self.end)
+
+
+@tag("db")
+class SourceRowSortOrderTests(TestCase):
+    """`_source_rows` sorts by health severity (error, warn, ok, inactive)
+    then by name — this ticket's replacement for the plain `order_by("name")`
+    the monitor UI used to render in.
+    """
+
+    def setUp(self):
+        self.now = timezone.now()
+        self.start = self.now - timedelta(days=1)
+        self.end = self.now + timedelta(days=1)
+
+        # Named so alphabetical order would otherwise put them
+        # ok < warn < error, the opposite of the expected health-rank order.
+        EventSource.objects.create(
+            name="A Ok Source",
+            source_type="ics",
+            url="https://a-ok.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=EventSource.objects.get(name="A Ok Source"),
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+        ok_raw = RawEvent.objects.create(
+            source=EventSource.objects.get(name="A Ok Source"),
+            raw_title="raw",
+            raw_start=self.now,
+            processed=True,
+            source_uid="ok1",
+        )
+        # Staged + published so this source clears both warn rules (zero raw,
+        # and raw-with-nothing-published) and lands squarely at "ok".
+        published_event = make_event(title="Published via A Ok Source")
+        StagedEvent.objects.create(
+            raw_event=ok_raw,
+            title="raw",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="approved",
+            published_event=published_event,
+        )
+
+        EventSource.objects.create(
+            name="B Error Source",
+            source_type="ics",
+            url="https://b-error.example.com/feed.ics",
+            active=True,
+            last_polled=None,
+        )
+
+        EventSource.objects.create(
+            name="C Inactive Source",
+            source_type="ics",
+            url="https://c-inactive.example.com/feed.ics",
+            active=False,
+            last_polled=None,
+        )
+
+        EventSource.objects.create(
+            name="Z Warn Source",
+            source_type="ics",
+            url="https://z-warn.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=EventSource.objects.get(name="Z Warn Source"),
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+        # No raw events in window -> "warn" (zero new raw events).
+
+    def test_rows_sorted_by_health_severity_then_name(self):
+        rows = collector_summary("default", self.start, self.end)
+        levels = [r["health"]["level"] for r in rows]
+        self.assertEqual(levels, ["error", "warn", "ok", "inactive"])
+        names = [r["name"] for r in rows]
+        self.assertEqual(
+            names,
+            ["B Error Source", "Z Warn Source", "A Ok Source", "C Inactive Source"],
+        )

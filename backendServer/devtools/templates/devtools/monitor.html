@@ -31,6 +31,7 @@
   .monitor tr.source-row:hover { background: #f9fafb; }
   .monitor tr.source-row.inactive { color: #9ca3af; }
   .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .monitor td.num.zero { color: #b6bcc6; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
 
   .monitor .summary-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
@@ -42,10 +43,86 @@
   .monitor .drilldown-wrap .loading { color: #6b7280; font-size: 0.8rem; }
   .monitor .drilldown-wrap table { margin-bottom: 0; }
   .monitor .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; background: #e5e7eb; }
-  .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved { background: #dcfce7; color: #166534; }
-  .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled { background: #fee2e2; color: #991b1b; }
+  .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved, .monitor .badge.ok { background: #dcfce7; color: #166534; }
+  .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled, .monitor .badge.refused { background: #fee2e2; color: #991b1b; }
   .monitor .badge.pending, .monitor .badge.queued, .monitor .badge.running, .monitor .badge.in_progress { background: #fef3c7; color: #92400e; }
   .monitor .badge.duplicate, .monitor .badge.skipped, .monitor .badge.needs_manual { background: #e0e7ff; color: #3730a3; }
+
+  .monitor .badge.health-error { background: #fee2e2; color: #991b1b; }
+  .monitor .badge.health-warn { background: #fef3c7; color: #92400e; }
+  .monitor .badge.health-ok { background: #dcfce7; color: #166534; }
+  .monitor .badge.health-inactive { background: #e5e7eb; color: #6b7280; }
+
+  .monitor .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem; }
+  .monitor .tab-button {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    color: #6b7280;
+  }
+  .monitor .tab-button:hover { color: #111827; }
+  .monitor .tab-button.active { color: #111827; background: #fff; border-color: #e5e7eb; }
+  .monitor .tab-panel { display: none; }
+  .monitor .tab-panel.active { display: block; }
+
+  .monitor .btn-probe {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+  }
+  .monitor .btn-probe:hover { background: #f9fafb; border-color: #9ca3af; }
+  .monitor .btn-probe:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
+
+  .monitor .probe-status { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; }
+  .monitor .probe-status .spinner {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border: 2px solid #d1d5db;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+    animation: monitor-spin 0.7s linear infinite;
+  }
+  @keyframes monitor-spin { to { transform: rotate(360deg); } }
+
+  .monitor .probe-log {
+    background: #111827;
+    color: #d1d5db;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    padding: 0.6rem 0.85rem;
+    border-radius: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .monitor .probe-log .probe-frame { margin-bottom: 0.5rem; }
+  .monitor .probe-log .probe-resolved { color: #93c5fd; }
+  .monitor .probe-log .probe-stage { color: #d1d5db; }
+  .monitor .probe-log .probe-refused { color: #fca5a5; }
+  .monitor .probe-log .probe-error { color: #f87171; }
+  .monitor .probe-log .probe-done { color: #86efac; }
+  .monitor .probe-log .probe-traceback {
+    color: #f87171;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 0.25rem;
+  }
 </style>
 
 <div class="monitor">
@@ -77,33 +154,41 @@
   <table id="collectors-table">
     <thead>
       <tr>
+        <th>Health</th>
         <th>Name</th>
         <th>Type</th>
         <th>Active</th>
         <th>Last polled</th>
         <th class="num">Raw</th>
-        <th class="num">Pending</th>
-        <th class="num">Approved</th>
-        <th class="num">Rejected</th>
+        <th class="num">Unprocessed</th>
+        <th class="num">No staged</th>
         <th class="num">Duplicate</th>
+        <th class="num">Unscored</th>
+        <th class="num">Held for review</th>
+        <th class="num">Rejected</th>
         <th class="num">Published</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for c in collectors %}
       <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="collector" data-key="{{ c.id }}">
+        <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.source_type }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num">{{ c.raw_count }}</td>
-        <td class="num">{{ c.staged_by_status.pending }}</td>
-        <td class="num">{{ c.staged_by_status.approved }}</td>
-        <td class="num">{{ c.staged_by_status.rejected }}</td>
-        <td class="num">{{ c.staged_by_status.duplicate }}</td>
-        <td class="num">{{ c.published_count }}</td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.raw }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.unprocessed }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.no_staged }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.duplicate }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.unscored }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.held_for_review }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.rejected }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.published }}"></td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="10"></td></tr>
+      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -116,31 +201,39 @@
   <table id="inbound-table">
     <thead>
       <tr>
+        <th>Health</th>
         <th>Name</th>
         <th>Active</th>
         <th>Last polled</th>
         <th class="num">Raw</th>
-        <th class="num">Pending</th>
-        <th class="num">Approved</th>
-        <th class="num">Rejected</th>
+        <th class="num">Unprocessed</th>
+        <th class="num">No staged</th>
         <th class="num">Duplicate</th>
+        <th class="num">Unscored</th>
+        <th class="num">Held for review</th>
+        <th class="num">Rejected</th>
         <th class="num">Published</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for c in inbound %}
       <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="inbound" data-key="{{ c.id }}">
+        <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num">{{ c.raw_count }}</td>
-        <td class="num">{{ c.staged_by_status.pending }}</td>
-        <td class="num">{{ c.staged_by_status.approved }}</td>
-        <td class="num">{{ c.staged_by_status.rejected }}</td>
-        <td class="num">{{ c.staged_by_status.duplicate }}</td>
-        <td class="num">{{ c.published_count }}</td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.raw }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.unprocessed }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.no_staged }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.duplicate }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.unscored }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.held_for_review }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.rejected }}"></td>
+        <td class="num funnel-cell" data-value="{{ c.funnel.published }}"></td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="9"></td></tr>
+      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="13"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -197,13 +290,24 @@
     dbToggleLabel.classList.add("prod-active");
   }
 
-  var STATUS_KEYS = ["published", "approved", "succeeded", "done", "rejected", "failed", "canceled",
-    "pending", "queued", "running", "in_progress", "duplicate", "skipped", "needs_manual"];
-
   function badge(status) {
     if (!status) return "—";
     return '<span class="badge ' + status + '">' + status + "</span>";
   }
+
+  // Render funnel cells that were left empty in the server-rendered markup,
+  // so a zero reads as a muted dash rather than a bare "0" — makes non-zero
+  // drop-off stand out at a glance. (Health badges are rendered server-side
+  // in the template directly, since Django already has `c.health.level`.)
+  document.querySelectorAll("td.funnel-cell").forEach(function (cell) {
+    var value = cell.getAttribute("data-value");
+    if (value === "0") {
+      cell.textContent = "—";
+      cell.classList.add("zero");
+    } else {
+      cell.textContent = value;
+    }
+  });
 
   function renderSourceDrilldown(rows) {
     if (!rows.length) return '<p class="empty-note">No raw events in this window.</p>';
@@ -231,6 +335,232 @@
     return html;
   }
 
+  function renderRunsDrilldown(rows) {
+    if (!rows.length) return '<p class="empty-note">No runs recorded for this source.</p>';
+    var html = "<table><thead><tr><th>Started</th><th>Finished</th><th>Status</th><th>Trigger</th>" +
+      "<th class=\"num\">Fetched</th><th class=\"num\">New</th><th class=\"num\">Duplicate</th><th>Error</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var showError = r.status === "failed" || r.status === "refused";
+      html += "<tr><td>" + (r.started_at || "") + "</td><td>" + (r.finished_at || "") + "</td>" +
+        "<td>" + badge(r.status) + "</td><td>" + (r.trigger || "") + "</td>" +
+        "<td class=\"num\">" + r.items_fetched + "</td><td class=\"num\">" + r.items_new + "</td>" +
+        "<td class=\"num\">" + r.items_duplicate + "</td>" +
+        "<td>" + (showError ? (r.error_message || "(no error message recorded)") : "") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function escHtml(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Probe tab: streams GET /devtools/probe?source_id=<id>&db=<db> (SSE) into a
+  // log pane. Mirrors playground.html's EventSource handling (see
+  // playground.html:1364-1421) including the `streamDone` guard against the
+  // native 'error' event EventSource fires on normal connection close after
+  // 'done' — without it, every successful probe would render a spurious error.
+  function renderProbeTab(panel, sourceId, triggerBtn) {
+    var elapsedTimer = null;
+    var startedAt = Date.now();
+    var streamDone = false;
+
+    panel.innerHTML =
+      '<div class="probe-status" id="probe-status-' + sourceId + '">' +
+      '<span class="spinner"></span>Probing… (<span class="probe-elapsed">0</span>s)' +
+      "</div>" +
+      '<div class="probe-log" id="probe-log-' + sourceId + '"></div>';
+    var statusEl = panel.querySelector(".probe-status");
+    var elapsedEl = panel.querySelector(".probe-elapsed");
+    var logEl = panel.querySelector(".probe-log");
+
+    function appendFrame(cls, html) {
+      var line = document.createElement("div");
+      line.className = "probe-frame " + cls;
+      line.innerHTML = html;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function finish() {
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+      }
+      if (statusEl) statusEl.remove();
+      if (triggerBtn) triggerBtn.disabled = false;
+    }
+
+    if (triggerBtn) triggerBtn.disabled = true;
+    elapsedTimer = setInterval(function () {
+      elapsedEl.textContent = Math.round((Date.now() - startedAt) / 1000);
+    }, 1000);
+
+    var params = new URLSearchParams();
+    params.set("source_id", sourceId);
+    params.set("db", currentDb());
+    var es = new EventSource("/devtools/probe?" + params.toString());
+
+    es.addEventListener("resolved", function (e) {
+      var data = JSON.parse(e.data);
+      appendFrame(
+        "probe-resolved",
+        "<strong>Resolved:</strong> " + escHtml(data.name) + " (" + escHtml(data.source_type) + ") &mdash; " +
+          escHtml(data.url)
+      );
+    });
+
+    es.addEventListener("stage", function (e) {
+      var data = JSON.parse(e.data);
+      var extras = "";
+      if (data.status === "end") {
+        if (data.http_status != null) extras += " http_status=" + escHtml(data.http_status);
+        if (data.bytes != null) extras += " bytes=" + escHtml(data.bytes);
+        if (data.item_count != null) extras += " item_count=" + escHtml(data.item_count);
+        if (data.sample_titles && data.sample_titles.length) {
+          extras += "<br>sample titles: " + data.sample_titles.map(escHtml).join("; ");
+        }
+      }
+      // Reuse the badge() helper's running/done palette (defined for run statuses)
+      // for stage start/end, so an in-progress stage reads amber and a finished
+      // one reads green, while still labeling the badge with the real value.
+      var badgeClass = data.status === "start" ? "running" : "done";
+      var statusBadge = '<span class="badge ' + badgeClass + '">' + escHtml(data.status) + "</span>";
+      appendFrame(
+        "probe-stage",
+        "<strong>" + escHtml(data.stage) + "</strong> " + statusBadge + extras
+      );
+    });
+
+    es.addEventListener("refused", function (e) {
+      var data = JSON.parse(e.data);
+      appendFrame(
+        "probe-refused",
+        badge("refused") + " <strong>" + escHtml(data.reason) + "</strong>" +
+          (data.detail ? "<br>" + escHtml(data.detail) : "")
+      );
+    });
+
+    es.addEventListener("error", function (e) {
+      // Guard: EventSource fires a native 'error' event on normal connection
+      // close right after 'done' fires — ignore it once the stream is done.
+      if (streamDone) {
+        es.close();
+        return;
+      }
+      var msg = "Stream connection error.";
+      var tracebackText = null;
+      if (e.data) {
+        try {
+          var d = JSON.parse(e.data);
+          msg = d.message || msg;
+          tracebackText = d.traceback || null;
+        } catch (_) {}
+      }
+      appendFrame(
+        "probe-error",
+        "<strong>Error:</strong> " + escHtml(msg) +
+          (tracebackText ? '<div class="probe-traceback">' + escHtml(tracebackText) + "</div>" : "")
+      );
+      es.close();
+      finish();
+    });
+
+    es.addEventListener("done", function () {
+      streamDone = true;
+      appendFrame("probe-done", "<strong>Done.</strong>");
+      es.close();
+      finish();
+    });
+  }
+
+  // Generic tab machinery: each entry is {id, label, render(container)}.
+  // `render` is called once, the first time a tab is shown, and is
+  // responsible for fetching its own data and filling `container`. Adding a
+  // future tab (e.g. "Probe") is a one-line addition to the `tabs` list
+  // passed to `renderTabs` — no new branching here.
+  function renderTabs(tabs) {
+    var wrap = document.createElement("div");
+
+    var tabBar = document.createElement("div");
+    tabBar.className = "tabs";
+    wrap.appendChild(tabBar);
+
+    var panels = {};
+    var buttons = {};
+    var rendered = {};
+
+    tabs.forEach(function (tab, index) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "tab-button" + (index === 0 ? " active" : "");
+      button.textContent = tab.label;
+      tabBar.appendChild(button);
+      buttons[tab.id] = button;
+
+      var panel = document.createElement("div");
+      panel.className = "tab-panel" + (index === 0 ? " active" : "");
+      wrap.appendChild(panel);
+      panels[tab.id] = panel;
+
+      button.addEventListener("click", function () {
+        tabBar.querySelectorAll(".tab-button").forEach(function (b) { b.classList.remove("active"); });
+        Object.keys(panels).forEach(function (id) { panels[id].classList.remove("active"); });
+        button.classList.add("active");
+        panel.classList.add("active");
+        if (!rendered[tab.id]) {
+          rendered[tab.id] = true;
+          tab.render(panel);
+        }
+      });
+    });
+
+    // Render the first tab eagerly since it's shown by default.
+    if (tabs.length) {
+      rendered[tabs[0].id] = true;
+      tabs[0].render(panels[tabs[0].id]);
+    }
+
+    // Exposed so a caller (e.g. the Probe button, which wants to jump straight
+    // to the Probe tab instead of the default first tab) can activate a
+    // specific tab from outside without renderTabs knowing about that case.
+    wrap.activateTab = function (id) {
+      if (buttons[id]) buttons[id].click();
+    };
+
+    return wrap;
+  }
+
+  function fetchDrilldown(kind, key, extraParams) {
+    var params = new URLSearchParams();
+    params.set("db", currentDb());
+    params.set("window", windowSelect.value);
+    params.set("kind", kind);
+    params.set("key", key);
+    if (extraParams) {
+      Object.keys(extraParams).forEach(function (k) { params.set(k, extraParams[k]); });
+    }
+    return fetch("/devtools/monitor/data?" + params.toString()).then(function (r) { return r.json(); });
+  }
+
+  // Maps "kind:key" -> the row's Probe <button> (so the Probe tab can
+  // disable/re-enable it) and -> the rendered tabs element for that row's
+  // open drilldown (so the Probe button can jump straight to the Probe tab).
+  var probeButtons = {};
+  var openTabs = {};
+  document.querySelectorAll(".btn-probe").forEach(function (btn) {
+    var sourceId = btn.getAttribute("data-probe-source-id");
+    var row = btn.closest("tr.source-row");
+    if (!row) return;
+    var kind = row.getAttribute("data-kind");
+    probeButtons[kind + ":" + sourceId] = btn;
+  });
+
   document.querySelectorAll("tr.source-row").forEach(function (row) {
     row.addEventListener("click", function () {
       var kind = row.getAttribute("data-kind");
@@ -245,25 +575,87 @@
       }
 
       var cell = drilldownRow.querySelector("td");
-      cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
       drilldownRow.style.display = "";
 
-      var params = new URLSearchParams();
-      params.set("db", currentDb());
-      params.set("window", windowSelect.value);
-      params.set("kind", kind);
-      params.set("key", key);
-
-      fetch("/devtools/monitor/data?" + params.toString())
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var rows = data.rows || [];
-          var body = kind === "outbound" ? renderOutboundDrilldown(rows) : renderSourceDrilldown(rows);
-          cell.innerHTML = '<div class="drilldown-wrap">' + body + "</div>";
-        })
-        .catch(function () {
+      if (kind === "outbound") {
+        cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
+        fetchDrilldown(kind, key).then(function (data) {
+          cell.innerHTML = '<div class="drilldown-wrap">' + renderOutboundDrilldown(data.rows || []) + "</div>";
+        }).catch(function () {
           cell.innerHTML = '<div class="drilldown-wrap"><span class="empty-note">Failed to load.</span></div>';
         });
+        return;
+      }
+
+      // Collector/inbound rows get a tabbed drilldown: "Recent events" (raw
+      // events in the current window) and "Runs" (SourceRun history, not
+      // windowed). Ticket 32.7 adds a third "Probe" tab here.
+      var wrap = document.createElement("div");
+      wrap.className = "drilldown-wrap";
+      var tabs = renderTabs([
+        {
+          id: "events",
+          label: "Recent events",
+          render: function (panel) {
+            panel.innerHTML = '<span class="loading">Loading…</span>';
+            fetchDrilldown(kind, key).then(function (data) {
+              panel.innerHTML = renderSourceDrilldown(data.rows || []);
+            }).catch(function () {
+              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
+            });
+          },
+        },
+        {
+          id: "runs",
+          label: "Runs",
+          render: function (panel) {
+            panel.innerHTML = '<span class="loading">Loading…</span>';
+            fetchDrilldown("runs", key).then(function (data) {
+              panel.innerHTML = renderRunsDrilldown(data.rows || []);
+            }).catch(function () {
+              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
+            });
+          },
+        },
+        {
+          id: "probe",
+          label: "Probe",
+          render: function (panel) {
+            renderProbeTab(panel, key, probeButtons[kind + ":" + key]);
+          },
+        },
+      ]);
+      wrap.appendChild(tabs);
+      cell.innerHTML = "";
+      cell.appendChild(wrap);
+      openTabs[kind + ":" + key] = tabs;
+    });
+  });
+
+  document.querySelectorAll(".btn-probe").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      // The row itself is also a click-to-expand target — without this the
+      // Probe click would also toggle the drilldown open/closed.
+      e.stopPropagation();
+
+      var row = btn.closest("tr.source-row");
+      if (!row) return;
+      var kind = row.getAttribute("data-kind");
+      var key = row.getAttribute("data-key");
+      var drilldownRow = document.querySelector('tr.drilldown-row[data-for="' + kind + ":" + key + '"]');
+      if (!drilldownRow) return;
+
+      var mapKey = kind + ":" + key;
+      var isOpen = drilldownRow.style.display !== "none";
+
+      if (!isOpen) {
+        // Open the drilldown the same way the row click does, then jump to
+        // the Probe tab once it's rendered.
+        row.click();
+      }
+
+      var tabs = openTabs[mapKey];
+      if (tabs && tabs.activateTab) tabs.activateTab("probe");
     });
   });
 })();

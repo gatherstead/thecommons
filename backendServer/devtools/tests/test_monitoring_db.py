@@ -1,15 +1,22 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import OperationalError, ProgrammingError
 from django.test import TestCase, override_settings, tag
 from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from devtools.monitoring import (
+    RUNS_AVAILABLE,
+    RUNS_DB_NOT_CONFIGURED,
+    RUNS_MISSING_TABLE,
+    RUNS_NO_PERMISSION,
+    RUNS_UNREACHABLE,
     broadcast_inbound_summary,
     broadcast_outbound_summary,
     collector_summary,
     drilldown,
+    resolve_source_runs_state,
 )
 from events.tests.factories import make_event
 from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
@@ -475,7 +482,9 @@ class SourceHealthIntegrationTests(TestCase):
         row = next(r for r in rows if r["name"] == "Dead Source")
         self.assertEqual(row["health"]["level"], "inactive")
 
-    def test_never_polled_active_source_is_error(self):
+    def test_never_polled_active_source_is_unknown_not_error(self):
+        # `created_at` is auto_now_add, so this source is seconds old — inside
+        # its first-poll grace period, and therefore `unknown`, not `error`.
         EventSource.objects.create(
             name="New Source",
             source_type="ics",
@@ -485,8 +494,8 @@ class SourceHealthIntegrationTests(TestCase):
         )
         rows = collector_summary("default", self.start, self.end)
         row = next(r for r in rows if r["name"] == "New Source")
-        self.assertEqual(row["health"]["level"], "error")
-        self.assertIn("never polled", row["health"]["reasons"])
+        self.assertEqual(row["health"]["level"], "unknown")
+        self.assertTrue(any("never polled" in r for r in row["health"]["reasons"]))
 
     def test_stale_source_is_error(self):
         source = EventSource.objects.create(
@@ -630,16 +639,51 @@ class SourceHealthIntegrationTests(TestCase):
 
         # 5 queries as documented pre-existing (sources, raw, no_staged,
         # staged-by-status, funnel-staged) + 1 for the single recent-runs
-        # fetch added by this ticket = 6 total, independent of source count.
-        with self.assertNumQueries(6):
+        # fetch + 1 for the `resolve_source_runs_state()` probe that gates it
+        # = 7 total.
+        #
+        # The invariant under test is unchanged: still *independent of source
+        # count*, still no N+1. The availability probe is a fixed O(1) cost
+        # paid once per collector_summary() call, not once per source — it's
+        # what lets the monitor degrade instead of 500 when prod lacks
+        # `ingestion_sourcerun` (see monitoring.resolve_source_runs_state).
+        with self.assertNumQueries(7):
             collector_summary("default", self.start, self.end)
+
+    def test_passing_runs_state_skips_the_availability_probe(self):
+        # A page render resolves availability once and threads it into both
+        # summaries; the second caller must not pay the round trip again. On
+        # the prod path that probe is a WAN hop to Neon.
+        #
+        # Needs at least one source: `_source_rows` returns early on an empty
+        # source list, which would make this pass for the wrong reason.
+        source = EventSource.objects.create(
+            name="Threaded State Source",
+            source_type="ics",
+            url="https://threaded.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+
+        # The same 7 queries as the test above, minus the availability probe.
+        with self.assertNumQueries(6):
+            collector_summary(
+                "default", self.start, self.end, runs_state=RUNS_AVAILABLE
+            )
 
 
 @tag("db")
 class SourceRowSortOrderTests(TestCase):
-    """`_source_rows` sorts by health severity (error, warn, ok, inactive)
-    then by name — this ticket's replacement for the plain `order_by("name")`
-    the monitor UI used to render in.
+    """`_source_rows` sorts by health severity (error, warn, unknown, ok,
+    inactive) then by name — this replaced the plain `order_by("name")` the
+    monitor UI used to render in.
     """
 
     def setUp(self):
@@ -684,12 +728,16 @@ class SourceRowSortOrderTests(TestCase):
             published_event=published_event,
         )
 
+        # Polled, then stopped — evidenced failure, which is what `error` is
+        # for. (A never-polled source is `unknown`/`warn`, not `error`; see
+        # "D Unknown Source" below.)
         EventSource.objects.create(
             name="B Error Source",
             source_type="ics",
             url="https://b-error.example.com/feed.ics",
             active=True,
-            last_polled=None,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(hours=10),
         )
 
         EventSource.objects.create(
@@ -697,6 +745,16 @@ class SourceRowSortOrderTests(TestCase):
             source_type="ics",
             url="https://c-inactive.example.com/feed.ics",
             active=False,
+            last_polled=None,
+        )
+
+        # Never polled and seconds old (created_at is auto_now_add) -> inside
+        # its first-poll grace period -> `unknown`.
+        EventSource.objects.create(
+            name="D Unknown Source",
+            source_type="ics",
+            url="https://d-unknown.example.com/feed.ics",
+            active=True,
             last_polled=None,
         )
 
@@ -719,9 +777,170 @@ class SourceRowSortOrderTests(TestCase):
     def test_rows_sorted_by_health_severity_then_name(self):
         rows = collector_summary("default", self.start, self.end)
         levels = [r["health"]["level"] for r in rows]
-        self.assertEqual(levels, ["error", "warn", "ok", "inactive"])
+        self.assertEqual(levels, ["error", "warn", "unknown", "ok", "inactive"])
         names = [r["name"] for r in rows]
         self.assertEqual(
             names,
-            ["B Error Source", "Z Warn Source", "A Ok Source", "C Inactive Source"],
+            [
+                "B Error Source",
+                "Z Warn Source",
+                "D Unknown Source",
+                "A Ok Source",
+                "C Inactive Source",
+            ],
+        )
+
+
+@tag("db")
+class SourceRunsUnavailableTests(TestCase):
+    """Degradation when `ingestion_sourcerun` isn't readable on the target DB.
+
+    `prod_readonly` tracks whatever prod has actually deployed, which can lag
+    local by a migration — prod sat on 0013 while local was on 0014, and
+    querying SourceRun there took the entire monitor down with a
+    ProgrammingError.
+
+    There are three distinct causes, and they are simulated by raising what
+    Postgres would actually raise rather than by hiding the table from
+    introspection. Introspection cannot distinguish them at all: Django's
+    PostgreSQL backend lists tables from `pg_catalog.pg_class`, which has no
+    privilege predicate, so a table the role cannot SELECT is still reported as
+    present. That is precisely the gap that made the missing-GRANT case a
+    latent 500 — dropping the real table isn't an option either, since the rest
+    of the suite needs it.
+    """
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Unmigrated Source",
+            source_type="ics",
+            url="https://example.com/a.ics",
+            active=True,
+            last_polled=timezone.now(),
+        )
+        SourceRun.objects.create(
+            source=self.source,
+            started_at=timezone.now() - timedelta(minutes=5),
+            finished_at=timezone.now(),
+            status="failed",
+            error_message="should never be read",
+        )
+        self.end = timezone.now() + timedelta(minutes=1)
+        self.start = self.end - timedelta(days=7)
+
+    def _raise_on_sourcerun(self, exc):
+        """Patch the SourceRun query to raise `exc`, as Postgres would.
+
+        Only `SourceRun.objects.using(...)` is patched, so every other query in
+        the page still runs for real — the point is that the *rest* of the
+        monitor keeps working while run history degrades.
+        """
+        from unittest.mock import patch
+
+        return patch.object(
+            SourceRun.objects, "using", side_effect=exc, autospec=True
+        )
+
+    @staticmethod
+    def _pg_error(django_exc, sqlstate):
+        """A Django DB error wrapping a driver error carrying `sqlstate`.
+
+        Mirrors how psycopg 3 surfaces it: Django re-raises its own exception
+        type `from` the driver error, so the SQLSTATE lives on `__cause__`.
+        """
+
+        class _DriverError(Exception):
+            pass
+
+        cause = _DriverError("simulated")
+        cause.sqlstate = sqlstate
+        exc = django_exc("simulated")
+        exc.__cause__ = cause
+        return exc
+
+    def test_state_is_not_configured_for_unknown_alias(self):
+        self.assertEqual(
+            resolve_source_runs_state("definitely_not_a_db"), RUNS_DB_NOT_CONFIGURED
+        )
+
+    def test_state_is_available_when_table_is_readable(self):
+        self.assertEqual(resolve_source_runs_state("default"), RUNS_AVAILABLE)
+
+    def test_missing_table_sqlstate_maps_to_missing_table(self):
+        exc = self._pg_error(ProgrammingError, "42P01")
+        with self._raise_on_sourcerun(exc):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_MISSING_TABLE)
+
+    def test_missing_grant_sqlstate_maps_to_no_permission(self):
+        # The case introspection could never see: the table exists and is
+        # listed in pg_class, but the role has no SELECT on it. Against
+        # pre-33.1 code this path reported the table as *readable* and the
+        # ProgrammingError propagated as a 500.
+        exc = self._pg_error(ProgrammingError, "42501")
+        with self._raise_on_sourcerun(exc):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_NO_PERMISSION)
+
+    def test_unreachable_database_maps_to_unreachable(self):
+        with self._raise_on_sourcerun(OperationalError("connection refused")):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_UNREACHABLE)
+
+    def test_unrecognised_sqlstate_is_not_swallowed(self):
+        # A ProgrammingError we can't attribute to a deployment difference is a
+        # bug in our own SQL; masking it behind a banner naming a cause we
+        # haven't detected would be worse than the traceback.
+        exc = self._pg_error(ProgrammingError, "42703")  # undefined_column
+        with self._raise_on_sourcerun(exc), self.assertRaises(ProgrammingError):
+            resolve_source_runs_state("default")
+
+    def test_collector_summary_does_not_raise_without_the_table(self):
+        rows = collector_summary(
+            "default", self.start, self.end, runs_state=RUNS_MISSING_TABLE
+        )
+        self.assertEqual(len(rows), 1)
+        # The run exists, but isn't read — so the row reports no run history
+        # rather than surfacing the `failed` status.
+        self.assertIsNone(rows[0]["last_run"])
+
+    def test_collector_summary_does_not_raise_without_the_grant(self):
+        rows = collector_summary(
+            "default", self.start, self.end, runs_state=RUNS_NO_PERMISSION
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["last_run"])
+
+    def test_health_falls_back_to_staleness_rules_without_the_table(self):
+        rows = collector_summary(
+            "default", self.start, self.end, runs_state=RUNS_MISSING_TABLE
+        )
+        health = rows[0]["health"]
+        # The seeded run is `failed`, which would normally force `error` with a
+        # "latest run failed" reason. With runs unread, the only signal left is
+        # the zero-raw-events warn rule.
+        self.assertEqual(health["level"], "warn")
+        self.assertFalse(any("latest run" in r for r in health["reasons"]))
+
+    def test_drilldown_runs_returns_empty_without_the_table(self):
+        self.assertEqual(
+            drilldown(
+                "default",
+                "runs",
+                self.source.id,
+                self.start,
+                self.end,
+                runs_state=RUNS_MISSING_TABLE,
+            ),
+            [],
+        )
+
+    def test_drilldown_runs_returns_empty_without_the_grant(self):
+        self.assertEqual(
+            drilldown(
+                "default",
+                "runs",
+                self.source.id,
+                self.start,
+                self.end,
+                runs_state=RUNS_NO_PERMISSION,
+            ),
+            [],
         )

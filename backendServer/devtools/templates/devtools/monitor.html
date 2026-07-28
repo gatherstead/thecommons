@@ -33,6 +33,17 @@
   .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .monitor td.num.zero { color: #b6bcc6; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
+  .monitor .notice {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+  .monitor .notice code { background: rgba(146, 64, 14, 0.1); padding: 0.05rem 0.25rem; border-radius: 3px; }
 
   .monitor .summary-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
   .monitor .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.5rem 0.9rem; font-size: 0.85rem; }
@@ -51,6 +62,9 @@
   .monitor .badge.health-error { background: #fee2e2; color: #991b1b; }
   .monitor .badge.health-warn { background: #fef3c7; color: #92400e; }
   .monitor .badge.health-ok { background: #dcfce7; color: #166534; }
+  /* `unknown` is absence of signal, not a fault: deliberately the quietest
+     badge of the four, so it never competes with error/warn for attention. */
+  .monitor .badge.health-unknown { background: #f3f4f6; color: #6b7280; }
   .monitor .badge.health-inactive { background: #e5e7eb; color: #6b7280; }
 
   .monitor .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem; }
@@ -149,6 +163,34 @@
     </label>
   </div>
 
+  {% if source_runs_state == "unreachable" %}
+  <p class="notice">
+    <strong>Couldn&rsquo;t reach this database.</strong>
+    The connection failed, so no counts could be read and every table below is empty &mdash;
+    this page is showing <em>nothing</em>, not <em>zero</em>. For
+    <code>prod_readonly</code> the usual causes are a suspended Neon branch (retry in a few
+    seconds), a network problem, or stale credentials in <code>PROD_DATABASE_URL</code>.
+  </p>
+  {% elif source_runs_state == "missing_table" %}
+  <p class="notice">
+    <strong>Run history unavailable: <code>ingestion_sourcerun</code> doesn&rsquo;t exist here.</strong>
+    This database is behind on migrations &mdash; it hasn&rsquo;t had
+    <code>0014_sourcerun</code> applied. The Runs tab is empty and health levels fall back to
+    last-polled staleness only. Everything else on this page is accurate, and the probe still
+    works &mdash; it never reads <code>SourceRun</code>.
+  </p>
+  {% elif source_runs_state == "no_permission" %}
+  <p class="notice">
+    <strong>Run history unavailable: permission denied on <code>ingestion_sourcerun</code>.</strong>
+    The table exists, but this connection&rsquo;s role can&rsquo;t read it &mdash;
+    <code>ALTER DEFAULT PRIVILEGES</code> doesn&rsquo;t follow tables created by a different
+    role, so a newly migrated table needs its grant re-run:
+    <code>GRANT SELECT ON ingestion_sourcerun TO monitor_readonly;</code>. The Runs tab is
+    empty and health levels fall back to last-polled staleness only. Everything else on this
+    page is accurate.
+  </p>
+  {% endif %}
+
   <h2>Collectors</h2>
   {% if collectors %}
   <table id="collectors-table">
@@ -178,14 +220,19 @@
         <td>{{ c.source_type }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.raw }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.unprocessed }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.no_staged }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.duplicate }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.unscored }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.held_for_review }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.rejected }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.published }}"></td>
+        {# Zeros render as a muted `0`, never an em-dash: the dash already means
+           "no value" in the Last polled column of this same row, and a row of
+           eight dashes reads as a failed page load rather than eight real
+           zeros. A *blank* funnel cell is therefore diagnostic — it means the
+           template lookup missed and the server sent no integer at all. #}
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
+        <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
+        <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
+        <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
       <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
@@ -223,14 +270,16 @@
         <td>{{ c.name }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.raw }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.unprocessed }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.no_staged }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.duplicate }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.unscored }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.held_for_review }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.rejected }}"></td>
-        <td class="num funnel-cell" data-value="{{ c.funnel.published }}"></td>
+        {# See the note on the collectors table: muted `0` for real zeros, the
+           em-dash reserved for genuinely-absent values. #}
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
+        <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
+        <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
+        <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
       <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="13"></td></tr>
@@ -294,20 +343,6 @@
     if (!status) return "—";
     return '<span class="badge ' + status + '">' + status + "</span>";
   }
-
-  // Render funnel cells that were left empty in the server-rendered markup,
-  // so a zero reads as a muted dash rather than a bare "0" — makes non-zero
-  // drop-off stand out at a glance. (Health badges are rendered server-side
-  // in the template directly, since Django already has `c.health.level`.)
-  document.querySelectorAll("td.funnel-cell").forEach(function (cell) {
-    var value = cell.getAttribute("data-value");
-    if (value === "0") {
-      cell.textContent = "—";
-      cell.classList.add("zero");
-    } else {
-      cell.textContent = value;
-    }
-  });
 
   function renderSourceDrilldown(rows) {
     if (!rows.length) return '<p class="empty-note">No raw events in this window.</p>';

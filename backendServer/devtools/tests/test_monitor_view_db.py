@@ -1,10 +1,19 @@
 import json
+import re
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.db import OperationalError
 from django.http import Http404
 from django.test import RequestFactory, TestCase, override_settings, tag
 from django.utils import timezone
 
+from devtools.monitoring import (
+    RUNS_MISSING_TABLE,
+    RUNS_NO_PERMISSION,
+    RUNS_UNREACHABLE,
+    resolve_source_runs_state,
+)
 from devtools.views import monitor, monitor_data
 from events.tests.factories import make_event
 from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
@@ -64,6 +73,98 @@ class MonitorViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         content = resp.content.decode()
         self.assertIn("Monitor Test Collector", content)
+
+    # ── Rendered output: counts, zeros, and the em-dash convention ──────────
+    #
+    # Nothing rendered `monitor.html` and asserted against it before suite 33,
+    # which is how a funnel column that showed every real zero as an em-dash
+    # (indistinguishable from a failed page load) shipped unnoticed.
+
+    FUNNEL_CELL_RE = re.compile(r'<td class="num funnel-cell[^"]*">([^<]*)</td>')
+
+    @override_settings(DEBUG=True)
+    def test_funnel_counts_are_server_rendered(self):
+        # setUp seeds exactly one raw event, unprocessed, with one published
+        # staged row — so `raw` is 1, `published` is 1, and the rest are 0.
+        # All of it must be in the HTML with no JavaScript run.
+        resp = monitor(self._get("/devtools/monitor", {"window": "30d"}))
+        cells = self.FUNNEL_CELL_RE.findall(resp.content.decode())
+
+        self.assertTrue(cells, "no funnel cells rendered server-side")
+        self.assertIn("1", cells)
+        # A blank cell means the template lookup missed entirely — a real bug,
+        # and distinguishable from a genuine zero precisely because zeros now
+        # render as "0".
+        self.assertTrue(all(c.isdigit() for c in cells), cells)
+
+    @override_settings(DEBUG=True)
+    def test_zero_counts_render_as_muted_zero_not_a_dash(self):
+        content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
+        self.assertIn('<td class="num funnel-cell zero">0</td>', content)
+        self.assertNotIn("—", self.FUNNEL_CELL_RE.findall(content))
+
+    @override_settings(DEBUG=True)
+    def test_em_dash_still_marks_a_genuinely_absent_value(self):
+        # The seeded source has never polled, so `Last polled` has no value —
+        # the one place in these tables the em-dash still belongs.
+        content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
+        self.assertIn("<td>—</td>", content)
+
+    # ── Degradation banners ─────────────────────────────────────────────────
+
+    def _render_with_state(self, state):
+        with patch("devtools.views.resolve_source_runs_state", return_value=state):
+            resp = monitor(self._get("/devtools/monitor"))
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode()
+
+    @override_settings(DEBUG=True)
+    def test_missing_table_banner_names_only_the_migration(self):
+        content = self._render_with_state(RUNS_MISSING_TABLE)
+        self.assertIn("0014_sourcerun", content)
+        self.assertNotIn("GRANT SELECT", content)
+
+    @override_settings(DEBUG=True)
+    def test_missing_grant_banner_names_only_the_grant(self):
+        # Pre-33.1 this state was undetectable, so the page 500ed instead.
+        content = self._render_with_state(RUNS_NO_PERMISSION)
+        self.assertIn("GRANT SELECT ON ingestion_sourcerun", content)
+        self.assertNotIn("0014_sourcerun", content)
+
+    @override_settings(DEBUG=True)
+    def test_unreachable_database_renders_a_banner_not_a_traceback(self):
+        content = self._render_with_state(RUNS_UNREACHABLE)
+        self.assertIn("reach this database", content)
+        # Showing nothing, not zero — the distinction the banner has to make.
+        self.assertNotIn('<td class="num funnel-cell zero">0</td>', content)
+
+    @override_settings(DEBUG=True)
+    def test_database_dying_mid_render_degrades_to_the_same_banner(self):
+        # The probe succeeds, then the connection drops while the summaries
+        # run. Previously a raw Django traceback.
+        with patch(
+            "devtools.views.collector_summary",
+            side_effect=OperationalError("connection closed"),
+        ):
+            resp = monitor(self._get("/devtools/monitor"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("reach this database", resp.content.decode())
+
+    @override_settings(DEBUG=True)
+    def test_availability_is_resolved_once_per_request(self):
+        # It used to be resolved four times per render — two summaries, the
+        # template context, and the drilldown — each an uncached round trip to
+        # Neon on the prod path, all answering the identical question.
+        # Both names are patched with the same mock: `views` holds its own
+        # reference from the `from .monitoring import ...`, and `_source_rows`
+        # resolves through the `monitoring` module global. Patching only one
+        # would let a re-resolution through the other go uncounted.
+        with patch(
+            "devtools.views.resolve_source_runs_state",
+            wraps=resolve_source_runs_state,
+        ) as probe, patch("devtools.monitoring.resolve_source_runs_state", new=probe):
+            monitor(self._get("/devtools/monitor"))
+        self.assertEqual(probe.call_count, 1)
 
     @override_settings(DEBUG=True)
     def test_monitor_data_returns_200_with_rows(self):

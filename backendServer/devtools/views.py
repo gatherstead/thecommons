@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import OperationalError, connections, transaction
 from django.http import Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -34,10 +34,12 @@ from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
 
 from .monitoring import (
+    RUNS_UNREACHABLE,
     broadcast_inbound_summary,
     broadcast_outbound_summary,
     collector_summary,
     drilldown,
+    resolve_source_runs_state,
 )
 from .pipeline_runner import _event_dict, _resolve_source_name, run_pipeline_into_queue
 from .sse import sse_frame
@@ -372,6 +374,15 @@ def _run_probe_into_queue(q, *, source_id, db):
             )
         )
     finally:
+        # This runs on its own thread, and Django connections are thread-local:
+        # the `EventSource` lookup above opened a connection that nothing else
+        # will ever close. Leaking it holds a session open on the target
+        # database, which in tests makes `DROP DATABASE` fail at teardown with
+        # "being accessed by other users". `run_pipeline_into_queue` already
+        # does this (pipeline_runner.py) — probe needs it for the same reason.
+        # close_all() rather than connection.close() because the lookup may
+        # have used the `prod_readonly` alias, not `default`.
+        connections.close_all()
         q.put(("done", {}))
         q.put(("__end__", None))
 
@@ -615,16 +626,37 @@ def monitor(request):
     db = _resolve_db(request)
     window, start, end = _resolve_window(request)
 
+    # Resolve SourceRun availability once and thread it through both summaries
+    # and the template. It used to be re-resolved four times per render, each
+    # an uncached round trip to Neon on the prod path, all answering the same
+    # question. Doubles as this page's reachability probe: it's the first
+    # statement issued, so an unreachable database surfaces here.
+    runs_state = resolve_source_runs_state(db)
+
+    collectors, inbound, outbound = [], [], {}
+    if runs_state != RUNS_UNREACHABLE:
+        try:
+            collectors = collector_summary(db, start, end, runs_state=runs_state)
+            inbound = broadcast_inbound_summary(db, start, end, runs_state=runs_state)
+            outbound = broadcast_outbound_summary(db, start, end)
+        except OperationalError:
+            # Connection was live for the probe and died mid-render. Degrade to
+            # the same banner the rest of the page is built around rather than
+            # handing the operator a raw traceback.
+            runs_state = RUNS_UNREACHABLE
+            collectors, inbound, outbound = [], [], {}
+
     return render(
         request,
         "devtools/monitor.html",
         {
-            "collectors": collector_summary(db, start, end),
-            "inbound": broadcast_inbound_summary(db, start, end),
-            "outbound": broadcast_outbound_summary(db, start, end),
+            "collectors": collectors,
+            "inbound": inbound,
+            "outbound": outbound,
             "db": db,
             "window": window,
             "prod_readonly_configured": "prod_readonly" in settings.DATABASES,
+            "source_runs_state": runs_state,
         },
     )
 

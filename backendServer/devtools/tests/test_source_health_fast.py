@@ -16,6 +16,7 @@ def make_row(
     active=True,
     poll_interval_hours=24,
     last_polled_dt=NOW,
+    created_at=NOW,
     raw_count=1,
     published=1,
 ):
@@ -23,6 +24,7 @@ def make_row(
         "active": active,
         "poll_interval_hours": poll_interval_hours,
         "last_polled_dt": last_polled_dt,
+        "created_at": created_at,
         "raw_count": raw_count,
         "funnel": {"published": published},
     }
@@ -54,11 +56,56 @@ class SourceHealthTests(SimpleTestCase):
         self.assertEqual(result["level"], "ok")
         self.assertEqual(result["reasons"], [])
 
-    def test_never_polled_active_source_is_error(self):
-        row = make_row(last_polled_dt=None)
+    def test_never_polled_inside_grace_is_unknown_not_error(self):
+        # Absence of signal, not evidence of failure: a source created minutes
+        # ago simply isn't due for its first poll yet.
+        row = make_row(last_polled_dt=None, created_at=NOW - timedelta(minutes=5))
         result = source_health(row, [], NOW)
-        self.assertEqual(result["level"], "error")
+        self.assertEqual(result["level"], "unknown")
+        self.assertTrue(any("not yet due for a first poll" in r for r in result["reasons"]))
+
+    def test_never_polled_past_grace_is_warn_not_error(self):
+        # Past `poll_interval_hours * _STALE_POLL_MULTIPLIER` from creation,
+        # something should have polled it — worth surfacing, but still not the
+        # evidenced failure that `error` is reserved for.
+        grace_hours = 24 * _STALE_POLL_MULTIPLIER
+        row = make_row(
+            poll_interval_hours=24,
+            last_polled_dt=None,
+            created_at=NOW - timedelta(hours=grace_hours + 1),
+        )
+        result = source_health(row, [], NOW)
+        self.assertEqual(result["level"], "warn")
+        self.assertTrue(any("never polled since creation" in r for r in result["reasons"]))
+
+    def test_never_polled_boundary_is_unknown(self):
+        grace_hours = 24 * _STALE_POLL_MULTIPLIER
+        row = make_row(
+            poll_interval_hours=24,
+            last_polled_dt=None,
+            created_at=NOW - timedelta(hours=grace_hours),
+        )
+        self.assertEqual(source_health(row, [], NOW)["level"], "unknown")
+
+    def test_never_polled_without_created_at_falls_back_to_warn(self):
+        row = make_row(last_polled_dt=None, created_at=None)
+        result = source_health(row, [], NOW)
+        self.assertEqual(result["level"], "warn")
         self.assertIn("never polled", result["reasons"])
+
+    def test_never_polled_does_not_also_claim_it_is_polling(self):
+        # The zero-raw-events warn rule presupposes polling; without the
+        # suppression the tooltip read "never polled; polling but zero new raw
+        # events in window" — two contradictory claims in one hover.
+        row = make_row(
+            last_polled_dt=None,
+            created_at=NOW - timedelta(minutes=5),
+            raw_count=0,
+            published=0,
+        )
+        reasons = source_health(row, [], NOW)["reasons"]
+        self.assertTrue(any("never polled" in r for r in reasons))
+        self.assertFalse(any("polling but" in r for r in reasons))
 
     def test_last_polled_within_threshold_is_not_stale(self):
         stale_hours = 24 * _STALE_POLL_MULTIPLIER
@@ -182,8 +229,17 @@ class SourceHealthTests(SimpleTestCase):
         self.assertTrue(any("last polled" in r for r in result["reasons"]))
         self.assertIn("polling but zero new raw events in window", result["reasons"])
 
-    def test_no_recent_runs_and_never_polled_is_error(self):
+    def test_no_recent_runs_and_never_polled_is_not_error(self):
+        # No run history and no poll is the emptiest a row can be. It reports
+        # `unknown` — nothing here is evidence of a failure.
         row = make_row(last_polled_dt=None, raw_count=0, published=0)
         result = source_health(row, [], NOW)
+        self.assertEqual(result["level"], "unknown")
+        self.assertTrue(any("never polled" in r for r in result["reasons"]))
+
+    def test_run_failure_still_outranks_never_polled(self):
+        # A never-polled source whose runs recorded a failure is evidenced
+        # failure — `unknown` must not mask it.
+        row = make_row(last_polled_dt=None, raw_count=0, published=0)
+        result = source_health(row, [make_run("failed", "boom")], NOW)
         self.assertEqual(result["level"], "error")
-        self.assertIn("never polled", result["reasons"])

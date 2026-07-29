@@ -46,6 +46,27 @@ class TaskFreshnessUnitTests(unittest.TestCase):
         self.assertIn("scrape-sources-daily", DEFAULT_STALENESS_HOURS)
         self.assertEqual(DEFAULT_STALENESS_HOURS["scrape-sources-daily"], 25)
 
+    def test_broadcast_orphan_recovery_has_a_configured_window(self):
+        # Found by the first real healthcheck run on prod (2026-07-29): the task
+        # is seeded by broadcast/0009 but had no window, so it reported WARN
+        # "no staleness window configured" — the exact ride-along case the
+        # DEFAULT_STALENESS_HOURS comment warns about. Schedule is `0 */6 * * *`.
+        self.assertEqual(DEFAULT_STALENESS_HOURS["broadcast-orphan-recovery"], 7)
+
+    def test_orphan_recovery_one_missed_interval_still_ok(self):
+        # 6h schedule + 1h grace: a run that merely landed late must not FAIL.
+        task = _fake_task("broadcast-orphan-recovery", self.now - timedelta(hours=6, minutes=30))
+        status, _, _ = self.cmd._task_freshness(task, "beat:broadcast-orphan-recovery", self.now)
+        self.assertEqual(status, OK)
+
+    def test_orphan_recovery_two_missed_intervals_fails(self):
+        task = _fake_task("broadcast-orphan-recovery", self.now - timedelta(hours=13))
+        status, _, detail = self.cmd._task_freshness(
+            task, "beat:broadcast-orphan-recovery", self.now
+        )
+        self.assertEqual(status, FAIL)
+        self.assertIn("STALE", detail)
+
     def test_configured_task_never_run_fails(self):
         task = _fake_task("scrape-sources-daily", None)
         status, _, detail = self.cmd._task_freshness(task, "beat:scrape-sources-daily", self.now)

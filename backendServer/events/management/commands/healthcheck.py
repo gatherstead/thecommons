@@ -37,6 +37,9 @@ DEFAULT_STALENESS_HOURS = {
     "ingest-events-daily": 25,
     "scrape-sources-daily": 25,
     "weekly-digest-sunday": 24 * 8,  # ~8 days
+    # Runs `0 */6 * * *`; one interval plus an hour of grace, matching the
+    # +1h pattern the daily windows use.
+    "broadcast-orphan-recovery": 7,
 }
 
 

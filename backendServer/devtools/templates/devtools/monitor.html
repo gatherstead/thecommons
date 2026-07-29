@@ -208,6 +208,7 @@
         <th class="num">Unscored</th>
         <th class="num">Held for review</th>
         <th class="num">Rejected</th>
+        <th class="num">Approved</th>
         <th class="num">Published</th>
         <th></th>
       </tr>
@@ -220,11 +221,13 @@
         <td>{{ c.source_type }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        {# Zeros render as a muted `0`, never an em-dash: the dash already means
-           "no value" in the Last polled column of this same row, and a row of
-           eight dashes reads as a failed page load rather than eight real
-           zeros. A *blank* funnel cell is therefore diagnostic — it means the
-           template lookup missed and the server sent no integer at all. #}
+        {% comment %}
+        Zeros render as a muted `0`, never an em-dash: the dash already means
+        "no value" in the Last polled column of this same row, and a row of
+        eight dashes reads as a failed page load rather than eight real
+        zeros. A *blank* funnel cell is therefore diagnostic — it means the
+        template lookup missed and the server sent no integer at all.
+        {% endcomment %}
         <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
         <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
@@ -232,10 +235,11 @@
         <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
         <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
+      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -259,6 +263,7 @@
         <th class="num">Unscored</th>
         <th class="num">Held for review</th>
         <th class="num">Rejected</th>
+        <th class="num">Approved</th>
         <th class="num">Published</th>
         <th></th>
       </tr>
@@ -270,8 +275,10 @@
         <td>{{ c.name }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        {# See the note on the collectors table: muted `0` for real zeros, the
-           em-dash reserved for genuinely-absent values. #}
+        {% comment %}
+        See the note on the collectors table: muted `0` for real zeros, the
+        em-dash reserved for genuinely-absent values.
+        {% endcomment %}
         <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
         <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
@@ -279,10 +286,11 @@
         <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
         <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="13"></td></tr>
+      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
       {% endfor %}
     </tbody>
   </table>

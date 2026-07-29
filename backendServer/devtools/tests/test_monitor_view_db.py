@@ -159,10 +159,13 @@ class MonitorViewTests(TestCase):
         # reference from the `from .monitoring import ...`, and `_source_rows`
         # resolves through the `monitoring` module global. Patching only one
         # would let a re-resolution through the other go uncounted.
-        with patch(
-            "devtools.views.resolve_source_runs_state",
-            wraps=resolve_source_runs_state,
-        ) as probe, patch("devtools.monitoring.resolve_source_runs_state", new=probe):
+        with (
+            patch(
+                "devtools.views.resolve_source_runs_state",
+                wraps=resolve_source_runs_state,
+            ) as probe,
+            patch("devtools.monitoring.resolve_source_runs_state", new=probe),
+        ):
             monitor(self._get("/devtools/monitor"))
         self.assertEqual(probe.call_count, 1)
 

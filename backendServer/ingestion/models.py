@@ -101,6 +101,7 @@ class StagedEvent(models.Model):
         ("approved", "Approved"),
         ("rejected", "Rejected"),
         ("duplicate", "Duplicate"),
+        ("published", "Published"),
     ]
 
     raw_event = models.OneToOneField(

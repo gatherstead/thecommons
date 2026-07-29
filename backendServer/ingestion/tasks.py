@@ -110,7 +110,23 @@ def publish_all_approved_task():
     return publish_all_approved()
 
 
-@shared_task
-def ingest_direct_submission_task(raw_event_id, user_id):
-    """Background wrapper for direct host submission ingestion."""
-    return ingest_direct_submission(raw_event_id, user_id)
+@shared_task(bind=True, max_retries=3, default_retry_delay=300, acks_late=True)
+def ingest_direct_submission_task(self, raw_event_id, user_id):
+    """Background wrapper for direct host submission ingestion.
+
+    acks_late=True (unlike the other tasks in this module): prod runs
+    --concurrency=2 under systemd with MemoryMax=1G and is restarted on every
+    deploy. Celery's default is at-most-once, so a prefetched message is
+    silently dropped if the worker dies (OOM/restart) mid-task — confirmed in
+    prod on 2026-07-21 12:46 UTC, when the worker died and a submission
+    enqueued 5 minutes later was never consumed. ingest_direct_submission is
+    documented as idempotent (see its docstring in services.py), so
+    at-least-once redelivery here is safe.
+    """
+    try:
+        return ingest_direct_submission(raw_event_id, user_id)
+    except Exception as e:
+        logger.error(
+            "ingest_direct_submission_task failed for raw_event_id=%s: %s", raw_event_id, e
+        )
+        raise self.retry(exc=e) from e

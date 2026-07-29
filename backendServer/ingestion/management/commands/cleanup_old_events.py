@@ -9,13 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Delete past RawEvents and StagedEvents, preserving approved-but-unpublished ones."
+    help = (
+        "Delete past RawEvents and StagedEvents, preserving approved-but-unpublished ones. "
+        "`published` rows (permanent dedupe anchors — see ingestion/deduplicator.py) are "
+        "kept until their event date has passed, then reaped here like any other past row."
+    )
 
     def handle(self, *args, **options):
         now = timezone.now()
 
-        # 1. Delete past staged events — but keep approved ones
-        #    not yet published to the Events table
+        # 1. Delete past staged events — but keep approved ones not yet
+        #    published to the Events table. `published` rows are NOT excluded:
+        #    they're the deduplicator's matching corpus, but only need to
+        #    survive until their event date passes, at which point they can
+        #    no longer collide with a new submission's time window.
         staged_qs = StagedEvent.objects.filter(start_datetime__lt=now).exclude(
             status="approved", published_event__isnull=True
         )

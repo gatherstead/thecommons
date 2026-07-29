@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 import time
 
@@ -71,6 +72,43 @@ Additional context scraped from the event webpage (use this to find price, cost,
 """
 
 
+def _coerce_str(value, fallback: str) -> str:
+    """Return `value` as a string, falling back when it's null/missing/blank.
+
+    Gemini can legitimately emit JSON `null` for a key; `dict.get(key, fallback)`
+    only applies `fallback` when the key is *absent*, not when it's present with
+    a null value, so callers need this instead of a bare `.get(...)`.
+    """
+    if value is None:
+        return fallback
+    value = str(value).strip()
+    return value or fallback
+
+
+def _coerce_price(value):
+    """Coerce a Gemini price value to a number for the `price` DecimalField.
+
+    Accepts int/float/numeric-strings (e.g. "$10" -> not numeric -> falls back).
+    Returns -1 (the existing "N/A" sentinel) on anything non-numeric, null, or
+    large enough to overflow `max_digits=10, decimal_places=2`.
+
+    NaN/Infinity need an explicit guard: `json.loads` accepts those as bare
+    literals, and a NaN slips past a plain magnitude check (every comparison
+    against NaN is False) only to blow up at the DecimalField write.
+    """
+    if value is None:
+        return -1
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return -1
+    if not math.isfinite(price):
+        return -1
+    if abs(price) >= 10**8:  # max_digits=10, decimal_places=2 -> 8 integer digits
+        return -1
+    return price
+
+
 def fetch_page_text(url: str, max_chars: int = 6000, *, use_browser: bool = False) -> str:
     """Fetch a webpage and extract its visible text. Returns empty string on failure.
 
@@ -134,8 +172,14 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
     if prompt_suffix:
         prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
 
-    response = None
+    # `data` is only set once a model produces a usable (non-empty, parseable)
+    # response. A model that errors out, returns no text, or returns unparseable
+    # JSON is treated as failed and we fall through to the next model — the JSON
+    # parsing has to live inside this loop for that fallthrough to work.
+    data = None
+    last_error = None
     for model in models_to_try:
+        response = None
         for attempt in range(max_retries):
             try:
                 response = client.models.generate_content(
@@ -144,6 +188,7 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
                 )
                 break  # success
             except Exception as e:
+                last_error = e
                 if "503" in str(e) or "UNAVAILABLE" in str(e):
                     wait = 2**attempt  # 1s, 2s, 4s
                     logger.warning(
@@ -152,31 +197,43 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
                     )
                     time.sleep(wait)
                 else:
-                    raise
-        if response is not None:
-            break
-        logger.warning(f"[{model}] exhausted retries, trying next model...")
+                    # Non-503 (429/RESOURCE_EXHAUSTED, safety block, 400, ...):
+                    # this model can't serve the request — stop retrying it and
+                    # move on to the next model instead of aborting the function.
+                    logger.warning(f"[{model}] non-retryable error, trying next model: {e}")
+                    break
 
-    if response is None:
-        raise RuntimeError(f"All models failed for '{raw_event.raw_title}'")
+        if response is None:
+            logger.warning(f"[{model}] exhausted retries, trying next model...")
+            continue
 
-    try:
-        assert response.text is not None, "Gemini returned a response with no text"
+        if not response.text:
+            last_error = RuntimeError(f"[{model}] returned no text")
+            logger.error(f"[{model}] Gemini returned a response with no text, trying next model")
+            continue
+
         text = response.text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1]
             text = text.rsplit("```", 1)[0]
 
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Gemini response for '{raw_event.raw_title}': {e}")
-        logger.error(f"Raw response: {response.text}")
-        raise
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            last_error = e
+            logger.error(f"Failed to parse Gemini response for '{raw_event.raw_title}': {e}")
+            logger.error(f"Raw response: {response.text}")
+            continue
 
-    valid_tags = [t for t in data.get("tags", []) if t in VALID_TAGS]
+        break  # success
+
+    if data is None:
+        raise RuntimeError(f"All models failed for '{raw_event.raw_title}'") from last_error
+
+    valid_tags = [t for t in (data.get("tags") or []) if t in VALID_TAGS]
 
     # Parse price: -1 means N/A (displayed as "N/A" on frontend)
-    price = data.get("price", -1)
+    price = _coerce_price(data.get("price", -1))
 
     # Prefer the ICS source URL if it's a real webpage, fall back to Gemini's extraction
     if raw_event.source_url and raw_event.source_url.startswith(("http://", "https://")):
@@ -188,10 +245,10 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
 
     staged = StagedEvent.objects.create(
         raw_event=raw_event,
-        title=data.get("title", raw_event.raw_title)[:500],
-        description=data.get("description", ""),
-        location_name=data.get("location_name", raw_event.raw_location)[:255],
-        town=data.get("town", "")[:100],
+        title=_coerce_str(data.get("title"), raw_event.raw_title)[:500],
+        description=_coerce_str(data.get("description"), ""),
+        location_name=_coerce_str(data.get("location_name"), raw_event.raw_location)[:255],
+        town=_coerce_str(data.get("town"), "")[:100],
         start_datetime=raw_event.raw_start,
         end_datetime=raw_event.raw_end,
         tags=valid_tags,

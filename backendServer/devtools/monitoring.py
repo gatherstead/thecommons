@@ -328,18 +328,24 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
         )
         .values("raw_event__source_id")
         .annotate(
-            unscored=Count(
-                "id", filter=Q(status="pending", safety_score__isnull=True)
-            ),
-            held_for_review=Count(
-                "id", filter=Q(status="pending", safety_score__isnull=False)
-            ),
+            unscored=Count("id", filter=Q(status="pending", safety_score__isnull=True)),
+            held_for_review=Count("id", filter=Q(status="pending", safety_score__isnull=False)),
+            # "Published" means the row has a live Event, not that the sweep has
+            # run yet. `ingest_direct_submission` publishes and leaves the row
+            # `approved` until a later bulk sweep flips it to `published`, so
+            # keying off status alone would report a genuinely-live event as
+            # unpublished for as long as that gap lasts (on prod, indefinitely —
+            # `auto_publish_safe_events` early-returns when nothing is pending).
             published=Count("id", filter=Q(published_event__isnull=False)),
+            # The residual approved bucket: approved but not yet published.
+            # Disjoint from `published` above, which is what keeps the funnel
+            # reconciliation exact.
+            approved_unpublished=Count(
+                "id", filter=Q(status="approved", published_event__isnull=True)
+            ),
         )
     )
-    funnel_staged_by_source = {
-        row["raw_event__source_id"]: row for row in funnel_staged_qs
-    }
+    funnel_staged_by_source = {row["raw_event__source_id"]: row for row in funnel_staged_qs}
 
     # Single query for recent runs across all sources, ordered to match the
     # (source, -started_at) index — no per-source query (no N+1). A bounded
@@ -363,9 +369,7 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
     results = []
     for source in sources:
         source_id = source["id"]
-        staged_status_counts = staged_by_source.get(
-            source_id, dict.fromkeys(_STAGED_STATUSES, 0)
-        )
+        staged_status_counts = staged_by_source.get(source_id, dict.fromkeys(_STAGED_STATUSES, 0))
         funnel_staged = funnel_staged_by_source.get(source_id, {})
         recent_runs = runs_by_source.get(source_id, [])
         last_run = (
@@ -388,6 +392,11 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             "raw_count": raw_counts.get(source_id, 0),
             "staged_by_status": staged_status_counts,
             "published_count": funnel_staged.get("published", 0),
+            # Buckets are mutually exclusive — each raw event lands in exactly
+            # one — so they sum to `raw`. `published` is every row carrying a
+            # live Event (whether or not the sweep has flipped it to the
+            # terminal `published` status), and `approved` is the residual:
+            # approved but not yet published. See the annotations above.
             "funnel": {
                 "raw": raw_counts.get(source_id, 0),
                 "unprocessed": unprocessed_counts.get(source_id, 0),
@@ -396,6 +405,7 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
                 "unscored": funnel_staged.get("unscored", 0),
                 "held_for_review": funnel_staged.get("held_for_review", 0),
                 "rejected": staged_status_counts["rejected"],
+                "approved": funnel_staged.get("approved_unpublished", 0),
                 "published": funnel_staged.get("published", 0),
             },
             "last_run": last_run,
@@ -523,11 +533,7 @@ def _drilldown_runs(db, key, start, end, limit, runs_state=None):
         runs_state = resolve_source_runs_state(db)
     if runs_state != RUNS_AVAILABLE:
         return []
-    runs = (
-        SourceRun.objects.using(db)
-        .filter(source_id=key)
-        .order_by("-started_at")[:limit]
-    )
+    runs = SourceRun.objects.using(db).filter(source_id=key).order_by("-started_at")[:limit]
     return [
         {
             "started_at": _iso(run.started_at),
@@ -543,9 +549,7 @@ def _drilldown_runs(db, key, start, end, limit, runs_state=None):
     ]
 
 
-def drilldown(
-    db: str, kind: str, key, start, end, limit: int = 100, runs_state=None
-) -> list[dict]:
+def drilldown(db: str, kind: str, key, start, end, limit: int = 100, runs_state=None) -> list[dict]:
     if not _db_ok(db):
         return []
 

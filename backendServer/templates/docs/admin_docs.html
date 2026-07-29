@@ -79,9 +79,10 @@
   <table>
     <tr><th>Status</th><th>Meaning</th></tr>
     <tr><td><code>pending</code></td><td>Needs admin review</td></tr>
-    <tr><td><code>approved</code></td><td>Published (or will be on next publish run)</td></tr>
+    <tr><td><code>approved</code></td><td>Will be published on the next publish run</td></tr>
     <tr><td><code>rejected</code></td><td>Will not be published</td></tr>
     <tr><td><code>duplicate</code></td><td>Auto-flagged as near-duplicate of another staged event</td></tr>
+    <tr><td><code>published</code></td><td>Already published to the live Events table. Kept (not deleted) as a permanent dedupe anchor — see the Deduplicator note below — until its event date passes, at which point <code>cleanup_old_events</code> reaps it.</td></tr>
   </table>
 
   <p><strong>How to review:</strong></p>
@@ -92,7 +93,7 @@
     <li><strong>Option B — Bulk action:</strong> check rows → "Approve selected events" or "Reject selected events" → Go</li>
   </ol>
 
-  <div class="tip">Approving creates the <code>Event</code> record immediately, attaches tags, and links the staged event to it. Rejecting just marks it as rejected — nothing is deleted.</div>
+  <div class="tip">Approving creates the <code>Event</code> record immediately, attaches tags, and links the staged event to it — the staged row then flips to <code>status='published'</code> on the next publish run and is kept, not deleted, as a dedupe anchor. Rejecting just marks it as rejected — nothing is deleted.</div>
 
   <table>
     <tr><th>Field</th><th>Description</th></tr>
@@ -160,7 +161,7 @@
     <tr>
       <td><code>POST /api/events/publish-approved</code></td>
       <td><code>Bearer THE_COMMONS_API_KEY</code></td>
-      <td>Publishes all approved staged events to the live Events table, then deletes them from staged. Atomic — rolls back on any failure.</td>
+      <td>Publishes all approved staged events to the live Events table, then flips them to <code>status='published'</code> in staged (kept as a dedupe anchor, not deleted). Atomic — rolls back on any failure.</td>
     </tr>
   </table>
 

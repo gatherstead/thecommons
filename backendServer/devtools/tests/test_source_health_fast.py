@@ -206,9 +206,7 @@ class SourceHealthTests(SimpleTestCase):
         row = make_row(raw_count=5, published=0)
         result = source_health(row, [make_run("ok")], NOW)
         self.assertEqual(result["level"], "warn")
-        self.assertIn(
-            "raw events arriving but none published in window", result["reasons"]
-        )
+        self.assertIn("raw events arriving but none published in window", result["reasons"])
 
     def test_raw_events_and_published_is_ok(self):
         row = make_row(raw_count=5, published=2)

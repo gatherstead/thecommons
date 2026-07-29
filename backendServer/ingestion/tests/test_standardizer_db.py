@@ -90,3 +90,90 @@ class StandardizerTests(TestCase):
         contents = client.models.generate_content.call_args.kwargs["contents"]
         self.assertIn("ADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS", contents)
         self.assertIn("focus on family events", contents)
+
+    def test_non_503_error_falls_through_to_next_model(self):
+        """A 429/RESOURCE_EXHAUSTED (or any non-503) on one model must not abort
+        the whole function — it should fall through to the next model in
+        models_to_try rather than hitting the bare `raise`."""
+        client = mock.Mock()
+        good_response = mock.Mock(text=json.dumps(self._minimal_payload()))
+        client.models.generate_content.side_effect = [
+            Exception("429 RESOURCE_EXHAUSTED"),
+            good_response,
+        ]
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.title, "Test Event")
+        # First model failed outright (no retry loop for non-503), second model
+        # succeeded on its first attempt — exactly two calls total.
+        self.assertEqual(client.models.generate_content.call_count, 2)
+        self.raw.refresh_from_db()
+        self.assertTrue(self.raw.processed)
+
+    def test_none_response_text_falls_through_to_next_model(self):
+        """A thinking-model response with text=None (MAX_TOKENS/SAFETY finish)
+        must be treated as a failure of that model, not raise AssertionError."""
+        client = mock.Mock()
+        empty_response = mock.Mock(text=None)
+        good_response = mock.Mock(text=json.dumps(self._minimal_payload()))
+        client.models.generate_content.side_effect = [empty_response, good_response]
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.title, "Test Event")
+        self.raw.refresh_from_db()
+        self.assertTrue(self.raw.processed)
+
+    def test_unparseable_json_falls_through_to_next_model(self):
+        client = mock.Mock()
+        bad_response = mock.Mock(text="not json at all")
+        good_response = mock.Mock(text=json.dumps(self._minimal_payload()))
+        client.models.generate_content.side_effect = [bad_response, good_response]
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.title, "Test Event")
+        self.raw.refresh_from_db()
+        self.assertTrue(self.raw.processed)
+
+    def test_all_models_failing_raises_and_leaves_unprocessed(self):
+        client = mock.Mock()
+        client.models.generate_content.side_effect = Exception("429 RESOURCE_EXHAUSTED")
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            with self.assertRaises(RuntimeError):
+                standardize_event(self.raw)
+
+        self.assertFalse(StagedEvent.objects.exists())
+        self.raw.refresh_from_db()
+        self.assertFalse(self.raw.processed)
+
+    def test_null_fields_fall_back_instead_of_raising(self):
+        """Gemini returning JSON null for title/location_name/town/description
+        must fall back to raw values instead of raising TypeError on `[:500]`
+        or IntegrityError on a non-null TextField."""
+        payload = {
+            "title": None,
+            "description": None,
+            "location_name": None,
+            "town": None,
+            "tags": None,
+            "price": None,
+        }
+        with self._gemini_returning(payload):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.title, self.raw.raw_title)
+        self.assertEqual(staged.description, "")
+        self.assertEqual(staged.location_name, self.raw.raw_location)
+        self.assertEqual(staged.town, "")
+        self.assertEqual(staged.tags, [])
+        self.assertEqual(staged.price, -1)
+
+    def test_non_numeric_price_falls_back_to_sentinel(self):
+        payload = self._minimal_payload()
+        payload["price"] = "$10"
+        with self._gemini_returning(payload):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.price, -1)

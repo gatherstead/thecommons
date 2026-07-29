@@ -130,7 +130,8 @@ class MonitoringQueryServiceTests(TestCase):
             start_datetime=self.now,
             status="duplicate",
         )
-        # a7: staged, approved + published
+        # a7: staged, published (terminal status — swept by publish_all_approved,
+        # not deleted; see services.publish_all_approved)
         raw_a7 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A7",
@@ -145,7 +146,7 @@ class MonitoringQueryServiceTests(TestCase):
             location_name="l",
             town="carrboro",
             start_datetime=self.now,
-            status="approved",
+            status="published",
             published_event=event,
         )
 
@@ -200,7 +201,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(a["raw_count"], 7)
         self.assertEqual(
             a["staged_by_status"],
-            {"pending": 2, "approved": 1, "rejected": 1, "duplicate": 1},
+            {"pending": 2, "approved": 0, "rejected": 1, "duplicate": 1, "published": 1},
         )
         self.assertEqual(a["published_count"], 1)
 
@@ -208,7 +209,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(b["raw_count"], 1)
         self.assertEqual(
             b["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0},
+            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0, "published": 0},
         )
         self.assertEqual(b["published_count"], 0)
 
@@ -226,6 +227,7 @@ class MonitoringQueryServiceTests(TestCase):
                 "unscored": 1,
                 "held_for_review": 1,
                 "rejected": 1,
+                "approved": 0,
                 "published": 1,
             },
         )
@@ -241,25 +243,34 @@ class MonitoringQueryServiceTests(TestCase):
                 "unscored": 0,
                 "held_for_review": 0,
                 "rejected": 0,
+                "approved": 0,
                 "published": 0,
             },
         )
 
     def test_funnel_buckets_reconcile_against_raw(self):
-        """unprocessed + no_staged + duplicate + unscored + held_for_review +
-        rejected + approved (not its own bucket — see report) accounts for
-        every raw event exactly once, since the pipeline stages are mutually
-        exclusive: an event is either unprocessed, processed-with-no-staged-
-        row, or staged into exactly one terminal-or-pending status. `published`
-        is NOT included here — it's a subset of the `approved` staged rows,
-        not a disjoint bucket.
+        """Every funnel bucket is disjoint, so they sum to `raw` exactly.
+
+        An event is either unprocessed, processed-with-no-staged-row, or staged
+        into exactly one bucket. The `approved`/`published` split is the subtle
+        one: `published` counts rows carrying a live Event regardless of status,
+        and `approved` is the residual (approved but not yet published), so the
+        two can't double-count.
+
+        That split is deliberate. `publish_all_approved` now flips a swept row to
+        a terminal `status="published"` instead of deleting it, but
+        `ingest_direct_submission` publishes an Event and leaves the row
+        `approved` until some later sweep. Keying `published` off the status
+        alone would report those genuinely-live events as unpublished — on prod,
+        indefinitely, since `auto_publish_safe_events` early-returns when nothing
+        is pending. This test therefore reads both from `funnel`, not from
+        `staged_by_status`.
         """
         rows = collector_summary("default", self.start, self.end) + broadcast_inbound_summary(
             "default", self.start, self.end
         )
         for row in rows:
             funnel = row["funnel"]
-            approved = row["staged_by_status"]["approved"]
             accounted = (
                 funnel["unprocessed"]
                 + funnel["no_staged"]
@@ -267,9 +278,41 @@ class MonitoringQueryServiceTests(TestCase):
                 + funnel["unscored"]
                 + funnel["held_for_review"]
                 + funnel["rejected"]
-                + approved
+                + funnel["approved"]
+                + funnel["published"]
             )
             self.assertEqual(accounted, funnel["raw"], row["name"])
+
+    def test_published_bucket_counts_approved_rows_with_a_live_event(self):
+        """A row that has an Event but hasn't been swept yet still reads as
+        published — the `ingest_direct_submission` state, and the reason the
+        bucket keys off `published_event` rather than `status`."""
+        raw = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="Approved With Event",
+            raw_description="d",
+            raw_location="Venue",
+            raw_start=self.start + timedelta(hours=1),
+            processed=True,
+        )
+        event = make_event(title="Approved With Event")
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="Approved With Event",
+            description="d",
+            location_name="Venue",
+            town="Carrboro",
+            start_datetime=self.start + timedelta(hours=1),
+            status="approved",
+            published_event=event,
+        )
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        self.assertEqual(row["funnel"]["published"], 2)
+        self.assertEqual(row["funnel"]["approved"], 0)
+        self.assertEqual(row["published_count"], 2)
 
     def test_direct_source_excluded_from_collector_summary(self):
         names = [r["name"] for r in collector_summary("default", self.start, self.end)]
@@ -284,7 +327,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["raw_count"], 1)
         self.assertEqual(
             row["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1},
+            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1, "published": 0},
         )
         self.assertEqual(row["published_count"], 0)
 
@@ -314,7 +357,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(rows[-1]["raw_title"], "A1")
 
         published_row = next(r for r in rows if r["raw_title"] == "A7")
-        self.assertEqual(published_row["staged_status"], "approved")
+        self.assertEqual(published_row["staged_status"], "published")
         self.assertTrue(published_row["published"])
         self.assertTrue(published_row["processed"])
 
@@ -399,9 +442,7 @@ class MonitoringQueryServiceTests(TestCase):
         # if the runs helper (wrongly) windowed on started_at.
         narrow_start = self.now - timedelta(minutes=1)
         narrow_end = self.now + timedelta(minutes=1)
-        rows = drilldown(
-            "default", "runs", self.collector_a.id, narrow_start, narrow_end
-        )
+        rows = drilldown("default", "runs", self.collector_a.id, narrow_start, narrow_end)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["status"], "failed")
         self.assertEqual(rows[0]["error_message"], "kaboom")
@@ -417,9 +458,7 @@ class MonitoringQueryServiceTests(TestCase):
                 finished_at=self.now - timedelta(hours=i),
                 status="ok",
             )
-        rows = drilldown(
-            "default", "runs", self.collector_a.id, self.start, self.end, limit=2
-        )
+        rows = drilldown("default", "runs", self.collector_a.id, self.start, self.end, limit=2)
         self.assertEqual(len(rows), 2)
 
     def test_drilldown_runs_unknown_source_returns_empty(self):
@@ -586,7 +625,7 @@ class SourceHealthIntegrationTests(TestCase):
             location_name="l",
             town="carrboro",
             start_datetime=self.now,
-            status="approved",
+            status="published",
             published_event=published_event,
         )
         rows = collector_summary("default", self.start, self.end)
@@ -611,9 +650,7 @@ class SourceHealthIntegrationTests(TestCase):
         rows = collector_summary("default", self.start, self.end)
         row = next(r for r in rows if r["name"] == "Quiet Source")
         self.assertEqual(row["health"]["level"], "warn")
-        self.assertIn(
-            "polling but zero new raw events in window", row["health"]["reasons"]
-        )
+        self.assertIn("polling but zero new raw events in window", row["health"]["reasons"])
 
     def test_raw_events_recent_runs_fetched_in_single_query(self):
         # Regardless of source count, the recent-runs fetch backing
@@ -674,9 +711,7 @@ class SourceHealthIntegrationTests(TestCase):
 
         # The same 7 queries as the test above, minus the availability probe.
         with self.assertNumQueries(6):
-            collector_summary(
-                "default", self.start, self.end, runs_state=RUNS_AVAILABLE
-            )
+            collector_summary("default", self.start, self.end, runs_state=RUNS_AVAILABLE)
 
 
 @tag("db")
@@ -724,7 +759,7 @@ class SourceRowSortOrderTests(TestCase):
             location_name="l",
             town="carrboro",
             start_datetime=self.now,
-            status="approved",
+            status="published",
             published_event=published_event,
         )
 
@@ -837,9 +872,7 @@ class SourceRunsUnavailableTests(TestCase):
         """
         from unittest.mock import patch
 
-        return patch.object(
-            SourceRun.objects, "using", side_effect=exc, autospec=True
-        )
+        return patch.object(SourceRun.objects, "using", side_effect=exc, autospec=True)
 
     @staticmethod
     def _pg_error(django_exc, sqlstate):
@@ -859,9 +892,7 @@ class SourceRunsUnavailableTests(TestCase):
         return exc
 
     def test_state_is_not_configured_for_unknown_alias(self):
-        self.assertEqual(
-            resolve_source_runs_state("definitely_not_a_db"), RUNS_DB_NOT_CONFIGURED
-        )
+        self.assertEqual(resolve_source_runs_state("definitely_not_a_db"), RUNS_DB_NOT_CONFIGURED)
 
     def test_state_is_available_when_table_is_readable(self):
         self.assertEqual(resolve_source_runs_state("default"), RUNS_AVAILABLE)
@@ -893,25 +924,19 @@ class SourceRunsUnavailableTests(TestCase):
             resolve_source_runs_state("default")
 
     def test_collector_summary_does_not_raise_without_the_table(self):
-        rows = collector_summary(
-            "default", self.start, self.end, runs_state=RUNS_MISSING_TABLE
-        )
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_MISSING_TABLE)
         self.assertEqual(len(rows), 1)
         # The run exists, but isn't read — so the row reports no run history
         # rather than surfacing the `failed` status.
         self.assertIsNone(rows[0]["last_run"])
 
     def test_collector_summary_does_not_raise_without_the_grant(self):
-        rows = collector_summary(
-            "default", self.start, self.end, runs_state=RUNS_NO_PERMISSION
-        )
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_NO_PERMISSION)
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]["last_run"])
 
     def test_health_falls_back_to_staleness_rules_without_the_table(self):
-        rows = collector_summary(
-            "default", self.start, self.end, runs_state=RUNS_MISSING_TABLE
-        )
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_MISSING_TABLE)
         health = rows[0]["health"]
         # The seeded run is `failed`, which would normally force `error` with a
         # "latest run failed" reason. With runs unread, the only signal left is

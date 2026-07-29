@@ -18,13 +18,22 @@ logger = logging.getLogger(__name__)
 
 def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inherent pipeline complexity
     """
-    Atomically moves all approved StagedEvents into the Events table,
-    then deletes them from the staged table.
+    Atomically moves all approved StagedEvents into the Events table, then
+    flips them to a terminal `status="published"` — they are NOT deleted.
+
+    These rows are the deduplicator's matching corpus (see
+    `deduplicator.CANDIDATE_STATUSES`): a re-scraped or re-submitted copy of an
+    already-published event still needs something to match against, and
+    `StagedEvent.duplicate_of` is `on_delete=SET_NULL`, so deleting a published
+    anchor would also orphan any `duplicate` rows pointing at it. Published
+    rows are eventually reaped by `cleanup_old_events` once their
+    `start_datetime` is in the past.
 
     Returns a dict with counts:
         published          — newly created Event records
         already_published  — approved staged events that already had an Event record
-        removed            — total StagedEvents deleted
+        removed            — staged rows swept out of the approved queue (now
+                              `status="published"`; no longer "deleted")
     """
     # NOTE: do not eager-join `submitted_by` — it maps to the cross-schema
     # `neon_auth."user"` mirror, which is absent on isolated dev DB branches and
@@ -94,7 +103,7 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
         removed_qs = StagedEvent.objects.filter(status="approved", published_event__isnull=False)
         if source:
             removed_qs = removed_qs.filter(raw_event__source=source)
-        removed_count = removed_qs.delete()[0]
+        removed_count = removed_qs.update(status="published")
 
     return {
         "published": published_count,

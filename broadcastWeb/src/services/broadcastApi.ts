@@ -153,6 +153,34 @@ export const submitReal = (
     site_keys: siteKeys,
   });
 
+// Multipart upload — file field name must be "image" to match the backend
+// serializer. Unlike post(), there's no JSON Content-Type header: the
+// browser sets the multipart boundary itself when given a FormData body.
+export const uploadImage = async (
+  auth: ApiAuth,
+  file: File,
+): Promise<{ url: string }> => {
+  const formData = new FormData();
+  formData.append("image", file);
+  const response = await fetch(`${API_BASE}/broadcast/upload-image`, {
+    method: "POST",
+    headers: authHeaders(auth),
+    body: formData,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("POST /broadcast/upload-image failed:", response.status, body);
+    // Unlike the JSON-body endpoints, upload-image always fails with a
+    // human-readable {"detail": "..."} written for a non-technical operator
+    // (bad file type, too large, dimensions too big) — render it verbatim
+    // rather than routing it through messageFor()'s generic 400 handling.
+    const detail = (body as { detail?: unknown } | null)?.detail;
+    const message = typeof detail === "string" ? detail : messageFor(response.status, body);
+    throw new ApiError(response.status, message);
+  }
+  return body as { url: string };
+};
+
 export const aiAutofill = (
   auth: ApiAuth,
   text: string,

@@ -108,6 +108,14 @@ DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=
 
 > Note: all `broadcast/tests/` files are now tagged `fast`/`db` and run in CI (a prior gap where 10 of 12 files carried no `@tag` — including the rate-limit tests — let two prod-only bugs ship undetected). `ingestion/tests/test_pipeline_db.py` (formerly untagged `test_pipeline.py`) is now tagged `db` and runs in CI.
 
+## Devtools
+
+`devtools/` (dev-only, `DEBUG`-gated — 404s in prod) hosts the ingestion playground and
+the `/devtools/monitor` funnel dashboard + dry-run probe. See
+[`../docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) for funnel/health
+semantics, `SourceRun` statuses, the probe's SSE contract, and the prod read-only setup
+(`PROD_DATABASE_URL`).
+
 ## Quick Start
 
 ```bash

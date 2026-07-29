@@ -1,0 +1,35 @@
+# Scheduled VM health check — copy to /etc/systemd/system/healthcheck.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now healthcheck.timer
+# (enable the .timer, not this .service — see healthcheck.timer)
+#
+# Runs deploy/healthcheck.sh (system checks + `manage.py healthcheck`, which
+# includes beat schedule freshness) on a systemd timer, independent of Celery
+# beat. This is intentional: beat is one of the things being watched, so a
+# beat-driven schedule would go silent in exactly the failure mode this exists
+# to catch (see the 2026-07-21 -> 2026-07-29 outage, where beat stopped firing
+# for 5 weeks and nothing noticed).
+#
+# Type=oneshot, not a long-lived unit: /snap/bin/uv is fine here even though
+# sibling services are moving off it. The snap per-user-cgroup teardown that
+# kills long-lived `celery worker`/`beat` processes on SSH logout (see
+# celery.service) only bites a process that's still running when the session
+# tears down — a oneshot invocation that starts, runs to completion in
+# seconds, and exits does not outlive any single login session. Don't "fix"
+# this to a venv binary path; it isn't the same bug.
+
+[Unit]
+Description=The Commons VM health check (one-shot)
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thecommons
+EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
+Environment=UV_BIN=/snap/bin/uv
+ExecStart=/usr/bin/env bash /home/ubuntu/thecommons/deploy/healthcheck.sh --no-color
+# Non-zero exit on FAIL (see healthcheck.sh summary logic) lands here as a
+# failed unit — `systemctl --failed` and `journalctl -u healthcheck` are the
+# read path. No OnFailure= notification unit exists in this repo yet (no
+# email/webhook/paging infra is wired up anywhere in deploy/); wiring one is
+# out of scope here rather than inventing a dependency this repo doesn't have.

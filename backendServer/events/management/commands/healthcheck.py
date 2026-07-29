@@ -9,8 +9,8 @@ colors), but usable on its own:
 Checks: settings sanity (`--require-prod`), Postgres `SELECT 1`, Redis broker
 ping (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and
 every django-celery-beat PeriodicTask (enabled + last-run freshness). Exits
-non-zero if any *critical* check fails so it can feed monitoring; staleness is a
-warning, not a failure.
+non-zero if any *critical* check fails so it can feed monitoring — staleness is
+one of those: a schedule that stopped firing IS an outage, not a warning.
 """
 
 import json
@@ -29,9 +29,13 @@ OK, WARN, FAIL = "OK", "WARN", "FAIL"
 LOCALHOST_ONLY = {"localhost", "127.0.0.1", "[::1]"}
 
 # Per-task freshness windows (hours). A seeded task whose last_run_at is older
-# than this — or that has never run — is flagged WARN. Override on the CLI.
+# than this — or that has never run — is flagged FAIL. This dict also doubles
+# as the set of tasks that must exist in the schedule at all (see
+# _check_periodic_tasks): every task the pipeline depends on belongs here, or
+# its staleness silently passes forever (2026-07-21 scheduler outage).
 DEFAULT_STALENESS_HOURS = {
     "ingest-events-daily": 25,
+    "scrape-sources-daily": 25,
     "weekly-digest-sunday": 24 * 8,  # ~8 days
 }
 
@@ -175,11 +179,17 @@ class Command(BaseCommand):
         return out
 
     def _task_freshness(self, task, label: str, now) -> tuple[str, str, str]:
-        if task.last_run_at is None:
-            return (WARN, label, "enabled, never run yet")
-        age_h = (now - task.last_run_at).total_seconds() / 3600
         window = DEFAULT_STALENESS_HOURS.get(task.name)
+        if window is None:
+            # No configured window means we can't judge freshness — that is a
+            # gap in DEFAULT_STALENESS_HOURS, not a clean bill of health. Flag
+            # it so a newly-seeded task never rides along as a silent OK/WARN
+            # until someone remembers to add it above (see scrape-sources-daily).
+            return (WARN, label, "no staleness window configured — add to DEFAULT_STALENESS_HOURS")
+        if task.last_run_at is None:
+            return (FAIL, label, "enabled, never run yet")
+        age_h = (now - task.last_run_at).total_seconds() / 3600
         stamp = f"last run {age_h:.1f}h ago"
-        if window is not None and age_h > window:
-            return (WARN, label, f"STALE — {stamp} (> {window}h window)")
+        if age_h > window:
+            return (FAIL, label, f"STALE — {stamp} (> {window}h window)")
         return (OK, label, stamp)

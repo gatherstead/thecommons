@@ -13,6 +13,16 @@ from .dev import *  # noqa: F403  # Django settings override files use star impo
 # so the throwaway test_<dbname> can be created and dropped cleanly.
 DATABASES["default"]["HOST"] = cast(str, DATABASES["default"]["HOST"]).replace("-pooler", "")  # noqa: F405  # star import is intentional
 
+# `prod_readonly` is a dev-only alias for the devtools monitor: dev.py wires it
+# up whenever PROD_DATABASE_URL is set, and the star import above inherits it.
+# The test runner must never see it. setup_databases() iterates *every* alias,
+# so leaving it in makes the suite try to CREATE/DROP a test database on the
+# **prod** Neon branch, over the pooler endpoint that can't do DDL — which is
+# where the intermittent "database is being accessed by other users" teardown
+# failures came from. Tests that need this alias simulate it with
+# override_settings rather than connecting for real.
+DATABASES.pop("prod_readonly", None)  # noqa: F405  # star import is intentional
+
 # Central neon_auth handling: the managed=False BetterAuth mirrors aren't built
 # by the normal test-DB setup, so a custom runner creates the schema + table.
 TEST_RUNNER = "backend.test_runner.NeonAuthTestRunner"

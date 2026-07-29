@@ -39,7 +39,7 @@ ICS Source URL
      ↓  (Phase 4: Admin Review)  ← you are here
  StagedEvent  (status=approved or rejected)
      ↓  (Phase 5: Publish)
-    Event  (live on website)
+    Event  (live on website)  +  StagedEvent kept as status=published (dedupe anchor)
      ↓
   REST API  →  Frontend</pre>
   </div>
@@ -51,14 +51,14 @@ ICS Source URL
   <p><em>File: <code>ingestion/management/commands/cleanup_old_events.py</code></em></p>
   <p>Runs automatically at the start of every pipeline run before any new events are fetched.</p>
   <ol>
-    <li>Delete all <code>StagedEvent</code> records where <code>start_datetime</code> is in the past — <strong>except</strong> those with <code>status='approved'</code> and no <code>published_event</code> yet.</li>
+    <li>Delete all <code>StagedEvent</code> records where <code>start_datetime</code> is in the past — <strong>except</strong> those with <code>status='approved'</code> and no <code>published_event</code> yet. <code>status='published'</code> rows are past-dated like any other and are not excepted — they've served their purpose as a dedupe anchor once their event date has passed.</li>
     <li>Delete all <code>RawEvent</code> records where <code>raw_start</code> is in the past — <strong>except</strong> those still backing an approved+unpublished staged event.</li>
   </ol>
   <table>
     <tr><th>Preserved</th><th>Deleted</th></tr>
     <tr>
       <td>Approved staged events not yet pushed to Events table (<code>status='approved'</code> + <code>published_event=null</code>) and their raw events</td>
-      <td>All past <code>pending</code>, <code>rejected</code>, and <code>duplicate</code> staged events and their raw events</td>
+      <td>All past <code>pending</code>, <code>rejected</code>, <code>duplicate</code>, and <code>published</code> staged events and their raw events</td>
     </tr>
   </table>
   <p>Can also be run standalone: <code>python manage.py cleanup_old_events</code></p>
@@ -117,7 +117,7 @@ ICS Source URL
   <ol>
     <li>Find all <code>StagedEvent</code> records with <code>status='approved'</code> not yet in the Events table.</li>
     <li>Within an atomic transaction: create <code>Event</code> records + attach tags.</li>
-    <li>Delete all approved staged events (cleanup).</li>
+    <li>Flip the swept staged events to a terminal <code>status='published'</code> — they are <strong>not deleted</strong>. Published rows remain a permanent dedupe anchor (see Phase 3) until <code>cleanup_old_events</code> reaps them after their event date passes.</li>
   </ol>
 
   <h2>Frontend Display</h2>

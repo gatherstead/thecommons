@@ -7,9 +7,12 @@ Form notes from the capture:
 - Venue and Organizer are select2 "Create or Find" widgets: we type the name,
   reuse an existing entry on a close string match, otherwise pick "Create".
   Detail inputs (address/email/…) only populate when we create a new entry.
-- Categories are a select2 AJAX dropdown (remote term search) — not drivable
-  deterministically, so we skip them. The custom "County" checkboxes map from
-  our locality tags, so we set those.
+- Categories are a select2 AJAX dropdown (remote term search); the extension
+  only selects a term on an exact label match, so unrelated site categories
+  are never picked. The custom "County" checkboxes map from our locality
+  tags, so we set those. Tags are a free-form site vocabulary (not a
+  controlled list like categories) and can't be matched reliably, so we don't
+  attempt them.
 - A newsletter popup is scheduled to appear after a delay and can cover the
   submit button; we dismiss it before submitting.
 - No captcha on this form.
@@ -43,33 +46,10 @@ _WK_CATEGORY_MAP: dict[str, str] = {
     "education": "Education",
 }
 
-# Same search terms for the post_tag AJAX dropdown. Tags are free-form so the
-# site may have exactly these as tags, or may not — the extension skips
-# unmatched terms.
-_WK_TAG_MAP: dict[str, str] = {
-    "music": "Music",
-    "arts": "Arts",
-    "family-kids": "Family",
-    "wellness": "Wellness",
-    "food-drink": "Food",
-    "festival": "Festival",
-    "market": "Market",
-    "literary": "Literary",
-    "community": "Community",
-    "nightlife": "Nightlife",
-    "education": "Education",
-}
-
 
 def _wk_category_terms(ev) -> str:
     """Comma-joined search terms for ev.categories; empty string if none map."""
     terms = [_WK_CATEGORY_MAP[c] for c in ev.categories if c in _WK_CATEGORY_MAP]
-    return ",".join(terms)
-
-
-def _wk_tag_terms(ev) -> str:
-    """Comma-joined search terms for ev.categories mapped to tag vocabulary."""
-    terms = [_WK_TAG_MAP[c] for c in ev.categories if c in _WK_TAG_MAP]
     return ",".join(terms)
 
 
@@ -263,17 +243,6 @@ class TriangleWeekenderAdapter(SiteAdapter):
                 _wk_category_terms,
                 recipe_only=True,
                 label="Event categories",
-                hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
-            )
-        )
-        # Tags — same AJAX select2 multi pattern (post_tag taxonomy).
-        specs.append(
-            RecipeField(
-                "select[name='tax_input[post_tag][]']",
-                "select2_multi",
-                _wk_tag_terms,
-                recipe_only=True,
-                label="Event tags",
                 hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
             )
         )

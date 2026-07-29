@@ -17,7 +17,7 @@ nginx, firewall, troubleshooting).
 | SSH | `ssh -i oraclevps.key ubuntu@129.80.229.41` (key is in repo root — **never commit it**) |
 | Repo path on VM | `/home/ubuntu/thecommons` |
 | Deploy user | `ubuntu` (all services run as `ubuntu`) |
-| Python | **`uv`** at `/snap/bin/uv` — never `pip` |
+| Python | **`uv`** at `/snap/bin/uv` — never `pip` — but **only for one-shot commands** (`uv sync`, `manage.py migrate`, etc.); long-lived systemd units exec `.venv/bin/<binary>` directly, never `uv run` (see §4) |
 | Node | **`pnpm`** — never `npm install` (it breaks peer-dependency pinning) |
 | DNS / TLS | Cloudflare, proxied (orange cloud), SSL mode **Full (strict)**; origin cert at `/etc/ssl/cloudflare/thecommons.town.{pem,key}` |
 
@@ -84,6 +84,20 @@ REDIS_CACHE_URL=redis://:<REDIS_PASS>@127.0.0.1:6379/1
 INGEST_SHARD_COUNT=3        # optional — spreads source polling across 3 days; set 1 or omit to poll all daily
 ```
 
+**`INGEST_SHARD_COUNT=3` is a deliberate prod setting — keep it at 3.** `_resolve_env_shard`
+(`backendServer/ingestion/tasks.py:22-39`) polls only the sources where
+`id % INGEST_SHARD_COUNT == day_of_year % INGEST_SHARD_COUNT`, so with a shard count
+of 3 any given source is actually polled roughly every **72 hours**, not the 24h its
+own `poll_interval_hours` implies — sharding is disabled (all sources polled daily)
+only when the var is unset, fails to parse as an int, or is `<= 1`. Two consequences
+to keep in mind:
+
+- A source that fails transiently gets **1/3 as many chances** to recover before the
+  next poll compared to unsharded daily polling.
+- Monitoring/alerting thresholds must be shard-aware — a source that looks "3 days
+  stale" is expected and healthy under this setting, not a symptom of an outage. (A
+  companion ticket is making the ingestion monitor account for this.)
+
 ```bash
 cd /home/ubuntu/thecommons/backendServer
 /snap/bin/uv sync
@@ -97,6 +111,40 @@ The `migrate` step runs `ingestion/migrations/0007_seed_ingest_beat.py` (ingest,
 
 ## 4. Celery worker + beat services (one time)
 
+**The `uv` rule for this project has two cases — don't collapse them:**
+
+- **One-shot commands** (`uv sync`, `uv run python manage.py migrate`, `playwright
+  install`, etc.) — always go through `/snap/bin/uv`. That part of the Facts table
+  above is unchanged.
+- **Long-lived systemd units** (`celery`, `celerybeat`, `scrape-worker`,
+  `broadcast-worker`) — **never** `uv run`. They exec the venv binary directly,
+  `/home/ubuntu/thecommons/backendServer/.venv/bin/celery …`, the same pattern
+  `gunicorn` has always used (`.venv/bin/gunicorn`). This is not a style preference:
+  snap-packaged `uv run` spawns its child process inside a transient
+  `snap.astral-uv.uv-*.scope` under `user@1001.service` — the *user* manager, not the
+  unit's own cgroup. With `Linger=no`, systemd-logind tears down that user slice the
+  moment the deploying SSH session ends, and the child (celery/beat) receives SIGTERM
+  and performs a clean warm shutdown — **`status=0/SUCCESS`**, which
+  `Restart=on-failure` correctly declines to restart. That is exactly how the async
+  stack died silently on 2026-07-21 12:46 UTC and stayed down for 8 days while the
+  site looked healthy: every `uv run`-based unit died within a minute of the deploy
+  session ending; `gunicorn` (execs its venv binary) and `nextjs` (`/usr/bin/npm`)
+  never went through snap and stayed up 68 days straight. See
+  `docs/prod-incident-2026-07-21-scheduler-outage.md` for the full forensics.
+
+Two complementary mitigations are now in place, not alternatives — keep both:
+
+1. **`.venv/bin/celery` in `ExecStart`** (all four unit files) removes the mechanism
+   entirely — the process never lands in a user-manager slice, so there's nothing for
+   a lost SSH session to tear down.
+2. **`Restart=always`** (all four units) + **linger enabled for `ubuntu`** are
+   defense-in-depth, in case a unit is ever reverted to `uv run` or linger is somehow
+   turned back off:
+   ```bash
+   sudo loginctl enable-linger ubuntu
+   loginctl show-user ubuntu --property=Linger    # must print Linger=yes
+   ```
+
 ```bash
 cd /home/ubuntu/thecommons
 sudo cp deploy/celery.service deploy/celerybeat.service /etc/systemd/system/
@@ -109,6 +157,26 @@ sudo journalctl -u celery -n 30                      # should show "celery@... r
 Run **exactly one** beat process. The worker drains Redis DB 0; beat uses
 `django-celery-beat`'s DatabaseScheduler, so schedules are editable later in the
 Django admin.
+
+**The real acceptance test is a full SSH login→logout cycle, not `systemctl
+is-active` right after `enable --now`.** A unit that was just started by your current
+session is active regardless of whether the underlying bug is fixed — that's the
+exact false-positive that let this incident go unnoticed for 8 days. Log out
+completely and reconnect fresh before you trust the result:
+
+```bash
+exit                                                  # close the SSH session completely
+ssh -i oraclevps.key ubuntu@129.80.229.41 'systemctl is-active celery celerybeat scrape-worker broadcast-worker'
+# all four must print "active" from a session that did NOT start them
+```
+
+Confirm every queue has a consumer. A queue with depth but no consumer is
+silent — jobs enqueue and are never dispatched:
+
+```bash
+cd /home/ubuntu/thecommons/backendServer
+uv run celery -A backend inspect active_queues | grep -o "'name': '[a-z]*'"   # expect celery, scrape, broadcast
+```
 
 ## 5. Broadcast feature (one time)
 
@@ -388,10 +456,60 @@ It checks (✓/!/✗): RAM/disk vs thresholds; `systemctl is-active` for `redis-
 lines; and via `manage.py healthcheck` — Postgres `SELECT 1`, Redis broker ping
 (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and each
 seeded `PeriodicTask` (enabled + last-run freshness: daily within ~25h, weekly
-within ~8d). It exits non-zero on any critical failure. Tunables:
+within ~8d). A stale or never-run schedule is a **`FAIL`**, not a warning — it was
+a warning until the 2026-07-21 outage, which is precisely why a month-dead beat
+still exited 0. A seeded task with no window configured in `DEFAULT_STALENESS_HOURS`
+reports `WARN` rather than silently passing. It exits non-zero on any critical
+failure. Tunables:
 `RAM_WARN`/`RAM_FAIL` (80/95), `DISK_WARN`/`DISK_FAIL` (80/95), `CELERY_TIMEOUT`
 (1.0s), `UV_BIN` (default `uv`; the VM has it at `/snap/bin/uv`). The Django command
 also runs standalone: `/snap/bin/uv run python manage.py healthcheck [--json]`.
+
+### Scheduled health check (systemd timer)
+
+`deploy/healthcheck.sh` catches the failure modes that let the 2026-07-21 scheduler
+outage run silent for five weeks — but only if something actually runs it. A systemd
+timer does that hourly, independent of Celery beat (beat is one of the things being
+checked, so it can't be the thing doing the checking).
+
+1. Copy the unit files and enable the **timer**, not the service:
+
+   ```bash
+   sudo cp deploy/healthcheck.service deploy/healthcheck.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now healthcheck.timer
+   ```
+
+2. Verify it's scheduled:
+
+   ```bash
+   systemctl list-timers healthcheck.timer
+   ```
+
+   Expect a `NEXT`/`LEFT` time within the hour, and `LAST`/`PASSED` populated after
+   the first run.
+
+3. Check the most recent run:
+
+   ```bash
+   systemctl status healthcheck.service
+   journalctl -u healthcheck.service -n 50 --no-pager
+   ```
+
+   A failing run shows `Active: failed` plus the `deploy/healthcheck.sh` report in
+   the journal — look for `✗`/`FAIL` lines, most importantly any `beat:<task-name>`
+   entry (stale or never-run schedule, or missing from the schedule entirely).
+
+4. To see failed runs across all timers: `systemctl --failed`.
+
+> **Expect an immediate FAIL on first install.** `scrape-sources-daily` has never run
+> on prod (`last_run_at` is NULL), so the never-run rule fires until beat completes
+> one. That is the outage this check exists to surface — don't silence it, fix the
+> schedule.
+
+> **No push notification is wired up yet.** There is no `OnFailure=` target,
+> email, or Slack hook — `systemctl --failed` and the journal are the only read
+> paths. Check them as part of routine ops until that's built.
 
 ## Services
 
@@ -400,10 +518,26 @@ also runs standalone: `/snap/bin/uv run python manage.py healthcheck [--json]`.
 | `gunicorn` | Django backend | `/etc/systemd/system/gunicorn.service` | `unix:/run/gunicorn/gunicorn.sock`, 3 sync workers; `RuntimeDirectory=gunicorn` creates `/run/gunicorn/` |
 | `nextjs` | Next.js frontend | `/etc/systemd/system/nextjs.service` | Port 3000, `npm run start` from `theCommonsWeb/` |
 | `redis-server` | Celery broker + cache | `/etc/redis/redis.conf` | localhost-bound, password-protected, 512 MB allkeys-lru |
-| `celery` | Async task worker | `deploy/celery.service` | `/snap/bin/uv run celery -A backend worker`, concurrency 2, drains Redis DB 0 |
-| `celerybeat` | Scheduler | `deploy/celerybeat.service` | DatabaseScheduler; **exactly one** process |
-| `broadcast-worker` | Playwright form-filler | `deploy/broadcast-worker.service` | `celery -A backend worker -Q broadcast -c 1`, MemoryMax 2G, drains the dedicated `broadcast` queue only |
-| `scrape-worker` | Ingestion scraper (Playwright) | `deploy/scrape-worker.service` | `celery -A backend worker -Q scrape -c 1`, MemoryMax 2G, drains the dedicated `scrape` queue only |
+| `celery` | Async task worker | `deploy/celery.service` | `.venv/bin/celery -A backend worker`, concurrency 2, drains Redis DB 0 |
+| `celerybeat` | Scheduler | `deploy/celerybeat.service` | `.venv/bin/celery -A backend beat`, DatabaseScheduler; **exactly one** process |
+| `broadcast-worker` | Playwright form-filler | `deploy/broadcast-worker.service` | `.venv/bin/celery -A backend worker -Q broadcast -c 1`, MemoryMax 2G, drains the dedicated `broadcast` queue only |
+| `scrape-worker` | Ingestion scraper (Playwright) | `deploy/scrape-worker.service` | `.venv/bin/celery -A backend worker -Q scrape -c 1`, MemoryMax 2G, drains the dedicated `scrape` queue only |
+
+All four `ExecStart=` lines exec `/home/ubuntu/thecommons/backendServer/.venv/bin/celery`
+directly rather than `uv run celery` — see §4 for why (the 2026-07-21 outage) and the
+one-shot vs long-lived `uv` rule in the Facts table above.
+
+The three **workers** also pass `-n commons-{default,scrape,broadcast}@%%h`. Without it
+they all default to `celery@<hostname>`, and duplicate nodenames make
+`celery -A backend inspect|control` ambiguous — it returns several replies under one
+name (`DuplicateNodenameWarning`) and can misroute a revoke. The doubled `%%` is
+required: systemd expands a bare `%h` to the *user home directory*, so `%%h` is what
+passes a literal `%h` through for celery to expand to the hostname. Verify with:
+
+```bash
+cd /home/ubuntu/thecommons/backendServer && .venv/bin/celery -A backend inspect ping
+# expect three distinct nodes: commons-default@, commons-scrape@, commons-broadcast@
+```
 
 ```bash
 sudo systemctl status   <unit>
@@ -446,6 +580,7 @@ BROADCAST_MAX_CONCURRENCY=1
 BROADCAST_SCREENSHOT_DIR=/home/ubuntu/broadcast/screenshots
 BROADCAST_DOWNLOAD_DIR=/home/ubuntu/broadcast/downloads
 BROADCAST_TIMEOUT_MS=30000
+MEDIA_ROOT=/home/ubuntu/broadcast/media    # client-uploaded event images (T7) — outside the repo checkout so `git pull` never touches it
 ```
 
 ### `theCommonsWeb/.env.local`
@@ -475,7 +610,28 @@ VITE_BETTER_AUTH_URL=https://auth.thecommons.town
 - Routes: `thecommons.town` → `localhost:3000` (Next.js); `api.thecommons.town` →
   `unix:/run/gunicorn/gunicorn.sock` (Django); `www` → 301 to apex; HTTP → 301 to
   HTTPS; `api.thecommons.town/static/` → `backendServer/staticfiles/`;
+  `api.thecommons.town/media/` → `MEDIA_ROOT` (client-uploaded broadcast event
+  images, T7 — served by nginx directly, **never** by Django/gunicorn in prod);
   `broadcast.thecommons.town` → the block from `deploy/nginx-broadcast.conf.snippet`.
+
+  Add a sibling alias to the existing `/static/` block in the `api.thecommons.town`
+  server block:
+
+  ```nginx
+  location /media/ {
+      alias /home/ubuntu/broadcast/media/;
+  }
+  ```
+
+  `MEDIA_ROOT` (`/home/ubuntu/broadcast/media` by default — see env vars below)
+  must exist and be writable by the gunicorn user (`ubuntu`) before the first
+  upload: `mkdir -p /home/ubuntu/broadcast/media`. It lives outside the repo
+  checkout alongside `BROADCAST_SCREENSHOT_DIR`/`BROADCAST_DOWNLOAD_DIR` so a
+  `git pull` during deploy never touches it, and it survives deploys for the
+  same reason. **Uploaded images are kept indefinitely — no pruning job exists.**
+  `MEDIA_ROOT` grows without bound; at roughly 1–3 MB per event against the VPS
+  block volume this is negligible for the foreseeable future, but keep it in
+  mind at ops time (a prune command can be added later without a migration).
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx

@@ -171,6 +171,21 @@ class AccessCodeRedemption(models.Model):
         super().save(*args, **kwargs)
 
 
+class BroadcastImage(models.Model):
+    """A client-uploaded event image, self-hosted so the extension can reliably
+    fetch it (third-party share links often lack CORS headers or aren't direct
+    image URLs — see docs/broadcast.md). Stored re-encoded, never as received.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    image = models.ImageField(upload_to="broadcast/%Y/%m/")
+    client_label = models.CharField(max_length=64)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.image.name} ({self.client_label})"
+
+
 class SalesCodeSlot(models.Model):
     """One evergreen, always-visible code per tier for the admin sales dashboard.
 

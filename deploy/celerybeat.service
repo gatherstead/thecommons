@@ -15,8 +15,16 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/thecommons/backendServer
 EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
-ExecStart=/snap/bin/uv run celery -A backend beat -l info
-Restart=on-failure
+# .venv/bin/celery, not `uv run` — see celery.service for why: `uv run`
+# through snap put this unit's process in a user-scope that a logout could
+# tear down, exiting beat status=0/SUCCESS and never triggering a restart.
+# That's why `ingest-events-daily` fired only twice in its lifetime and
+# `scrape-sources-daily` never — beat rarely survived to its 3:30/4:00am
+# cron slot. Execing the venv binary directly removes the mechanism.
+ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend beat -l info
+# Restart=always is belt-and-braces (see celery.service) in case this unit
+# is ever reverted to `uv run` or linger (DEPLOY.md) is ever lost.
+Restart=always
 RestartSec=5
 
 [Install]

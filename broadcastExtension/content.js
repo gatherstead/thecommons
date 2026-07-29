@@ -81,8 +81,8 @@
   const HANDLERS = {
     text: fillInput,
     textarea: fillInput,
-    date: fillInput,
-    time: fillInput,
+    date: fillInputVerified,
+    time: fillInputVerified,
     select: fillInput,
     froala: fillFroala,
     radio: checkInput,
@@ -100,6 +100,45 @@
     const el = resolveInput(field.selector);
     if (!el) return;
     setNativeValue(el, field.value);
+  }
+
+  // date/time fields on some forms (e.g. ABC11's Trumba/Fluent UI widgets)
+  // self-populate with a near-current default shortly after load, racing our
+  // write. Re-read after a short wait and retry if a later default clobbered
+  // us. On forms that don't race (e.g. Triangle Weekender's jQuery-UI
+  // pickers), the first re-read matches and this is a no-op past attempt 1.
+  async function fillInputVerified(field) {
+    if (!field.value) return;
+    const el = resolveInput(field.selector);
+    if (!el) return;
+
+    const attempts = 3;
+    const delaysMs = [250, 500, 900];
+    for (let i = 0; i < attempts; i++) {
+      setNativeValue(el, field.value);
+      await sleep(delaysMs[i] || delaysMs[delaysMs.length - 1]);
+
+      if (el.value === field.value) return; // stuck — done
+
+      if (el.value !== field.value) {
+        // Value was accepted by the DOM but a controlled React component may
+        // not have committed it to state — nudge it with Enter + blur.
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+        el.dispatchEvent(new Event("blur", { bubbles: true }));
+        el.dispatchEvent(new Event("focusout", { bubbles: true }));
+        await sleep(100);
+        if (el.value === field.value) return;
+      }
+    }
+    console.warn(
+      "Commons Broadcast: date/time field did not hold its value after retries",
+      field.selector,
+      "expected",
+      field.value,
+      "got",
+      el.value
+    );
   }
 
   // Froala's JS API is unreachable from the content-script world; write directly
@@ -167,8 +206,7 @@
       }
 
       const mime = resp.dataUrl.split(";")[0].replace("data:", "") || "image/jpeg";
-      const urlPath = field.value.split("?")[0];
-      const name = urlPath.split("/").pop() || `event-image.${mime.split("/")[1] || "jpg"}`;
+      const name = fileNameFor(field.value, mime);
 
       const b64 = resp.dataUrl.split(",")[1];
       const byteStr = atob(b64);
@@ -189,6 +227,19 @@
 
     fileHintFallback(el);
     showImageErrorBanner();
+  }
+
+  // Plausible image extensions only — a Drive/Dropbox "share" URL basename
+  // (e.g. "view") is not one, so we synthesize a name from the MIME type
+  // instead of ever producing an extensionless filename.
+  const _IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif)$/i;
+
+  function fileNameFor(url, mime) {
+    const urlPath = url.split("?")[0].split("#")[0];
+    const base = urlPath.split("/").pop() || "";
+    if (base && _IMAGE_EXT_RE.test(base)) return base;
+    const ext = (mime.split("/")[1] || "jpg").split("+")[0];
+    return `event-image.${ext}`;
   }
 
   function fileHintFallback(el) {
@@ -246,8 +297,21 @@
     if (chosen) chosen.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   }
 
-  // Multi-taxonomy select2 driver (Tribe Events categories/tags). field.value is
-  // a comma-separated list; unmatched terms are skipped silently.
+  // select2 result labels sometimes carry a trailing count, e.g.
+  // "Music (12)" — strip it and collapse whitespace before comparing.
+  function normalizeSelect2Label(text) {
+    return (text || "")
+      .replace(/\(\d+\)\s*$/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+  }
+
+  // Multi-taxonomy select2 driver (Tribe Events categories). field.value is a
+  // comma-separated list; a term is only chosen on an exact (normalized) label
+  // match — loose substring matching pulled in unrelated site terms (e.g.
+  // "Market" matching "Art Market and Exhibition"). Unmatched terms are
+  // skipped silently, leaving the widget untouched.
   async function fillSelect2Multi(field) {
     const terms = (field.value || "")
       .split(",")
@@ -279,12 +343,11 @@
             ".select2-dropdown li.select2-results__option:not(.select2-results__option--disabled)"
           ),
         ];
-        const norm = term.trim().toLowerCase();
+        const norm = normalizeSelect2Label(term);
         let match = null;
         for (const opt of options) {
-          const label = (opt.textContent || "").trim().toLowerCase();
-          if (!label) continue;
-          if (label.includes(norm) || norm.includes(label)) {
+          const label = normalizeSelect2Label(opt.textContent);
+          if (label && label === norm) {
             match = match || opt;
           }
         }
@@ -306,7 +369,9 @@
   }
 
   // react-select typeahead driver (ABC11 Category). field.value is a comma-
-  // separated list; unmatched terms are skipped silently.
+  // separated list; a term is only chosen on an exact (normalized) label
+  // match against the controlled vocabulary — unmatched terms are skipped
+  // silently, leaving the widget untouched.
   async function fillReactSelect(field) {
     const terms = (field.value || "")
       .split(",")
@@ -329,15 +394,18 @@
             ".customSelect__option, [class*='__option']"
           ),
         ].filter((o) => (o.textContent || "").trim());
-        const first =
-          options.find((o) => o.getAttribute("aria-disabled") !== "true") ||
-          options[0];
+        const norm = normalizeSelect2Label(term);
+        const match = options.find(
+          (o) =>
+            o.getAttribute("aria-disabled") !== "true" &&
+            normalizeSelect2Label(o.textContent) === norm
+        );
 
-        if (first) {
+        if (match) {
           // react-select selects on mousedown.
-          first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-          first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-          first.click();
+          match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+          match.click();
           await sleep(300);
         }
         setNativeValue(input, "");
@@ -417,7 +485,8 @@
     if (document.getElementById("commons-broadcast-image-error")) return;
     const bar = document.createElement("div");
     bar.id = "commons-broadcast-image-error";
-    bar.textContent = "Image submission error, please manually add the image.";
+    bar.textContent =
+      "The Commons: couldn't fetch that image. Upload it manually below, or paste a direct image link (ending in .jpg/.png/etc.) instead of a page link.";
     Object.assign(bar.style, {
       position: "fixed",
       top: "44px",

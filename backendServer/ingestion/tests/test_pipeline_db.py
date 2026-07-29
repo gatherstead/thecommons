@@ -164,10 +164,6 @@ class ScraperToPublishedEventTests(TestCase):
         self.assertEqual(result["held_for_review"], 0)
 
         self.assertEqual(Event.objects.count(), 3)
-        # `publish_all_approved` deletes approved StagedEvents once published, so
-        # lineage back to the scraped RawEvents is asserted via `source_name`
-        # (set from `staged.raw_event.source.name` at publish time — see
-        # ingestion/services.py) rather than the now-gone StagedEvent rows.
         published_titles = set(
             Event.objects.filter(source_name=self.source.name).values_list("title", flat=True)
         )
@@ -179,4 +175,11 @@ class ScraperToPublishedEventTests(TestCase):
                 "The City Tap’s 18th Birthday Party",
             },
         )
-        self.assertFalse(StagedEvent.objects.filter(raw_event__source=self.source).exists())
+        # `publish_all_approved` no longer deletes swept StagedEvents — it flips
+        # them to a terminal `status="published"` so they survive as permanent
+        # dedupe anchors (see ingestion/services.py). Lineage back to the
+        # scraped RawEvents is therefore still traceable via the StagedEvent
+        # rows themselves, not just `source_name`.
+        staged = StagedEvent.objects.filter(raw_event__source=self.source)
+        self.assertEqual(staged.count(), 3)
+        self.assertTrue(all(s.status == "published" for s in staged))

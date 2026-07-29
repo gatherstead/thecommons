@@ -25,4 +25,5 @@ urlpatterns = [
     path("mock-form", views.mock_form, name="mock-form"),
     path("ai-autofill", views.ai_autofill, name="ai-autofill"),
     path("direct-recipe", views.direct_recipe, name="direct-recipe"),
+    path("upload-image", views.upload_image, name="upload-image"),
 ]

@@ -5,7 +5,15 @@ import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
-import { clearDraft, clearSession, loadDraft, loadSession, saveDraft, saveSession } from "./lib/persist";
+import {
+  clearDraft,
+  clearSession,
+  clearStaleKeys,
+  loadDraft,
+  loadSession,
+  saveDraft,
+  saveSession,
+} from "./lib/persist";
 import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import { authClient, fetchJwt } from "./lib/authClient";
 import {
@@ -89,6 +97,9 @@ export const isDraftEmpty = (draft: EventDraft): boolean =>
   !draft.is_free &&
   (draft.image_url === undefined || draft.image_url.trim() === "");
 
+// Organizer/contact fields are required (see the access-step-3 contact-row
+// and draftValid) so they're excluded here — this list is for genuinely
+// optional fields only.
 export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   const missing: string[] = [];
   if (!draft.end_datetime || draft.end_datetime === "") missing.push("Ends");
@@ -96,11 +107,14 @@ export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   if (!draft.ticket_url || draft.ticket_url.trim() === "") missing.push("Ticket URL");
   if (!draft.price || draft.price.trim() === "") missing.push("Price");
   if (!draft.image_url || draft.image_url.trim() === "") missing.push("Image URL");
-  if (!draft.organizer_name || draft.organizer_name.trim() === "") missing.push("Contact Name");
-  if (!draft.contact_email || draft.contact_email.trim() === "") missing.push("Contact Email");
-  if (!draft.contact_phone || draft.contact_phone.trim() === "") missing.push("Contact Phone");
   return missing;
 };
+
+function contactEmailError(email: string | undefined): string {
+  const v = (email ?? "").trim();
+  if (!v) return "";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "" : "Enter a valid email address.";
+}
 
 const POLL_MS = 3000;
 // Poll backoff: widen the delay when a tick brings no change, so an idle tab
@@ -126,6 +140,7 @@ const MAX_AUTO_RETRIES_PER_SITE = 2;
 const jobFingerprint = (job: JobDetail): string =>
   `${job.status}|${job.targets.map((t) => t.status).join(",")}`;
 
+clearStaleKeys();
 const SESSION = loadSession();
 const DRAFT = loadDraft();
 
@@ -683,6 +698,8 @@ export default function App() {
     }
   };
 
+  const contactEmailErr = contactEmailError(draft.contact_email);
+
   const draftValid =
     draft.title.trim() !== "" &&
     draft.description.trim() !== "" &&
@@ -691,7 +708,11 @@ export default function App() {
     draft.address_line1.trim() !== "" &&
     draft.zip.trim() !== "" &&
     draft.locality.length > 0 &&
-    draft.categories.length > 0;
+    draft.categories.length > 0 &&
+    (draft.organizer_name ?? "").trim() !== "" &&
+    (draft.contact_email ?? "").trim() !== "" &&
+    contactEmailErr === "" &&
+    (draft.contact_phone ?? "").trim() !== "";
 
   const unfilled = unfilledOptionalFields(draft);
   const submittedCount = Object.values(extFillStatus).filter((s) => s === "submitted").length;
@@ -838,7 +859,9 @@ export default function App() {
             {step3 === "active" && (
               <div className="contact-row">
                 <div className="field">
-                  <label htmlFor="contact-name">Name</label>
+                  <label htmlFor="contact-name">
+                    Organizer / Organization Name <span className="required-mark">*</span>
+                  </label>
                   <input
                     id="contact-name"
                     type="text"
@@ -850,7 +873,9 @@ export default function App() {
                 </div>
 
                 <div className="field">
-                  <label htmlFor="contact-email">Email</label>
+                  <label htmlFor="contact-email">
+                    Contact Email <span className="required-mark">*</span>
+                  </label>
                   <input
                     id="contact-email"
                     type="email"
@@ -858,10 +883,13 @@ export default function App() {
                     onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
                     disabled={busy || job !== null || locked}
                   />
+                  {contactEmailErr && <p className="field-error">{contactEmailErr}</p>}
                 </div>
 
                 <div className="field">
-                  <label htmlFor="contact-phone">Phone</label>
+                  <label htmlFor="contact-phone">
+                    Contact Phone <span className="required-mark">*</span>
+                  </label>
                   <input
                     id="contact-phone"
                     type="tel"
@@ -871,6 +899,9 @@ export default function App() {
                     maxLength={40}
                   />
                 </div>
+                <p className="contact-hint hint">
+                  Remembered on this device, so you only enter these once.
+                </p>
               </div>
             )}
           </li>
@@ -910,36 +941,33 @@ export default function App() {
           <p className="hint">
             Paste a raw event description, email, or flyer text below and the AI will fill
             the event fields for you.
-            {tier < 2 && <em> Available with Tier 2 access.</em>}
+            {tier === 0 && <em> Available with Tier 2 access.</em>}
           </p>
+          {tier === 1 && (
+            <p className="field-error">
+              Talk to support and upgrade your plan to access this feature.
+            </p>
+          )}
+          {tier >= 2 && !isDraftEmpty(draft) && (
+            <p className="section-note">
+              Generating will replace the event details below.
+            </p>
+          )}
           <textarea
             className="ai-autofill-textarea"
             placeholder="Paste an event description / flyer text / email…"
             value={aiText}
             onChange={(e) => setAiText(e.target.value)}
-            disabled={tier < 2 || !isDraftEmpty(draft) || aiBusy || job !== null || locked}
+            disabled={tier < 2 || aiBusy || job !== null || locked}
           />
           <div className="actions">
             <button
               type="button"
               onClick={handleAiAutofill}
-              disabled={
-                tier < 2 ||
-                aiText.trim() === "" ||
-                !isDraftEmpty(draft) ||
-                aiBusy ||
-                job !== null ||
-                locked
-              }
+              disabled={tier < 2 || aiText.trim() === "" || aiBusy || job !== null || locked}
             >
               {aiBusy ? "Generating…" : "✨ Generate from text"}
             </button>
-            {tier >= 2 && !isDraftEmpty(draft) && (
-              <span className="section-note">
-                AI autofill works on a blank event form — click Reset to clear the event
-                details first.
-              </span>
-            )}
           </div>
         </div>
       </section>
@@ -962,7 +990,12 @@ export default function App() {
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
           )}
-          <EventForm draft={draft} onChange={handleDraftChange} disabled={busy || job !== null || locked || !hasAccess} />
+          <EventForm
+            draft={draft}
+            onChange={handleDraftChange}
+            disabled={busy || job !== null || locked || !hasAccess}
+            auth={auth}
+          />
         </div>
         <div className="actions">
           {preview ? (

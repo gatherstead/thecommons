@@ -8,6 +8,7 @@ from django.conf import settings
 from django.utils import timezone
 from icalendar import Calendar
 
+from ingestion.importers.source_run import poll_sources_with_run_tracking
 from ingestion.models import EventSource, RawEvent
 
 logger = logging.getLogger(__name__)
@@ -122,18 +123,4 @@ def poll_all_ics_sources(shard: tuple[int, int] | None = None):
         sources = sources.extra(where=["id %% %s = %s"], params=[m, n])
         logger.info(f"Sharded poll: only sources with id %% {m} == {n}")
 
-    total_new = 0
-    for source in sources:
-        if source.last_polled:
-            hours_since = (timezone.now() - source.last_polled).total_seconds() / 3600
-            if hours_since < source.poll_interval_hours:
-                logger.debug(f"Skipping {source.name} (polled {hours_since:.1f}h ago)")
-                continue
-
-        try:
-            new_events = fetch_ics_feed(source)
-            total_new += len(new_events)
-        except Exception as e:
-            logger.error(f"Error polling {source.name}: {e}")
-
-    return total_new
+    return poll_sources_with_run_tracking(sources, fetch_ics_feed)

@@ -3,7 +3,7 @@ from unittest import mock
 
 from django.test import tag
 
-from ingestion.standardizer import fetch_page_text
+from ingestion.standardizer import _coerce_price, _coerce_str, fetch_page_text
 
 
 @tag("fast")
@@ -43,3 +43,38 @@ class FetchPageTextTests(unittest.TestCase):
         self.assertEqual(render.call_count, 0)
         get.assert_called_once()
         self.assertEqual(result, "Hi there")
+
+
+@tag("fast")
+class CoerceStrTests(unittest.TestCase):
+    """_coerce_str must fall back on null/missing/blank, not just missing."""
+
+    def test_none_falls_back(self):
+        self.assertEqual(_coerce_str(None, "fallback"), "fallback")
+
+    def test_blank_string_falls_back(self):
+        self.assertEqual(_coerce_str("   ", "fallback"), "fallback")
+
+    def test_real_value_is_kept(self):
+        self.assertEqual(_coerce_str("Concert Night", "fallback"), "Concert Night")
+
+
+@tag("fast")
+class CoercePriceTests(unittest.TestCase):
+    """_coerce_price must degrade to the -1 'N/A' sentinel instead of raising."""
+
+    def test_none_returns_sentinel(self):
+        self.assertEqual(_coerce_price(None), -1)
+
+    def test_non_numeric_string_returns_sentinel(self):
+        self.assertEqual(_coerce_price("$10"), -1)
+
+    def test_numeric_string_is_coerced(self):
+        self.assertEqual(_coerce_price("15"), 15)
+
+    def test_int_and_float_pass_through(self):
+        self.assertEqual(_coerce_price(0), 0)
+        self.assertEqual(_coerce_price(12.5), 12.5)
+
+    def test_overflow_value_returns_sentinel(self):
+        self.assertEqual(_coerce_price(10**9), -1)

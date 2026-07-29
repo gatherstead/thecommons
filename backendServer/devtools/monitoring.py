@@ -4,44 +4,381 @@ Turns real DB rows into per-collector / per-broadcast counts and drill-down
 rows. Every public function takes a `db` alias ("default" or
 "prod_readonly") and guards it against `settings.DATABASES` so an
 unconfigured `prod_readonly` degrades to an empty result instead of raising.
+Run-based features degrade the same way when `ingestion_sourcerun` isn't
+readable on the target database (see `resolve_source_runs_state`).
 Read-only: no `.save()`/`.delete()` anywhere in this module.
 """
 
+import os
+
 from django.conf import settings
-from django.db.models import Count, Q
+from django.db import OperationalError, ProgrammingError
+from django.db.models import Count, Max, Q
+from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
-from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
 
 _STAGED_STATUSES = [choice[0] for choice in StagedEvent.STATUS_CHOICES]
 _SUBMISSION_STATUSES = [choice[0] for choice in BroadcastSubmission.STATUS_CHOICES]
 _TARGET_STATUSES = [choice[0] for choice in BroadcastTarget.STATUS_CHOICES]
+
+# How many missed polling intervals before a source is flagged `error` for
+# staleness. Chosen, not derived: one missed poll can be a transient blip
+# (network hiccup, temporary rate limit); two in a row is a pattern.
+_STALE_POLL_MULTIPLIER = 2
+
+# How many consecutive non-`ok` SourceRuns (excluding `skipped`, see
+# `source_health`) before a source is flagged `error` regardless of what the
+# most recent run says. One failure can be a fluke; two in a row is a trend
+# worth surfacing on the triage list.
+_CONSECUTIVE_FAILURE_THRESHOLD = 2
+
+# How many recent runs per source we pull to evaluate the consecutive-failure
+# rule. Only needs to be >= _CONSECUTIVE_FAILURE_THRESHOLD, padded a bit so a
+# `skipped` run or two doesn't push a real failure out of the window.
+_RECENT_RUNS_PER_SOURCE = 5
+
+# Sort order for the health column: most severe first, `inactive` last since
+# those rows are intentionally excluded from alerting. `unknown` sits between
+# `warn` and `ok`: absence of signal is worth surfacing above a healthy row,
+# but it is not evidence of a problem the way `warn` is.
+_HEALTH_RANK = {"error": 0, "warn": 1, "unknown": 2, "ok": 3, "inactive": 4}
+
+# How readable `ingestion_sourcerun` is on a target database. A three-state
+# value rather than a bool because the three failure causes need different
+# banner copy and different operator responses (see monitor.html).
+RUNS_AVAILABLE = "available"
+RUNS_MISSING_TABLE = "missing_table"
+RUNS_NO_PERMISSION = "no_permission"
+RUNS_UNREACHABLE = "unreachable"
+RUNS_DB_NOT_CONFIGURED = "not_configured"
+
+# Postgres SQLSTATEs distinguishing "table isn't there" from "you can't read
+# it". Stack is psycopg 3, which exposes these as `.sqlstate` on the driver
+# error wrapped by Django's ProgrammingError (psycopg2 called it `.pgcode`).
+_SQLSTATE_UNDEFINED_TABLE = "42P01"
+_SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501"
 
 
 def _db_ok(db):
     return db in settings.DATABASES
 
 
+def resolve_source_runs_state(db: str) -> str:
+    """How readable `ingestion_sourcerun` is on this database.
+
+    `prod_readonly` points at whatever prod has actually deployed, which can
+    lag local by a migration or two — prod sat on 0013 for a while after
+    0014_sourcerun landed here. Querying SourceRun against a database that
+    lacks the table takes the whole monitor down, so every run-based feature
+    is gated on this check instead.
+
+    Resolved by attempting the cheapest possible read and reading the SQLSTATE
+    off the failure, because introspection cannot answer the question: Django's
+    PostgreSQL backend builds its table list from `pg_catalog.pg_class`
+    (django/db/backends/postgresql/introspection.py), which has no privilege
+    predicate — a table the role cannot SELECT is still listed. Introspection
+    therefore reports a missing `GRANT SELECT` as *readable*, which is exactly
+    how a latent 500 hid here until suite 33.
+
+    Catching the error is safe: `ATOMIC_REQUESTS` is set nowhere in this repo
+    and `monitor()` opens no `atomic()` block, so Django runs in autocommit and
+    each failed statement is its own aborted transaction — nothing downstream
+    is poisoned.
+
+    Resolve this **once per request** and thread the result into
+    `collector_summary` / `broadcast_inbound_summary`; on the prod path it is a
+    WAN round trip to Neon, and it used to be paid four times per page render.
+    """
+    if not _db_ok(db):
+        return RUNS_DB_NOT_CONFIGURED
+    try:
+        SourceRun.objects.using(db).exists()
+    except ProgrammingError as exc:
+        sqlstate = getattr(exc.__cause__, "sqlstate", None)
+        if sqlstate == _SQLSTATE_INSUFFICIENT_PRIVILEGE:
+            return RUNS_NO_PERMISSION
+        if sqlstate == _SQLSTATE_UNDEFINED_TABLE:
+            return RUNS_MISSING_TABLE
+        # Any other ProgrammingError is a bug in our own SQL, not a difference
+        # in what prod has deployed. Don't mask it behind a banner naming a
+        # cause we haven't actually detected.
+        raise
+    except OperationalError:
+        # Database unreachable — Neon suspended/cold, network, bad credentials.
+        return RUNS_UNREACHABLE
+    return RUNS_AVAILABLE
+
+
 def _iso(value):
     return value.isoformat() if value is not None else None
 
 
-def _source_rows(db, start, end, source_type_filter):
+def _run_based_errors(recent_runs):
+    """Evaluate the two run-based `error` rules and return their reason strings.
+
+    `skipped` runs (source correctly throttled by poll_interval_hours) are
+    excluded from the consecutive-non-ok count entirely: they neither break
+    nor extend a failure streak. A source that ran, failed, then got skipped
+    twice because it isn't due yet, then failed again is still 2 consecutive
+    failures once `skipped` runs are filtered out — that's the intent. A
+    source that failed once and has since been correctly skipped every time
+    since (no second failure) is NOT 2-consecutive; it's 1 failure with no
+    repeat, so it doesn't trip this rule (though the last-polled-staleness
+    rule may still catch it if polling actually stalled).
+    """
+    non_skipped_runs = [r for r in recent_runs if r["status"] != "skipped"]
+    if not non_skipped_runs:
+        return []
+
+    reasons = []
+    latest = non_skipped_runs[0]
+    if latest["status"] in ("failed", "refused"):
+        msg = latest.get("error_message") or "(no error message recorded)"
+        reasons.append(f"latest run {latest['status']}: {msg}")
+
+    consecutive_non_ok = 0
+    for run in non_skipped_runs:
+        if run["status"] != "ok":
+            consecutive_non_ok += 1
+        else:
+            break
+    if consecutive_non_ok >= _CONSECUTIVE_FAILURE_THRESHOLD:
+        msg = latest.get("error_message") or "(no error message recorded)"
+        reasons.append(f"{consecutive_non_ok} consecutive non-ok runs, latest: {msg}")
+
+    return reasons
+
+
+def _worse(level_a, level_b):
+    """The more severe of two health levels, per `_HEALTH_RANK`."""
+    return level_a if _HEALTH_RANK[level_a] <= _HEALTH_RANK[level_b] else level_b
+
+
+def _assumed_shard_count() -> int:
+    """How many day-of-year shards `INGEST_SHARD_COUNT` splits polling into.
+
+    Sharding means each source is only *eligible* to poll on `1 / shard_count`
+    of days, so the real cadence between polls is `poll_interval_hours *
+    shard_count`, not `poll_interval_hours` alone. Ignoring that made a
+    perfectly healthy sharded prod (shard_count=3, so a real ~72h cadence
+    against a 48h `_STALE_POLL_MULTIPLIER` threshold) render a permanent
+    `error` badge.
+
+    Mirrors the parsing in `ingestion/tasks.py::_resolve_env_shard` (unset,
+    unparseable, or `<= 1` all disable sharding -> shard count 1) exactly,
+    duplicated rather than imported: `tasks.py` pulls in Celery and the full
+    importer/scraper/services stack, which is much heavier than this "pure
+    query service" module wants for a three-line env parse, and
+    `ingestion.tasks` is not otherwise a dependency here. If
+    `_resolve_env_shard`'s parsing rules ever change, update both.
+
+    Also a real wart worth naming: this reads a *local* env var to judge a
+    remote `prod_readonly` database's staleness, since the devtool has no way
+    to ask prod what its own `INGEST_SHARD_COUNT` is. `_staleness_signal`
+    surfaces the assumed count in its reason strings so that mismatch is
+    visible on screen instead of silently wrong.
+    """
+    m_env = os.environ.get("INGEST_SHARD_COUNT")
+    if not m_env:
+        return 1
+    try:
+        m = int(m_env)
+    except ValueError:
+        return 1
+    return m if m > 1 else 1
+
+
+def _staleness_signal(source_row, now):
+    """Evaluate the last-polled rule; return `(level, reason)` or None.
+
+    A null `last_polled` is *absence of signal*, not evidence of failure, so it
+    never reports `error` — a source added an hour ago and one that has been
+    hard-failing for weeks must not render the same red badge, or the operator
+    learns to distrust red. Judged against the same grace period the staleness
+    rule already uses (`poll_interval_hours * shard_count * _STALE_POLL_MULTIPLIER`),
+    only measured from `created_at`: inside it the source simply isn't due for a
+    first poll yet (`unknown`); past it, something should have polled it and
+    didn't (`warn`). `error` stays reserved for a source that demonstrably
+    polled and then stopped.
+
+    `shard_count` (from `_assumed_shard_count`) widens the grace period because
+    day-of-year sharding means a source is only eligible to poll on one day in
+    every `shard_count` — prod runs `INGEST_SHARD_COUNT=3`, so its real poll
+    cadence is `poll_interval_hours * 3`, not `poll_interval_hours` alone. Every
+    reason string names the assumed shard count explicitly, because this is a
+    *local* env var judging a database that may not be local (`prod_readonly`)
+    — see `_assumed_shard_count`'s docstring.
+    """
+    shard_count = _assumed_shard_count()
+    stale_after_hours = source_row["poll_interval_hours"] * shard_count * _STALE_POLL_MULTIPLIER
+    shard_note = f" (assuming shard count {shard_count})"
+    last_polled_dt = source_row.get("last_polled_dt")
+
+    if last_polled_dt is None:
+        created_at = source_row.get("created_at")
+        if created_at is None:
+            # No creation timestamp to judge against (a synthesised row, or a
+            # caller that didn't supply one) — report the fact, don't guess at
+            # a severity the data can't support.
+            return ("warn", "never polled")
+        age_hours = (now - created_at).total_seconds() / 3600
+        if age_hours <= stale_after_hours:
+            return (
+                "unknown",
+                f"never polled, but created only {age_hours:.1f}h ago; "
+                f"not yet due for a first poll (expected within {stale_after_hours}h)"
+                f"{shard_note}",
+            )
+        return (
+            "warn",
+            f"never polled since creation {age_hours:.1f}h ago, "
+            f"expected within {stale_after_hours}h{shard_note}",
+        )
+
+    age_hours = (now - last_polled_dt).total_seconds() / 3600
+    if age_hours > stale_after_hours:
+        return (
+            "error",
+            f"last polled {age_hours:.1f}h ago, expected within {stale_after_hours}h{shard_note}",
+        )
+    return None
+
+
+def source_health(source_row, recent_runs, now):
+    """Classify a source's health from plain data — no DB access.
+
+    `source_row` is one row as produced by `_source_rows` (dict with `active`,
+    `poll_interval_hours`, `last_polled_dt` and `created_at` — real datetimes,
+    not the ISO strings on the public row shape — `raw_count`, `funnel`).
+    `recent_runs` is a list of dicts (most-recent-first) with `status`,
+    `finished_at`, `error_message` for one source. `now` is a datetime compared
+    against `last_polled_dt` / `created_at`.
+
+    Returns {"level": "ok" | "unknown" | "warn" | "error" | "inactive",
+    "reasons": [str, ...]}. Every applicable rule is evaluated and its reason
+    collected; the most severe level (error > warn > unknown > ok) wins.
+    Inactive sources are excluded from alerting entirely and always report
+    "inactive", never "error".
+    """
+    if not source_row["active"]:
+        return {"level": "inactive", "reasons": []}
+
+    reasons = _run_based_errors(recent_runs)
+    level = "error" if reasons else "ok"
+
+    never_polled = source_row.get("last_polled_dt") is None
+    staleness = _staleness_signal(source_row, now)
+    if staleness is not None:
+        staleness_level, staleness_reason = staleness
+        reasons.append(staleness_reason)
+        level = _worse(level, staleness_level)
+
+    # Warn signals only add a reason/level when nothing more severe already
+    # fired for this row's polling health; downstream stalls are still worth
+    # surfacing even when polling is fine, so evaluate them regardless.
+    #
+    # Both presuppose polling, so they're suppressed entirely for a source that
+    # has never polled — otherwise the badge tooltip contradicts itself, reading
+    # "never polled; polling but zero new raw events in window".
+    if not never_polled:
+        if source_row["raw_count"] == 0:
+            reasons.append("polling but zero new raw events in window")
+            level = _worse(level, "warn")
+        elif source_row["funnel"]["published"] == 0:
+            reasons.append("raw events arriving but none published in window")
+            level = _worse(level, "warn")
+
+    return {"level": level, "reasons": reasons}
+
+
+def _raw_zero_note(raw_all_time, latest_raw_created_at_dt, now):
+    """Compose the message for a `raw == 0` funnel cell — see module docstring
+    on `_source_rows`'s all-time query for why this distinction matters.
+
+    Suite 33 established that a blank funnel cell (not `0`) is what signals a
+    real bug, so this only ever supplements the `0` already rendered — it
+    never replaces it or renders in place of a cell.
+    """
+    if raw_all_time == 0:
+        return "never produced a raw event"
+    age_days = (now - latest_raw_created_at_dt).total_seconds() / 86400
+    newest = latest_raw_created_at_dt.date().isoformat()
+    return (
+        f"0 in window; {raw_all_time} all-time, newest {newest} "
+        f"({age_days:.0f}d ago) — widen the window"
+    )
+
+
+def _source_rows(db, start, end, source_type_filter, runs_state=None):
+    # Staleness is a wall-clock question ("has this source polled recently?"),
+    # so it is measured against real `now`, never the window's `end`. In prod
+    # the two coincide (`_resolve_window` sets end = timezone.now()), which is
+    # exactly why using `end` here would have looked correct and still been wrong.
+    now = timezone.now()
+    if runs_state is None:
+        runs_state = resolve_source_runs_state(db)
     sources = list(
         EventSource.objects.using(db)
         .filter(source_type_filter)
         .order_by("name")
-        .values("id", "name", "source_type", "url", "active", "last_polled")
+        .values(
+            "id",
+            "name",
+            "source_type",
+            "url",
+            "active",
+            "last_polled",
+            "poll_interval_hours",
+            "created_at",
+        )
     )
     if not sources:
         return []
 
     source_ids = [s["id"] for s in sources]
 
-    raw_counts = {
+    # All windowing below is on RawEvent.created_at (including for the staged/
+    # published buckets, via raw_event__created_at), matching the existing
+    # raw/staged/published counts. An event raw-ingested just before a window
+    # boundary but staged/published inside it still counts in the *earlier*
+    # window — intentional, not a bug to "fix".
+
+    raw_rows = (
+        RawEvent.objects.using(db)
+        .filter(source_id__in=source_ids, created_at__gte=start, created_at__lt=end)
+        .values("source")
+        .annotate(n=Count("id"), unprocessed=Count("id", filter=Q(processed=False)))
+    )
+    raw_counts = {row["source"]: row["n"] for row in raw_rows}
+    unprocessed_counts = {row["source"]: row["unprocessed"] for row in raw_rows}
+
+    # Deliberately un-windowed (no created_at filter): a source with zero raw
+    # events *in this window* can mean either "nothing new lately" (real rows
+    # exist, just outside the window) or "this source has never produced a
+    # single row, ever" — the funnel above can't tell those apart, and the
+    # latter is the real headline. One additional grouped query over
+    # source_ids, same shape as `raw_rows` above — not per-source, no N+1.
+    all_time_rows = (
+        RawEvent.objects.using(db)
+        .filter(source_id__in=source_ids)
+        .values("source")
+        .annotate(n=Count("id"), latest=Max("created_at"))
+    )
+    raw_all_time_counts = {row["source"]: row["n"] for row in all_time_rows}
+    latest_raw_created_at = {row["source"]: row["latest"] for row in all_time_rows}
+
+    no_staged_counts = {
         row["source"]: row["n"]
         for row in RawEvent.objects.using(db)
-        .filter(source_id__in=source_ids, created_at__gte=start, created_at__lt=end)
+        .filter(
+            source_id__in=source_ids,
+            created_at__gte=start,
+            created_at__lt=end,
+            processed=True,
+            staged__isnull=True,
+        )
         .values("source")
         .annotate(n=Count("id"))
     }
@@ -62,50 +399,152 @@ def _source_rows(db, start, end, source_type_filter):
         staged_by_source.setdefault(source_id, dict.fromkeys(_STAGED_STATUSES, 0))
         staged_by_source[source_id][row["status"]] = row["n"]
 
-    published_counts = {
-        row["raw_event__source_id"]: row["n"]
-        for row in StagedEvent.objects.using(db)
+    funnel_staged_qs = (
+        StagedEvent.objects.using(db)
         .filter(
             raw_event__source_id__in=source_ids,
             raw_event__created_at__gte=start,
             raw_event__created_at__lt=end,
-            published_event__isnull=False,
         )
         .values("raw_event__source_id")
-        .annotate(n=Count("id"))
-    }
+        .annotate(
+            unscored=Count("id", filter=Q(status="pending", safety_score__isnull=True)),
+            held_for_review=Count("id", filter=Q(status="pending", safety_score__isnull=False)),
+            # "Published" means the row has a live Event, not that the sweep has
+            # run yet. `ingest_direct_submission` publishes and leaves the row
+            # `approved` until a later bulk sweep flips it to `published`, so
+            # keying off status alone would report a genuinely-live event as
+            # unpublished for as long as that gap lasts (on prod, indefinitely —
+            # `auto_publish_safe_events` early-returns when nothing is pending).
+            published=Count("id", filter=Q(published_event__isnull=False)),
+            # The residual approved bucket: approved but not yet published.
+            # Disjoint from `published` above, which is what keeps the funnel
+            # reconciliation exact.
+            approved_unpublished=Count(
+                "id", filter=Q(status="approved", published_event__isnull=True)
+            ),
+        )
+    )
+    funnel_staged_by_source = {row["raw_event__source_id"]: row for row in funnel_staged_qs}
+
+    # Single query for recent runs across all sources, ordered to match the
+    # (source, -started_at) index — no per-source query (no N+1). A bounded
+    # number of runs per source is plenty to evaluate the consecutive-failure
+    # rule; grouping into a dict keyed by source_id happens in Python.
+    # Skipped entirely when the table isn't readable — every source then looks
+    # like "no runs recorded", which degrades health to the staleness/warn
+    # rules rather than raising. See `resolve_source_runs_state`.
+    runs_by_source: dict[int, list[dict]] = {sid: [] for sid in source_ids}
+    if runs_state == RUNS_AVAILABLE:
+        for run in (
+            SourceRun.objects.using(db)
+            .filter(source_id__in=source_ids)
+            .order_by("source_id", "-started_at")
+            .values("source_id", "status", "started_at", "finished_at", "error_message")
+        ):
+            bucket = runs_by_source[run["source_id"]]
+            if len(bucket) < _RECENT_RUNS_PER_SOURCE:
+                bucket.append(run)
 
     results = []
     for source in sources:
         source_id = source["id"]
-        results.append(
-            {
-                "id": source_id,
-                "name": source["name"],
-                "source_type": source["source_type"],
-                "url": source["url"],
-                "active": source["active"],
-                "last_polled": _iso(source["last_polled"]),
-                "raw_count": raw_counts.get(source_id, 0),
-                "staged_by_status": staged_by_source.get(
-                    source_id, dict.fromkeys(_STAGED_STATUSES, 0)
-                ),
-                "published_count": published_counts.get(source_id, 0),
-            }
+        staged_status_counts = staged_by_source.get(source_id, dict.fromkeys(_STAGED_STATUSES, 0))
+        funnel_staged = funnel_staged_by_source.get(source_id, {})
+        recent_runs = runs_by_source.get(source_id, [])
+        raw_all_time = raw_all_time_counts.get(source_id, 0)
+        raw_in_window = raw_counts.get(source_id, 0)
+        # Only computed for a zero-in-window row — a healthy funnel has
+        # nothing to disambiguate, and this saves the datetime math on every
+        # other row.
+        raw_zero_note = (
+            _raw_zero_note(raw_all_time, latest_raw_created_at.get(source_id), now)
+            if raw_in_window == 0
+            else None
         )
+        last_run = (
+            {
+                "status": recent_runs[0]["status"],
+                "finished_at": _iso(recent_runs[0]["finished_at"]),
+                "error_message": recent_runs[0]["error_message"],
+            }
+            if recent_runs
+            else None
+        )
+
+        row = {
+            "id": source_id,
+            "name": source["name"],
+            "source_type": source["source_type"],
+            "url": source["url"],
+            "active": source["active"],
+            "last_polled": _iso(source["last_polled"]),
+            "raw_count": raw_in_window,
+            # Un-windowed, so this template can tell "zero in this window" from
+            # "zero ever" — see the query comment above. `raw_all_time` stays 0
+            # (not missing) for a source with no rows at all, matching the rest
+            # of this module's "0 is a real answer, blank is a bug" convention.
+            "raw_all_time": raw_all_time,
+            "latest_raw_created_at": _iso(latest_raw_created_at.get(source_id)),
+            # Only set when `raw_count == 0` — see `_raw_zero_note`. Renders as
+            # a tooltip/subtext on the `raw` funnel cell instead of the plain
+            # "0", turning "8 muted zeros" into "1 stale source + 2 real
+            # never-ingested sources" at a glance.
+            "raw_zero_note": raw_zero_note,
+            "staged_by_status": staged_status_counts,
+            "published_count": funnel_staged.get("published", 0),
+            # Buckets are mutually exclusive — each raw event lands in exactly
+            # one — so they sum to `raw`. `published` is every row carrying a
+            # live Event (whether or not the sweep has flipped it to the
+            # terminal `published` status), and `approved` is the residual:
+            # approved but not yet published. See the annotations above.
+            "funnel": {
+                "raw": raw_in_window,
+                "unprocessed": unprocessed_counts.get(source_id, 0),
+                "no_staged": no_staged_counts.get(source_id, 0),
+                "duplicate": staged_status_counts["duplicate"],
+                "unscored": funnel_staged.get("unscored", 0),
+                "held_for_review": funnel_staged.get("held_for_review", 0),
+                "rejected": staged_status_counts["rejected"],
+                "approved": funnel_staged.get("approved_unpublished", 0),
+                "published": funnel_staged.get("published", 0),
+            },
+            "last_run": last_run,
+        }
+        # source_health needs poll_interval_hours and the raw last_polled /
+        # created_at datetimes (not the ISO strings already in `row`), so pass
+        # a health-only view rather than mutating the row's public shape.
+        health_input = {
+            **row,
+            "poll_interval_hours": source["poll_interval_hours"],
+            "last_polled_dt": source["last_polled"],
+            "created_at": source["created_at"],
+        }
+        row["health"] = source_health(health_input, recent_runs, now)
+        results.append(row)
+
+    # Sort by health severity (error first, inactive last), then by name for
+    # a stable secondary order. Sorting happens here, not in the template:
+    # Django templates can't sort on a nested dict key, and the drilldown
+    # row is interleaved with each source row in the `{% for %}` loop, so
+    # reordering client-side would desync them from their drilldowns.
+    results.sort(key=lambda row: (_HEALTH_RANK[row["health"]["level"]], row["name"]))
     return results
 
 
-def collector_summary(db: str, start, end) -> list[dict]:
+def collector_summary(db: str, start, end, runs_state=None) -> list[dict]:
+    """Pass `runs_state` from `resolve_source_runs_state(db)` to avoid paying
+    the availability round trip again — a page render calls this alongside
+    `broadcast_inbound_summary`, and both ask the identical question."""
     if not _db_ok(db):
         return []
-    return _source_rows(db, start, end, ~Q(source_type="direct"))
+    return _source_rows(db, start, end, ~Q(source_type="direct"), runs_state=runs_state)
 
 
-def broadcast_inbound_summary(db: str, start, end) -> list[dict]:
+def broadcast_inbound_summary(db: str, start, end, runs_state=None) -> list[dict]:
     if not _db_ok(db):
         return []
-    return _source_rows(db, start, end, Q(source_type="direct"))
+    return _source_rows(db, start, end, Q(source_type="direct"), runs_state=runs_state)
 
 
 def broadcast_outbound_summary(db: str, start, end) -> dict:
@@ -185,7 +624,33 @@ def _drilldown_outbound(db, key, start, end, limit):
     return rows
 
 
-def drilldown(db: str, kind: str, key, start, end, limit: int = 100) -> list[dict]:
+def _drilldown_runs(db, key, start, end, limit, runs_state=None):
+    """Recent SourceRun rows for one source — "what has this source been
+    doing", not windowed by `start`/`end` (a source's run history matters
+    regardless of the funnel window currently selected). `start`/`end` are
+    accepted for signature symmetry with the other drilldown helpers only.
+    """
+    if runs_state is None:
+        runs_state = resolve_source_runs_state(db)
+    if runs_state != RUNS_AVAILABLE:
+        return []
+    runs = SourceRun.objects.using(db).filter(source_id=key).order_by("-started_at")[:limit]
+    return [
+        {
+            "started_at": _iso(run.started_at),
+            "finished_at": _iso(run.finished_at),
+            "status": run.status,
+            "trigger": run.trigger,
+            "items_fetched": run.items_fetched,
+            "items_new": run.items_new,
+            "items_duplicate": run.items_duplicate,
+            "error_message": run.error_message,
+        }
+        for run in runs
+    ]
+
+
+def drilldown(db: str, kind: str, key, start, end, limit: int = 100, runs_state=None) -> list[dict]:
     if not _db_ok(db):
         return []
 
@@ -193,4 +658,6 @@ def drilldown(db: str, kind: str, key, start, end, limit: int = 100) -> list[dic
         return _drilldown_source(db, key, start, end, limit)
     if kind == "outbound":
         return _drilldown_outbound(db, key, start, end, limit)
+    if kind == "runs":
+        return _drilldown_runs(db, key, start, end, limit, runs_state=runs_state)
     return []

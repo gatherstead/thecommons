@@ -273,7 +273,7 @@ describe("T7: polling behavior", () => {
   // must be freshly imported *after* localStorage is seeded.
   const renderWithActiveJob = async () => {
     localStorage.setItem(
-      "broadcast:draft:v1",
+      "broadcast:draft:v2",
       JSON.stringify({ job: activeJob(), jobId: "job-active" }),
     );
     vi.resetModules();

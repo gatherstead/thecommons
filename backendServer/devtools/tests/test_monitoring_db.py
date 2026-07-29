@@ -1,18 +1,25 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import OperationalError, ProgrammingError
 from django.test import TestCase, override_settings, tag
 from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from devtools.monitoring import (
+    RUNS_AVAILABLE,
+    RUNS_DB_NOT_CONFIGURED,
+    RUNS_MISSING_TABLE,
+    RUNS_NO_PERMISSION,
+    RUNS_UNREACHABLE,
     broadcast_inbound_summary,
     broadcast_outbound_summary,
     collector_summary,
     drilldown,
+    resolve_source_runs_state,
 )
 from events.tests.factories import make_event
-from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
 
 
 @tag("db")
@@ -41,38 +48,26 @@ class MonitoringQueryServiceTests(TestCase):
 
         event = make_event(title="Published via A")
 
-        # Collector A: 3 raw events -> 1 pending, 1 approved+published, 1 rejected
-        raw_a1 = RawEvent.objects.create(
+        # Collector A: 7 raw events, one per funnel bucket.
+        # a1: unprocessed (standardizer never reached it / errored)
+        RawEvent.objects.create(
             source=self.collector_a, raw_title="A1", raw_start=self.now, source_uid="a1"
         )
-        StagedEvent.objects.create(
-            raw_event=raw_a1,
-            title="A1",
-            description="d",
-            location_name="l",
-            town="carrboro",
-            start_datetime=self.now,
-            status="pending",
-        )
-        raw_a2 = RawEvent.objects.create(
+        # a2: processed but no staged row (silent standardizer failure)
+        RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A2",
             raw_start=self.now,
             processed=True,
             source_uid="a2",
         )
-        StagedEvent.objects.create(
-            raw_event=raw_a2,
-            title="A2",
-            description="d",
-            location_name="l",
-            town="carrboro",
-            start_datetime=self.now,
-            status="approved",
-            published_event=event,
-        )
+        # a3: staged, pending, unscored (safety scorer hasn't run yet)
         raw_a3 = RawEvent.objects.create(
-            source=self.collector_a, raw_title="A3", raw_start=self.now, source_uid="a3"
+            source=self.collector_a,
+            raw_title="A3",
+            raw_start=self.now,
+            processed=True,
+            source_uid="a3",
         )
         StagedEvent.objects.create(
             raw_event=raw_a3,
@@ -81,7 +76,78 @@ class MonitoringQueryServiceTests(TestCase):
             location_name="l",
             town="carrboro",
             start_datetime=self.now,
+            status="pending",
+        )
+        # a4: staged, pending, scored above threshold (held for human review)
+        raw_a4 = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="A4",
+            raw_start=self.now,
+            processed=True,
+            source_uid="a4",
+        )
+        StagedEvent.objects.create(
+            raw_event=raw_a4,
+            title="A4",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="pending",
+            safety_score=0.9,
+        )
+        # a5: staged, rejected
+        raw_a5 = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="A5",
+            raw_start=self.now,
+            processed=True,
+            source_uid="a5",
+        )
+        StagedEvent.objects.create(
+            raw_event=raw_a5,
+            title="A5",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
             status="rejected",
+        )
+        # a6: staged, duplicate
+        raw_a6 = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="A6",
+            raw_start=self.now,
+            processed=True,
+            source_uid="a6",
+        )
+        StagedEvent.objects.create(
+            raw_event=raw_a6,
+            title="A6",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="duplicate",
+        )
+        # a7: staged, published (terminal status — swept by publish_all_approved,
+        # not deleted; see services.publish_all_approved)
+        raw_a7 = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="A7",
+            raw_start=self.now,
+            processed=True,
+            source_uid="a7",
+        )
+        StagedEvent.objects.create(
+            raw_event=raw_a7,
+            title="A7",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="published",
+            published_event=event,
         )
 
         # Collector B: 1 raw event, no staged row yet
@@ -91,7 +157,11 @@ class MonitoringQueryServiceTests(TestCase):
 
         # Direct source: 1 raw event, duplicate status
         raw_d1 = RawEvent.objects.create(
-            source=self.direct_source, raw_title="D1", raw_start=self.now, source_uid="d1"
+            source=self.direct_source,
+            raw_title="D1",
+            raw_start=self.now,
+            processed=True,
+            source_uid="d1",
         )
         StagedEvent.objects.create(
             raw_event=raw_d1,
@@ -128,10 +198,10 @@ class MonitoringQueryServiceTests(TestCase):
 
         a = rows["Collector A"]
         self.assertEqual(a["source_type"], "ics")
-        self.assertEqual(a["raw_count"], 3)
+        self.assertEqual(a["raw_count"], 7)
         self.assertEqual(
             a["staged_by_status"],
-            {"pending": 1, "approved": 1, "rejected": 1, "duplicate": 0},
+            {"pending": 2, "approved": 0, "rejected": 1, "duplicate": 1, "published": 1},
         )
         self.assertEqual(a["published_count"], 1)
 
@@ -139,9 +209,110 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(b["raw_count"], 1)
         self.assertEqual(
             b["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0},
+            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0, "published": 0},
         )
         self.assertEqual(b["published_count"], 0)
+
+    def test_collector_summary_funnel_buckets(self):
+        rows = {r["name"]: r for r in collector_summary("default", self.start, self.end)}
+
+        a = rows["Collector A"]
+        self.assertEqual(
+            a["funnel"],
+            {
+                "raw": 7,
+                "unprocessed": 1,
+                "no_staged": 1,
+                "duplicate": 1,
+                "unscored": 1,
+                "held_for_review": 1,
+                "rejected": 1,
+                "approved": 0,
+                "published": 1,
+            },
+        )
+
+        b = rows["Collector B"]
+        self.assertEqual(
+            b["funnel"],
+            {
+                "raw": 1,
+                "unprocessed": 1,
+                "no_staged": 0,
+                "duplicate": 0,
+                "unscored": 0,
+                "held_for_review": 0,
+                "rejected": 0,
+                "approved": 0,
+                "published": 0,
+            },
+        )
+
+    def test_funnel_buckets_reconcile_against_raw(self):
+        """Every funnel bucket is disjoint, so they sum to `raw` exactly.
+
+        An event is either unprocessed, processed-with-no-staged-row, or staged
+        into exactly one bucket. The `approved`/`published` split is the subtle
+        one: `published` counts rows carrying a live Event regardless of status,
+        and `approved` is the residual (approved but not yet published), so the
+        two can't double-count.
+
+        That split is deliberate. `publish_all_approved` now flips a swept row to
+        a terminal `status="published"` instead of deleting it, but
+        `ingest_direct_submission` publishes an Event and leaves the row
+        `approved` until some later sweep. Keying `published` off the status
+        alone would report those genuinely-live events as unpublished — on prod,
+        indefinitely, since `auto_publish_safe_events` early-returns when nothing
+        is pending. This test therefore reads both from `funnel`, not from
+        `staged_by_status`.
+        """
+        rows = collector_summary("default", self.start, self.end) + broadcast_inbound_summary(
+            "default", self.start, self.end
+        )
+        for row in rows:
+            funnel = row["funnel"]
+            accounted = (
+                funnel["unprocessed"]
+                + funnel["no_staged"]
+                + funnel["duplicate"]
+                + funnel["unscored"]
+                + funnel["held_for_review"]
+                + funnel["rejected"]
+                + funnel["approved"]
+                + funnel["published"]
+            )
+            self.assertEqual(accounted, funnel["raw"], row["name"])
+
+    def test_published_bucket_counts_approved_rows_with_a_live_event(self):
+        """A row that has an Event but hasn't been swept yet still reads as
+        published — the `ingest_direct_submission` state, and the reason the
+        bucket keys off `published_event` rather than `status`."""
+        raw = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="Approved With Event",
+            raw_description="d",
+            raw_location="Venue",
+            raw_start=self.start + timedelta(hours=1),
+            processed=True,
+        )
+        event = make_event(title="Approved With Event")
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="Approved With Event",
+            description="d",
+            location_name="Venue",
+            town="Carrboro",
+            start_datetime=self.start + timedelta(hours=1),
+            status="approved",
+            published_event=event,
+        )
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        self.assertEqual(row["funnel"]["published"], 2)
+        self.assertEqual(row["funnel"]["approved"], 0)
+        self.assertEqual(row["published_count"], 2)
 
     def test_direct_source_excluded_from_collector_summary(self):
         names = [r["name"] for r in collector_summary("default", self.start, self.end)]
@@ -156,7 +327,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["raw_count"], 1)
         self.assertEqual(
             row["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1},
+            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1, "published": 0},
         )
         self.assertEqual(row["published_count"], 0)
 
@@ -181,18 +352,22 @@ class MonitoringQueryServiceTests(TestCase):
 
     def test_drilldown_collector_returns_rows_most_recent_first(self):
         rows = drilldown("default", "collector", self.collector_a.id, self.start, self.end)
-        self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[0]["raw_title"], "A3")
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(rows[0]["raw_title"], "A7")
         self.assertEqual(rows[-1]["raw_title"], "A1")
 
-        published_row = next(r for r in rows if r["raw_title"] == "A2")
-        self.assertEqual(published_row["staged_status"], "approved")
+        published_row = next(r for r in rows if r["raw_title"] == "A7")
+        self.assertEqual(published_row["staged_status"], "published")
         self.assertTrue(published_row["published"])
         self.assertTrue(published_row["processed"])
 
-        pending_row = next(r for r in rows if r["raw_title"] == "A1")
+        pending_row = next(r for r in rows if r["raw_title"] == "A3")
         self.assertEqual(pending_row["staged_status"], "pending")
         self.assertFalse(pending_row["published"])
+
+        unprocessed_row = next(r for r in rows if r["raw_title"] == "A1")
+        self.assertFalse(unprocessed_row["processed"])
+        self.assertIsNone(unprocessed_row["staged_status"])
 
     def test_drilldown_respects_limit(self):
         rows = drilldown("default", "collector", self.collector_a.id, self.start, self.end, limit=2)
@@ -237,3 +412,660 @@ class MonitoringQueryServiceTests(TestCase):
                 drilldown("prod_readonly", "collector", self.collector_a.id, self.start, self.end),
                 [],
             )
+            self.assertEqual(
+                drilldown("prod_readonly", "runs", self.collector_a.id, self.start, self.end),
+                [],
+            )
+
+    def test_drilldown_runs_returns_most_recent_first_unwindowed(self):
+        """Run history ignores the start/end funnel window entirely — it's
+        "what has this source been doing", not scoped to the current window.
+        """
+        old_run = SourceRun.objects.create(
+            source=self.collector_a,
+            started_at=self.now - timedelta(days=60),
+            finished_at=self.now - timedelta(days=60),
+            status="ok",
+            trigger="scheduled",
+            items_fetched=2,
+            items_new=2,
+        )
+        recent_run = SourceRun.objects.create(
+            source=self.collector_a,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="failed",
+            trigger="manual",
+            error_message="kaboom",
+        )
+        # Narrow window that would exclude both runs' created_at-equivalent
+        # if the runs helper (wrongly) windowed on started_at.
+        narrow_start = self.now - timedelta(minutes=1)
+        narrow_end = self.now + timedelta(minutes=1)
+        rows = drilldown("default", "runs", self.collector_a.id, narrow_start, narrow_end)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["error_message"], "kaboom")
+        self.assertEqual(rows[1]["status"], "ok")
+        self.assertIsNotNone(old_run.id)
+        self.assertIsNotNone(recent_run.id)
+
+    def test_drilldown_runs_respects_limit(self):
+        for i in range(3):
+            SourceRun.objects.create(
+                source=self.collector_a,
+                started_at=self.now - timedelta(hours=i),
+                finished_at=self.now - timedelta(hours=i),
+                status="ok",
+            )
+        rows = drilldown("default", "runs", self.collector_a.id, self.start, self.end, limit=2)
+        self.assertEqual(len(rows), 2)
+
+    def test_drilldown_runs_unknown_source_returns_empty(self):
+        rows = drilldown("default", "runs", 999999, self.start, self.end)
+        self.assertEqual(rows, [])
+
+    def test_rows_carry_health_and_last_run_keys(self):
+        rows = collector_summary("default", self.start, self.end)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn("health", row)
+            self.assertIn("level", row["health"])
+            self.assertIn("reasons", row["health"])
+            self.assertIn("last_run", row)
+
+    def test_source_with_no_runs_has_last_run_none(self):
+        rows = {r["name"]: r for r in collector_summary("default", self.start, self.end)}
+        self.assertIsNone(rows["Collector A"]["last_run"])
+
+    def test_source_with_runs_has_last_run_from_most_recent(self):
+        SourceRun.objects.create(
+            source=self.collector_b,
+            started_at=self.now - timedelta(hours=2),
+            finished_at=self.now - timedelta(hours=2),
+            status="failed",
+            error_message="older failure",
+        )
+        SourceRun.objects.create(
+            source=self.collector_b,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+            error_message="",
+        )
+        rows = {r["name"]: r for r in collector_summary("default", self.start, self.end)}
+        last_run = rows["Collector B"]["last_run"]
+        self.assertEqual(last_run["status"], "ok")
+        self.assertEqual(last_run["error_message"], "")
+        self.assertIsNotNone(last_run["finished_at"])
+
+
+@tag("db")
+class SourceHealthIntegrationTests(TestCase):
+    """Exercises source_health wired through _source_rows against real SourceRun rows."""
+
+    def setUp(self):
+        self.now = timezone.now()
+        self.start = self.now - timedelta(days=1)
+        self.end = self.now + timedelta(days=1)
+
+    def test_inactive_source_reports_inactive_not_error(self):
+        EventSource.objects.create(
+            name="Dead Source",
+            source_type="ics",
+            url="https://dead.example.com/feed.ics",
+            active=False,
+            last_polled=None,
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Dead Source")
+        self.assertEqual(row["health"]["level"], "inactive")
+
+    def test_never_polled_active_source_is_unknown_not_error(self):
+        # `created_at` is auto_now_add, so this source is seconds old — inside
+        # its first-poll grace period, and therefore `unknown`, not `error`.
+        EventSource.objects.create(
+            name="New Source",
+            source_type="ics",
+            url="https://new.example.com/feed.ics",
+            active=True,
+            last_polled=None,
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "New Source")
+        self.assertEqual(row["health"]["level"], "unknown")
+        self.assertTrue(any("never polled" in r for r in row["health"]["reasons"]))
+
+    def test_stale_source_is_error(self):
+        source = EventSource.objects.create(
+            name="Stale Source",
+            source_type="ics",
+            url="https://stale.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(hours=10),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(hours=10),
+            finished_at=self.now - timedelta(hours=10),
+            status="ok",
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Stale Source")
+        self.assertEqual(row["health"]["level"], "error")
+
+    def test_two_consecutive_failed_runs_is_error(self):
+        source = EventSource.objects.create(
+            name="Flaky Source",
+            source_type="ics",
+            url="https://flaky.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(hours=2),
+            finished_at=self.now - timedelta(hours=2),
+            status="failed",
+            error_message="first failure",
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="failed",
+            error_message="second failure",
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Flaky Source")
+        self.assertEqual(row["health"]["level"], "error")
+        self.assertTrue(any("consecutive" in reason for reason in row["health"]["reasons"]))
+        self.assertTrue(any("second failure" in reason for reason in row["health"]["reasons"]))
+
+    def test_skipped_runs_between_ok_polls_stay_healthy(self):
+        # A correctly-throttled source: skipped runs because it's not due
+        # yet, most recent poll succeeded, recent window has activity and a
+        # publish. Must not be flagged error just for having skipped runs.
+        source = EventSource.objects.create(
+            name="Throttled Source",
+            source_type="ics",
+            url="https://throttled.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=24,
+            last_polled=self.now - timedelta(hours=1),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(hours=25),
+            finished_at=self.now - timedelta(hours=25),
+            status="ok",
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(hours=13),
+            finished_at=self.now - timedelta(hours=13),
+            status="skipped",
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(hours=1),
+            finished_at=self.now - timedelta(hours=1),
+            status="ok",
+        )
+        raw = RawEvent.objects.create(
+            source=source, raw_title="T1", raw_start=self.now, source_uid="t1", processed=True
+        )
+        published_event = make_event(title="Published via Throttled")
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="T1",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="published",
+            published_event=published_event,
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Throttled Source")
+        self.assertEqual(row["health"]["level"], "ok")
+
+    def test_zero_raw_events_in_window_is_warn(self):
+        source = EventSource.objects.create(
+            name="Quiet Source",
+            source_type="ics",
+            url="https://quiet.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Quiet Source")
+        self.assertEqual(row["health"]["level"], "warn")
+        self.assertIn("polling but zero new raw events in window", row["health"]["reasons"])
+
+    def test_raw_events_recent_runs_fetched_in_single_query(self):
+        # Regardless of source count, the recent-runs fetch backing
+        # source_health must be one query, not one per source.
+        sources = [
+            EventSource.objects.create(
+                name=f"Source {i}",
+                source_type="ics",
+                url=f"https://source{i}.example.com/feed.ics",
+                active=True,
+                poll_interval_hours=1,
+                last_polled=self.now - timedelta(minutes=5),
+            )
+            for i in range(5)
+        ]
+        for source in sources:
+            SourceRun.objects.create(
+                source=source,
+                started_at=self.now - timedelta(minutes=5),
+                finished_at=self.now - timedelta(minutes=5),
+                status="ok",
+            )
+
+        # 5 queries as documented pre-existing (sources, raw, no_staged,
+        # staged-by-status, funnel-staged) + 1 for the un-windowed all-time
+        # raw/latest-created_at query (35.4) + 1 for the single recent-runs
+        # fetch + 1 for the `resolve_source_runs_state()` probe that gates it
+        # = 8 total.
+        #
+        # The invariant under test is unchanged: still *independent of source
+        # count*, still no N+1. The availability probe is a fixed O(1) cost
+        # paid once per collector_summary() call, not once per source — it's
+        # what lets the monitor degrade instead of 500 when prod lacks
+        # `ingestion_sourcerun` (see monitoring.resolve_source_runs_state).
+        # The all-time query is the same shape: one grouped query over
+        # source_ids regardless of source count, not one per source.
+        with self.assertNumQueries(8):
+            collector_summary("default", self.start, self.end)
+
+    def test_passing_runs_state_skips_the_availability_probe(self):
+        # A page render resolves availability once and threads it into both
+        # summaries; the second caller must not pay the round trip again. On
+        # the prod path that probe is a WAN hop to Neon.
+        #
+        # Needs at least one source: `_source_rows` returns early on an empty
+        # source list, which would make this pass for the wrong reason.
+        source = EventSource.objects.create(
+            name="Threaded State Source",
+            source_type="ics",
+            url="https://threaded.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=source,
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+
+        # The same 8 queries as the test above, minus the availability probe.
+        with self.assertNumQueries(7):
+            collector_summary("default", self.start, self.end, runs_state=RUNS_AVAILABLE)
+
+
+@tag("db")
+class RawZeroDisambiguationTests(TestCase):
+    """35.4: `raw == 0` in the funnel window must distinguish "zero in this
+    window" (real rows exist, just older than the window) from "zero ever"
+    (this source has never produced a single RawEvent) — the real-prod
+    scenario that motivated this ticket: Carrboro Public Events had 63
+    all-time rows invisible at the default 30d window, while Visit Pittsboro
+    and The Plant NC had genuinely never ingested anything.
+    """
+
+    def setUp(self):
+        self.now = timezone.now()
+        self.start = self.now - timedelta(days=30)
+        self.end = self.now + timedelta(days=1)
+
+    def test_zero_in_window_with_all_time_rows_reports_newest_and_count(self):
+        source = EventSource.objects.create(
+            name="Carrboro Public Events",
+            source_type="ics",
+            url="https://carrboro.example.com/feed.ics",
+            active=True,
+        )
+        newest = self.now - timedelta(days=75)
+        RawEvent.objects.create(
+            source=source, raw_title="Old 1", raw_start=newest, source_uid="old1"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=newest)
+        older = newest - timedelta(days=5)
+        RawEvent.objects.create(
+            source=source, raw_title="Old 2", raw_start=older, source_uid="old2"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old2").update(created_at=older)
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Carrboro Public Events")
+        self.assertEqual(row["funnel"]["raw"], 0)
+        self.assertEqual(row["raw_all_time"], 2)
+        self.assertEqual(row["latest_raw_created_at"], newest.isoformat())
+        self.assertIn("2 all-time", row["raw_zero_note"])
+        self.assertIn("widen the window", row["raw_zero_note"])
+        self.assertNotIn("never produced", row["raw_zero_note"])
+
+    def test_zero_in_window_and_zero_ever_reports_never_produced(self):
+        EventSource.objects.create(
+            name="Visit Pittsboro",
+            source_type="ics",
+            url="https://pittsboro.example.com/feed.ics",
+            active=True,
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Visit Pittsboro")
+        self.assertEqual(row["funnel"]["raw"], 0)
+        self.assertEqual(row["raw_all_time"], 0)
+        self.assertIsNone(row["latest_raw_created_at"])
+        self.assertEqual(row["raw_zero_note"], "never produced a raw event")
+
+    def test_raw_zero_note_is_none_when_window_has_rows(self):
+        source = EventSource.objects.create(
+            name="Healthy Source",
+            source_type="ics",
+            url="https://healthy.example.com/feed.ics",
+            active=True,
+        )
+        RawEvent.objects.create(
+            source=source, raw_title="Fresh", raw_start=self.now, source_uid="fresh1"
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Healthy Source")
+        self.assertEqual(row["funnel"]["raw"], 1)
+        self.assertIsNone(row["raw_zero_note"])
+
+    def test_windowed_raw_count_is_unaffected_by_all_time_query(self):
+        # 35.4 only adds signal — the existing windowed funnel values (already
+        # verified correct against prod) must not change.
+        source = EventSource.objects.create(
+            name="Mixed History Source",
+            source_type="ics",
+            url="https://mixed.example.com/feed.ics",
+            active=True,
+        )
+        RawEvent.objects.create(
+            source=source, raw_title="In window", raw_start=self.now, source_uid="new1"
+        )
+        old = self.now - timedelta(days=90)
+        RawEvent.objects.create(
+            source=source, raw_title="Out of window", raw_start=old, source_uid="old1"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=old)
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Mixed History Source")
+        self.assertEqual(row["funnel"]["raw"], 1)
+        self.assertEqual(row["raw_count"], 1)
+        self.assertEqual(row["raw_all_time"], 2)
+        self.assertIsNone(row["raw_zero_note"])
+
+
+@tag("db")
+class SourceRowSortOrderTests(TestCase):
+    """`_source_rows` sorts by health severity (error, warn, unknown, ok,
+    inactive) then by name — this replaced the plain `order_by("name")` the
+    monitor UI used to render in.
+    """
+
+    def setUp(self):
+        self.now = timezone.now()
+        self.start = self.now - timedelta(days=1)
+        self.end = self.now + timedelta(days=1)
+
+        # Named so alphabetical order would otherwise put them
+        # ok < warn < error, the opposite of the expected health-rank order.
+        EventSource.objects.create(
+            name="A Ok Source",
+            source_type="ics",
+            url="https://a-ok.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=EventSource.objects.get(name="A Ok Source"),
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+        ok_raw = RawEvent.objects.create(
+            source=EventSource.objects.get(name="A Ok Source"),
+            raw_title="raw",
+            raw_start=self.now,
+            processed=True,
+            source_uid="ok1",
+        )
+        # Staged + published so this source clears both warn rules (zero raw,
+        # and raw-with-nothing-published) and lands squarely at "ok".
+        published_event = make_event(title="Published via A Ok Source")
+        StagedEvent.objects.create(
+            raw_event=ok_raw,
+            title="raw",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.now,
+            status="published",
+            published_event=published_event,
+        )
+
+        # Polled, then stopped — evidenced failure, which is what `error` is
+        # for. (A never-polled source is `unknown`/`warn`, not `error`; see
+        # "D Unknown Source" below.)
+        EventSource.objects.create(
+            name="B Error Source",
+            source_type="ics",
+            url="https://b-error.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(hours=10),
+        )
+
+        EventSource.objects.create(
+            name="C Inactive Source",
+            source_type="ics",
+            url="https://c-inactive.example.com/feed.ics",
+            active=False,
+            last_polled=None,
+        )
+
+        # Never polled and seconds old (created_at is auto_now_add) -> inside
+        # its first-poll grace period -> `unknown`.
+        EventSource.objects.create(
+            name="D Unknown Source",
+            source_type="ics",
+            url="https://d-unknown.example.com/feed.ics",
+            active=True,
+            last_polled=None,
+        )
+
+        EventSource.objects.create(
+            name="Z Warn Source",
+            source_type="ics",
+            url="https://z-warn.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        SourceRun.objects.create(
+            source=EventSource.objects.get(name="Z Warn Source"),
+            started_at=self.now - timedelta(minutes=5),
+            finished_at=self.now - timedelta(minutes=5),
+            status="ok",
+        )
+        # No raw events in window -> "warn" (zero new raw events).
+
+    def test_rows_sorted_by_health_severity_then_name(self):
+        rows = collector_summary("default", self.start, self.end)
+        levels = [r["health"]["level"] for r in rows]
+        self.assertEqual(levels, ["error", "warn", "unknown", "ok", "inactive"])
+        names = [r["name"] for r in rows]
+        self.assertEqual(
+            names,
+            [
+                "B Error Source",
+                "Z Warn Source",
+                "D Unknown Source",
+                "A Ok Source",
+                "C Inactive Source",
+            ],
+        )
+
+
+@tag("db")
+class SourceRunsUnavailableTests(TestCase):
+    """Degradation when `ingestion_sourcerun` isn't readable on the target DB.
+
+    `prod_readonly` tracks whatever prod has actually deployed, which can lag
+    local by a migration — prod sat on 0013 while local was on 0014, and
+    querying SourceRun there took the entire monitor down with a
+    ProgrammingError.
+
+    There are three distinct causes, and they are simulated by raising what
+    Postgres would actually raise rather than by hiding the table from
+    introspection. Introspection cannot distinguish them at all: Django's
+    PostgreSQL backend lists tables from `pg_catalog.pg_class`, which has no
+    privilege predicate, so a table the role cannot SELECT is still reported as
+    present. That is precisely the gap that made the missing-GRANT case a
+    latent 500 — dropping the real table isn't an option either, since the rest
+    of the suite needs it.
+    """
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Unmigrated Source",
+            source_type="ics",
+            url="https://example.com/a.ics",
+            active=True,
+            last_polled=timezone.now(),
+        )
+        SourceRun.objects.create(
+            source=self.source,
+            started_at=timezone.now() - timedelta(minutes=5),
+            finished_at=timezone.now(),
+            status="failed",
+            error_message="should never be read",
+        )
+        self.end = timezone.now() + timedelta(minutes=1)
+        self.start = self.end - timedelta(days=7)
+
+    def _raise_on_sourcerun(self, exc):
+        """Patch the SourceRun query to raise `exc`, as Postgres would.
+
+        Only `SourceRun.objects.using(...)` is patched, so every other query in
+        the page still runs for real — the point is that the *rest* of the
+        monitor keeps working while run history degrades.
+        """
+        from unittest.mock import patch
+
+        return patch.object(SourceRun.objects, "using", side_effect=exc, autospec=True)
+
+    @staticmethod
+    def _pg_error(django_exc, sqlstate):
+        """A Django DB error wrapping a driver error carrying `sqlstate`.
+
+        Mirrors how psycopg 3 surfaces it: Django re-raises its own exception
+        type `from` the driver error, so the SQLSTATE lives on `__cause__`.
+        """
+
+        class _DriverError(Exception):
+            pass
+
+        cause = _DriverError("simulated")
+        cause.sqlstate = sqlstate
+        exc = django_exc("simulated")
+        exc.__cause__ = cause
+        return exc
+
+    def test_state_is_not_configured_for_unknown_alias(self):
+        self.assertEqual(resolve_source_runs_state("definitely_not_a_db"), RUNS_DB_NOT_CONFIGURED)
+
+    def test_state_is_available_when_table_is_readable(self):
+        self.assertEqual(resolve_source_runs_state("default"), RUNS_AVAILABLE)
+
+    def test_missing_table_sqlstate_maps_to_missing_table(self):
+        exc = self._pg_error(ProgrammingError, "42P01")
+        with self._raise_on_sourcerun(exc):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_MISSING_TABLE)
+
+    def test_missing_grant_sqlstate_maps_to_no_permission(self):
+        # The case introspection could never see: the table exists and is
+        # listed in pg_class, but the role has no SELECT on it. Against
+        # pre-33.1 code this path reported the table as *readable* and the
+        # ProgrammingError propagated as a 500.
+        exc = self._pg_error(ProgrammingError, "42501")
+        with self._raise_on_sourcerun(exc):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_NO_PERMISSION)
+
+    def test_unreachable_database_maps_to_unreachable(self):
+        with self._raise_on_sourcerun(OperationalError("connection refused")):
+            self.assertEqual(resolve_source_runs_state("default"), RUNS_UNREACHABLE)
+
+    def test_unrecognised_sqlstate_is_not_swallowed(self):
+        # A ProgrammingError we can't attribute to a deployment difference is a
+        # bug in our own SQL; masking it behind a banner naming a cause we
+        # haven't detected would be worse than the traceback.
+        exc = self._pg_error(ProgrammingError, "42703")  # undefined_column
+        with self._raise_on_sourcerun(exc), self.assertRaises(ProgrammingError):
+            resolve_source_runs_state("default")
+
+    def test_collector_summary_does_not_raise_without_the_table(self):
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_MISSING_TABLE)
+        self.assertEqual(len(rows), 1)
+        # The run exists, but isn't read — so the row reports no run history
+        # rather than surfacing the `failed` status.
+        self.assertIsNone(rows[0]["last_run"])
+
+    def test_collector_summary_does_not_raise_without_the_grant(self):
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_NO_PERMISSION)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["last_run"])
+
+    def test_health_falls_back_to_staleness_rules_without_the_table(self):
+        rows = collector_summary("default", self.start, self.end, runs_state=RUNS_MISSING_TABLE)
+        health = rows[0]["health"]
+        # The seeded run is `failed`, which would normally force `error` with a
+        # "latest run failed" reason. With runs unread, the only signal left is
+        # the zero-raw-events warn rule.
+        self.assertEqual(health["level"], "warn")
+        self.assertFalse(any("latest run" in r for r in health["reasons"]))
+
+    def test_drilldown_runs_returns_empty_without_the_table(self):
+        self.assertEqual(
+            drilldown(
+                "default",
+                "runs",
+                self.source.id,
+                self.start,
+                self.end,
+                runs_state=RUNS_MISSING_TABLE,
+            ),
+            [],
+        )
+
+    def test_drilldown_runs_returns_empty_without_the_grant(self):
+        self.assertEqual(
+            drilldown(
+                "default",
+                "runs",
+                self.source.id,
+                self.start,
+                self.end,
+                runs_state=RUNS_NO_PERMISSION,
+            ),
+            [],
+        )

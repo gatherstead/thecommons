@@ -3,7 +3,7 @@ from django.core.management import call_command
 from unfold.admin import ModelAdmin
 
 from events.models import Event, Tag, Town
-from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
 
 
 @admin.register(EventSource)
@@ -35,6 +35,35 @@ class EventSourceAdmin(ModelAdmin):
     def run_ingestion_pipeline(self, request, queryset):
         call_command("ingest_events")
         self.message_user(request, "Ingestion pipeline completed.")
+
+
+@admin.register(SourceRun)
+class SourceRunAdmin(ModelAdmin):
+    list_display = [
+        "id",
+        "source_id",
+        "status",
+        "trigger",
+        "started_at",
+        "finished_at",
+        "items_fetched",
+        "items_new",
+        "items_duplicate",
+        "error_class",
+    ]
+    list_filter = ["status", "trigger"]
+    list_select_related = ["source"]
+    search_fields = ["source__name", "error_class", "error_message"]
+    readonly_fields = [field.name for field in SourceRun._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(RawEvent)

@@ -24,6 +24,24 @@
   .monitor .controls select { padding: 0.3rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem; }
   .monitor .controls .db-label.prod-active { color: #dc2626; }
 
+  /* Ticket 35.10: which database this page is reading must be unmissable —
+     the toggle in .controls is easy to glance past, and a `?db=default` page
+     that happens to render an empty Collectors table (a stale local
+     DATABASE_URL, not a bug) looks identical to one reading prod. This badge
+     restates the same `db` value the toggle already reflects, just louder. */
+  .monitor .db-banner {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+  .monitor .db-banner.db-default { background: #e0e7ff; color: #3730a3; }
+  .monitor .db-banner.db-prod { background: #fee2e2; color: #991b1b; }
+
   .monitor table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 0.5rem; }
   .monitor th, .monitor td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; text-align: left; }
   .monitor th { background: #f3f4f6; font-weight: 700; }
@@ -31,7 +49,23 @@
   .monitor tr.source-row:hover { background: #f9fafb; }
   .monitor tr.source-row.inactive { color: #9ca3af; }
   .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .monitor td.num.zero { color: #b6bcc6; }
+  /* Ticket 35.4: distinguishes "zero in this window" from "zero ever" inline,
+     next to the muted 0 the funnel-cell convention already renders — see
+     `_raw_zero_note` in monitoring.py for the two message shapes. */
+  .monitor .zero-note { font-weight: 400; font-size: 0.78rem; color: #92400e; white-space: nowrap; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
+  .monitor .notice {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+  .monitor .notice code { background: rgba(146, 64, 14, 0.1); padding: 0.05rem 0.25rem; border-radius: 3px; }
 
   .monitor .summary-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
   .monitor .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.5rem 0.9rem; font-size: 0.85rem; }
@@ -42,14 +76,109 @@
   .monitor .drilldown-wrap .loading { color: #6b7280; font-size: 0.8rem; }
   .monitor .drilldown-wrap table { margin-bottom: 0; }
   .monitor .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; background: #e5e7eb; }
-  .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved { background: #dcfce7; color: #166534; }
-  .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled { background: #fee2e2; color: #991b1b; }
+  .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved, .monitor .badge.ok { background: #dcfce7; color: #166534; }
+  .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled, .monitor .badge.refused { background: #fee2e2; color: #991b1b; }
   .monitor .badge.pending, .monitor .badge.queued, .monitor .badge.running, .monitor .badge.in_progress { background: #fef3c7; color: #92400e; }
   .monitor .badge.duplicate, .monitor .badge.skipped, .monitor .badge.needs_manual { background: #e0e7ff; color: #3730a3; }
+
+  .monitor .badge.health-error { background: #fee2e2; color: #991b1b; }
+  .monitor .badge.health-warn { background: #fef3c7; color: #92400e; }
+  .monitor .badge.health-ok { background: #dcfce7; color: #166534; }
+  /* `unknown` is absence of signal, not a fault: deliberately the quietest
+     badge of the four, so it never competes with error/warn for attention. */
+  .monitor .badge.health-unknown { background: #f3f4f6; color: #6b7280; }
+  .monitor .badge.health-inactive { background: #e5e7eb; color: #6b7280; }
+
+  .monitor .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem; }
+  .monitor .tab-button {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    color: #6b7280;
+  }
+  .monitor .tab-button:hover { color: #111827; }
+  .monitor .tab-button.active { color: #111827; background: #fff; border-color: #e5e7eb; }
+  .monitor .tab-panel { display: none; }
+  .monitor .tab-panel.active { display: block; }
+
+  .monitor .btn-probe {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+  }
+  .monitor .btn-probe:hover { background: #f9fafb; border-color: #9ca3af; }
+  .monitor .btn-probe:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
+
+  .monitor .probe-caveat {
+    font-size: 0.75rem;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .monitor .probe-status { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; }
+  .monitor .probe-status .spinner {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border: 2px solid #d1d5db;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+    animation: monitor-spin 0.7s linear infinite;
+  }
+  @keyframes monitor-spin { to { transform: rotate(360deg); } }
+
+  .monitor .probe-log {
+    background: #111827;
+    color: #d1d5db;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    padding: 0.6rem 0.85rem;
+    border-radius: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .monitor .probe-log .probe-frame { margin-bottom: 0.5rem; }
+  .monitor .probe-log .probe-resolved { color: #93c5fd; }
+  .monitor .probe-log .probe-stage { color: #d1d5db; }
+  .monitor .probe-log .probe-refused { color: #fca5a5; }
+  .monitor .probe-log .probe-skipped { color: #fbbf24; }
+  .monitor .probe-log .probe-error { color: #f87171; }
+  .monitor .probe-log .probe-done { color: #86efac; }
+  .monitor .probe-log .probe-traceback {
+    color: #f87171;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 0.25rem;
+  }
 </style>
 
 <div class="monitor">
   <h1>Ingestion &amp; Broadcast Monitor</h1>
+  <p>
+    <span class="db-banner {% if db == 'prod_readonly' %}db-prod{% else %}db-default{% endif %}">
+      Reading: {% if db == "prod_readonly" %}prod_readonly (read-only){% else %}default (local){% endif %}
+    </span>
+  </p>
   <p class="description">
     Per-collector and per-broadcast event counts for the selected window. Click a row to see the
     underlying raw events (or broadcast submissions).
@@ -72,38 +201,83 @@
     </label>
   </div>
 
+  {% if source_runs_state == "unreachable" %}
+  <p class="notice">
+    <strong>Couldn&rsquo;t reach this database.</strong>
+    The connection failed, so no counts could be read and every table below is empty &mdash;
+    this page is showing <em>nothing</em>, not <em>zero</em>. For
+    <code>prod_readonly</code> the usual causes are a suspended Neon branch (retry in a few
+    seconds), a network problem, or stale credentials in <code>PROD_DATABASE_URL</code>.
+  </p>
+  {% elif source_runs_state == "missing_table" %}
+  <p class="notice">
+    <strong>Run history unavailable: <code>ingestion_sourcerun</code> doesn&rsquo;t exist here.</strong>
+    This database is behind on migrations &mdash; it hasn&rsquo;t had
+    <code>0014_sourcerun</code> applied. The Runs tab is empty and health levels fall back to
+    last-polled staleness only. Everything else on this page is accurate, and the probe still
+    works &mdash; it never reads <code>SourceRun</code>.
+  </p>
+  {% elif source_runs_state == "no_permission" %}
+  <p class="notice">
+    <strong>Run history unavailable: permission denied on <code>ingestion_sourcerun</code>.</strong>
+    The table exists, but this connection&rsquo;s role can&rsquo;t read it &mdash;
+    <code>ALTER DEFAULT PRIVILEGES</code> doesn&rsquo;t follow tables created by a different
+    role, so a newly migrated table needs its grant re-run:
+    <code>GRANT SELECT ON ingestion_sourcerun TO monitor_readonly;</code>. The Runs tab is
+    empty and health levels fall back to last-polled staleness only. Everything else on this
+    page is accurate.
+  </p>
+  {% endif %}
+
   <h2>Collectors</h2>
   {% if collectors %}
   <table id="collectors-table">
     <thead>
       <tr>
+        <th>Health</th>
         <th>Name</th>
         <th>Type</th>
         <th>Active</th>
         <th>Last polled</th>
         <th class="num">Raw</th>
-        <th class="num">Pending</th>
-        <th class="num">Approved</th>
-        <th class="num">Rejected</th>
+        <th class="num">Unprocessed</th>
+        <th class="num">No staged</th>
         <th class="num">Duplicate</th>
+        <th class="num">Unscored</th>
+        <th class="num">Held for review</th>
+        <th class="num">Rejected</th>
+        <th class="num">Approved</th>
         <th class="num">Published</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for c in collectors %}
       <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="collector" data-key="{{ c.id }}">
+        <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.source_type }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num">{{ c.raw_count }}</td>
-        <td class="num">{{ c.staged_by_status.pending }}</td>
-        <td class="num">{{ c.staged_by_status.approved }}</td>
-        <td class="num">{{ c.staged_by_status.rejected }}</td>
-        <td class="num">{{ c.staged_by_status.duplicate }}</td>
-        <td class="num">{{ c.published_count }}</td>
+        {% comment %}
+        Zeros render as a muted `0`, never an em-dash: the dash already means
+        "no value" in the Last polled column of this same row, and a row of
+        eight dashes reads as a failed page load rather than eight real
+        zeros. A *blank* funnel cell is therefore diagnostic — it means the
+        template lookup missed and the server sent no integer at all.
+        {% endcomment %}
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}"{% if c.raw_zero_note %} title="{{ c.raw_zero_note }}"{% endif %}>{{ c.funnel.raw }}{% if c.raw_zero_note %}<span class="zero-note"> &mdash; {{ c.raw_zero_note }}</span>{% endif %}</td>
+        <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
+        <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
+        <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
+        <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="10"></td></tr>
+      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -116,31 +290,45 @@
   <table id="inbound-table">
     <thead>
       <tr>
+        <th>Health</th>
         <th>Name</th>
         <th>Active</th>
         <th>Last polled</th>
         <th class="num">Raw</th>
-        <th class="num">Pending</th>
-        <th class="num">Approved</th>
-        <th class="num">Rejected</th>
+        <th class="num">Unprocessed</th>
+        <th class="num">No staged</th>
         <th class="num">Duplicate</th>
+        <th class="num">Unscored</th>
+        <th class="num">Held for review</th>
+        <th class="num">Rejected</th>
+        <th class="num">Approved</th>
         <th class="num">Published</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for c in inbound %}
       <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="inbound" data-key="{{ c.id }}">
+        <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
         <td>{{ c.last_polled|default:"—" }}</td>
-        <td class="num">{{ c.raw_count }}</td>
-        <td class="num">{{ c.staged_by_status.pending }}</td>
-        <td class="num">{{ c.staged_by_status.approved }}</td>
-        <td class="num">{{ c.staged_by_status.rejected }}</td>
-        <td class="num">{{ c.staged_by_status.duplicate }}</td>
-        <td class="num">{{ c.published_count }}</td>
+        {% comment %}
+        See the note on the collectors table: muted `0` for real zeros, the
+        em-dash reserved for genuinely-absent values.
+        {% endcomment %}
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}"{% if c.raw_zero_note %} title="{{ c.raw_zero_note }}"{% endif %}>{{ c.funnel.raw }}{% if c.raw_zero_note %}<span class="zero-note"> &mdash; {{ c.raw_zero_note }}</span>{% endif %}</td>
+        <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
+        <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
+        <td class="num funnel-cell{% if not c.funnel.unscored %} zero{% endif %}">{{ c.funnel.unscored }}</td>
+        <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
+        <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
+        <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="9"></td></tr>
+      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -197,9 +385,6 @@
     dbToggleLabel.classList.add("prod-active");
   }
 
-  var STATUS_KEYS = ["published", "approved", "succeeded", "done", "rejected", "failed", "canceled",
-    "pending", "queued", "running", "in_progress", "duplicate", "skipped", "needs_manual"];
-
   function badge(status) {
     if (!status) return "—";
     return '<span class="badge ' + status + '">' + status + "</span>";
@@ -231,6 +416,257 @@
     return html;
   }
 
+  function renderRunsDrilldown(rows) {
+    if (!rows.length) return '<p class="empty-note">No runs recorded for this source.</p>';
+    var html = "<table><thead><tr><th>Started</th><th>Finished</th><th>Status</th><th>Trigger</th>" +
+      "<th class=\"num\">Fetched</th><th class=\"num\">New</th><th class=\"num\">Duplicate</th><th>Error</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var showError = r.status === "failed" || r.status === "refused";
+      html += "<tr><td>" + (r.started_at || "") + "</td><td>" + (r.finished_at || "") + "</td>" +
+        "<td>" + badge(r.status) + "</td><td>" + (r.trigger || "") + "</td>" +
+        "<td class=\"num\">" + r.items_fetched + "</td><td class=\"num\">" + r.items_new + "</td>" +
+        "<td class=\"num\">" + r.items_duplicate + "</td>" +
+        "<td>" + (showError ? (r.error_message || "(no error message recorded)") : "") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function escHtml(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Probe tab: streams GET /devtools/probe?source_id=<id>&db=<db> (SSE) into a
+  // log pane. Dry-runs fetch, parse, AND write (ticket 35.6) — every write the
+  // probe issues is rolled back server-side, so a write-path failure now shows
+  // up as a failing "write" stage frame instead of a false-green "Done" (the
+  // exact failure mode that misdirected an 8-day outage investigation toward
+  // the network layer). Mirrors playground.html's EventSource handling (see
+  // playground.html:1364-1421) including the `streamDone` guard against the
+  // native 'error' event EventSource fires on normal connection close after
+  // 'done' — without it, every successful probe would render a spurious error.
+  function renderProbeTab(panel, sourceId, triggerBtn) {
+    var elapsedTimer = null;
+    var startedAt = Date.now();
+    var streamDone = false;
+
+    panel.innerHTML =
+      '<div class="probe-caveat">' +
+      "<strong>Client-IP caveat:</strong> this probe runs from your machine, not the " +
+      "production poller — it cannot detect IP- or User-Agent-based blocking by the " +
+      "source's own WAF. A green probe proves the write path works from here, not that " +
+      "prod can reach this source." +
+      "</div>" +
+      '<div class="probe-status" id="probe-status-' + sourceId + '">' +
+      '<span class="spinner"></span>Probing… (<span class="probe-elapsed">0</span>s)' +
+      "</div>" +
+      '<div class="probe-log" id="probe-log-' + sourceId + '"></div>';
+    var statusEl = panel.querySelector(".probe-status");
+    var elapsedEl = panel.querySelector(".probe-elapsed");
+    var logEl = panel.querySelector(".probe-log");
+
+    function appendFrame(cls, html) {
+      var line = document.createElement("div");
+      line.className = "probe-frame " + cls;
+      line.innerHTML = html;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function finish() {
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+      }
+      if (statusEl) statusEl.remove();
+      if (triggerBtn) triggerBtn.disabled = false;
+    }
+
+    if (triggerBtn) triggerBtn.disabled = true;
+    elapsedTimer = setInterval(function () {
+      elapsedEl.textContent = Math.round((Date.now() - startedAt) / 1000);
+    }, 1000);
+
+    var params = new URLSearchParams();
+    params.set("source_id", sourceId);
+    params.set("db", currentDb());
+    var es = new EventSource("/devtools/probe?" + params.toString());
+
+    es.addEventListener("resolved", function (e) {
+      var data = JSON.parse(e.data);
+      appendFrame(
+        "probe-resolved",
+        "<strong>Resolved:</strong> " + escHtml(data.name) + " (" + escHtml(data.source_type) + ") &mdash; " +
+          escHtml(data.url)
+      );
+    });
+
+    es.addEventListener("stage", function (e) {
+      var data = JSON.parse(e.data);
+      var extras = "";
+      if (data.status === "end") {
+        if (data.http_status != null) extras += " http_status=" + escHtml(data.http_status);
+        if (data.bytes != null) extras += " bytes=" + escHtml(data.bytes);
+        if (data.item_count != null) extras += " item_count=" + escHtml(data.item_count);
+        if (data.would_create != null) extras += " would_create=" + escHtml(data.would_create);
+        if (data.rolled_back) extras += " (rolled back — nothing written)";
+        if (data.sample_titles && data.sample_titles.length) {
+          extras += "<br>sample titles: " + data.sample_titles.map(escHtml).join("; ");
+        }
+      }
+      // The "write" stage can also land on "skipped" (read-only DB, e.g.
+      // prod_readonly — see PROBE_WRITE_SKIPPED_READONLY_DB) rather than
+      // start/end; render it like `refused` (amber, named reason + detail)
+      // instead of pretending it ran.
+      if (data.status === "skipped") {
+        appendFrame(
+          "probe-skipped",
+          "<strong>" + escHtml(data.stage) + "</strong> " + badge("skipped") + " " +
+            escHtml(data.reason) +
+            (data.detail ? "<br>" + escHtml(data.detail) : "")
+        );
+        return;
+      }
+      // Reuse the badge() helper's running/done palette (defined for run statuses)
+      // for stage start/end, so an in-progress stage reads amber and a finished
+      // one reads green, while still labeling the badge with the real value.
+      var badgeClass = data.status === "start" ? "running" : "done";
+      var statusBadge = '<span class="badge ' + badgeClass + '">' + escHtml(data.status) + "</span>";
+      appendFrame(
+        "probe-stage",
+        "<strong>" + escHtml(data.stage) + "</strong> " + statusBadge + extras
+      );
+    });
+
+    es.addEventListener("refused", function (e) {
+      var data = JSON.parse(e.data);
+      appendFrame(
+        "probe-refused",
+        badge("refused") + " <strong>" + escHtml(data.reason) + "</strong>" +
+          (data.detail ? "<br>" + escHtml(data.detail) : "")
+      );
+    });
+
+    es.addEventListener("error", function (e) {
+      // Guard: EventSource fires a native 'error' event on normal connection
+      // close right after 'done' fires — ignore it once the stream is done.
+      if (streamDone) {
+        es.close();
+        return;
+      }
+      var msg = "Stream connection error.";
+      var tracebackText = null;
+      if (e.data) {
+        try {
+          var d = JSON.parse(e.data);
+          msg = d.message || msg;
+          tracebackText = d.traceback || null;
+        } catch (_) {}
+      }
+      appendFrame(
+        "probe-error",
+        "<strong>Error:</strong> " + escHtml(msg) +
+          (tracebackText ? '<div class="probe-traceback">' + escHtml(tracebackText) + "</div>" : "")
+      );
+      es.close();
+      finish();
+    });
+
+    es.addEventListener("done", function () {
+      streamDone = true;
+      appendFrame("probe-done", "<strong>Done.</strong>");
+      es.close();
+      finish();
+    });
+  }
+
+  // Generic tab machinery: each entry is {id, label, render(container)}.
+  // `render` is called once, the first time a tab is shown, and is
+  // responsible for fetching its own data and filling `container`. Adding a
+  // future tab (e.g. "Probe") is a one-line addition to the `tabs` list
+  // passed to `renderTabs` — no new branching here.
+  function renderTabs(tabs) {
+    var wrap = document.createElement("div");
+
+    var tabBar = document.createElement("div");
+    tabBar.className = "tabs";
+    wrap.appendChild(tabBar);
+
+    var panels = {};
+    var buttons = {};
+    var rendered = {};
+
+    tabs.forEach(function (tab, index) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "tab-button" + (index === 0 ? " active" : "");
+      button.textContent = tab.label;
+      tabBar.appendChild(button);
+      buttons[tab.id] = button;
+
+      var panel = document.createElement("div");
+      panel.className = "tab-panel" + (index === 0 ? " active" : "");
+      wrap.appendChild(panel);
+      panels[tab.id] = panel;
+
+      button.addEventListener("click", function () {
+        tabBar.querySelectorAll(".tab-button").forEach(function (b) { b.classList.remove("active"); });
+        Object.keys(panels).forEach(function (id) { panels[id].classList.remove("active"); });
+        button.classList.add("active");
+        panel.classList.add("active");
+        if (!rendered[tab.id]) {
+          rendered[tab.id] = true;
+          tab.render(panel);
+        }
+      });
+    });
+
+    // Render the first tab eagerly since it's shown by default.
+    if (tabs.length) {
+      rendered[tabs[0].id] = true;
+      tabs[0].render(panels[tabs[0].id]);
+    }
+
+    // Exposed so a caller (e.g. the Probe button, which wants to jump straight
+    // to the Probe tab instead of the default first tab) can activate a
+    // specific tab from outside without renderTabs knowing about that case.
+    wrap.activateTab = function (id) {
+      if (buttons[id]) buttons[id].click();
+    };
+
+    return wrap;
+  }
+
+  function fetchDrilldown(kind, key, extraParams) {
+    var params = new URLSearchParams();
+    params.set("db", currentDb());
+    params.set("window", windowSelect.value);
+    params.set("kind", kind);
+    params.set("key", key);
+    if (extraParams) {
+      Object.keys(extraParams).forEach(function (k) { params.set(k, extraParams[k]); });
+    }
+    return fetch("/devtools/monitor/data?" + params.toString()).then(function (r) { return r.json(); });
+  }
+
+  // Maps "kind:key" -> the row's Probe <button> (so the Probe tab can
+  // disable/re-enable it) and -> the rendered tabs element for that row's
+  // open drilldown (so the Probe button can jump straight to the Probe tab).
+  var probeButtons = {};
+  var openTabs = {};
+  document.querySelectorAll(".btn-probe").forEach(function (btn) {
+    var sourceId = btn.getAttribute("data-probe-source-id");
+    var row = btn.closest("tr.source-row");
+    if (!row) return;
+    var kind = row.getAttribute("data-kind");
+    probeButtons[kind + ":" + sourceId] = btn;
+  });
+
   document.querySelectorAll("tr.source-row").forEach(function (row) {
     row.addEventListener("click", function () {
       var kind = row.getAttribute("data-kind");
@@ -245,25 +681,87 @@
       }
 
       var cell = drilldownRow.querySelector("td");
-      cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
       drilldownRow.style.display = "";
 
-      var params = new URLSearchParams();
-      params.set("db", currentDb());
-      params.set("window", windowSelect.value);
-      params.set("kind", kind);
-      params.set("key", key);
-
-      fetch("/devtools/monitor/data?" + params.toString())
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var rows = data.rows || [];
-          var body = kind === "outbound" ? renderOutboundDrilldown(rows) : renderSourceDrilldown(rows);
-          cell.innerHTML = '<div class="drilldown-wrap">' + body + "</div>";
-        })
-        .catch(function () {
+      if (kind === "outbound") {
+        cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
+        fetchDrilldown(kind, key).then(function (data) {
+          cell.innerHTML = '<div class="drilldown-wrap">' + renderOutboundDrilldown(data.rows || []) + "</div>";
+        }).catch(function () {
           cell.innerHTML = '<div class="drilldown-wrap"><span class="empty-note">Failed to load.</span></div>';
         });
+        return;
+      }
+
+      // Collector/inbound rows get a tabbed drilldown: "Recent events" (raw
+      // events in the current window) and "Runs" (SourceRun history, not
+      // windowed). Ticket 32.7 adds a third "Probe" tab here.
+      var wrap = document.createElement("div");
+      wrap.className = "drilldown-wrap";
+      var tabs = renderTabs([
+        {
+          id: "events",
+          label: "Recent events",
+          render: function (panel) {
+            panel.innerHTML = '<span class="loading">Loading…</span>';
+            fetchDrilldown(kind, key).then(function (data) {
+              panel.innerHTML = renderSourceDrilldown(data.rows || []);
+            }).catch(function () {
+              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
+            });
+          },
+        },
+        {
+          id: "runs",
+          label: "Runs",
+          render: function (panel) {
+            panel.innerHTML = '<span class="loading">Loading…</span>';
+            fetchDrilldown("runs", key).then(function (data) {
+              panel.innerHTML = renderRunsDrilldown(data.rows || []);
+            }).catch(function () {
+              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
+            });
+          },
+        },
+        {
+          id: "probe",
+          label: "Probe",
+          render: function (panel) {
+            renderProbeTab(panel, key, probeButtons[kind + ":" + key]);
+          },
+        },
+      ]);
+      wrap.appendChild(tabs);
+      cell.innerHTML = "";
+      cell.appendChild(wrap);
+      openTabs[kind + ":" + key] = tabs;
+    });
+  });
+
+  document.querySelectorAll(".btn-probe").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      // The row itself is also a click-to-expand target — without this the
+      // Probe click would also toggle the drilldown open/closed.
+      e.stopPropagation();
+
+      var row = btn.closest("tr.source-row");
+      if (!row) return;
+      var kind = row.getAttribute("data-kind");
+      var key = row.getAttribute("data-key");
+      var drilldownRow = document.querySelector('tr.drilldown-row[data-for="' + kind + ":" + key + '"]');
+      if (!drilldownRow) return;
+
+      var mapKey = kind + ":" + key;
+      var isOpen = drilldownRow.style.display !== "none";
+
+      if (!isOpen) {
+        // Open the drilldown the same way the row click does, then jump to
+        // the Probe tab once it's rendered.
+        row.click();
+      }
+
+      var tabs = openTabs[mapKey];
+      if (tabs && tabs.activateTab) tabs.activateTab("probe");
     });
   });
 })();

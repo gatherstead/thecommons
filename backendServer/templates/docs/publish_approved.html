@@ -48,7 +48,9 @@
   </p>
 
   <div class="warning">
-    This permanently removes approved events from the Staged Events table. Make sure you have reviewed them first.
+    Published staged events are kept, not deleted — they're flipped to <code>status='published'</code>
+    and retained as permanent dedupe anchors so a re-scraped or resubmitted copy of the same event is
+    still caught. They're cleaned up automatically once their event date has passed.
   </div>
 
   {% if queued %}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JobDetail } from "../../models/broadcastModels";
 import {
   clearDraft,
+  clearStaleKeys,
   DRAFT_KEY,
   loadDraft,
   loadSession,
@@ -113,8 +114,28 @@ describe("clearDraft", () => {
   });
 });
 
-describe("legacy migration", () => {
-  it("seeds both scopes from the old fused bundle when new keys are absent", () => {
+describe("stale key cleanup", () => {
+  const STALE_KEYS = ["broadcast:session:v1", "broadcast:draft:v1", "broadcast:state:v1"];
+
+  it("removes all v1 keys (and the pre-split fused bundle)", () => {
+    for (const key of STALE_KEYS) localStorage.setItem(key, JSON.stringify({ stale: true }));
+
+    clearStaleKeys();
+
+    for (const key of STALE_KEYS) expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("does not touch the current v2 keys", () => {
+    saveSession({ accessCode: "NEW", verified: true });
+    saveDraft({ jobId: "j1" });
+
+    clearStaleKeys();
+
+    expect(loadSession()).toEqual({ accessCode: "NEW", verified: true });
+    expect(loadDraft()).toEqual({ jobId: "j1" });
+  });
+
+  it("does not seed session or draft state from a stale v1 bundle", () => {
     localStorage.setItem(
       "broadcast:state:v1",
       JSON.stringify({
@@ -127,21 +148,7 @@ describe("legacy migration", () => {
       }),
     );
 
-    expect(loadSession()).toEqual({
-      accessCode: "OLD",
-      verified: true,
-      organizer_name: "Old Org",
-      contact_email: "old@b.com",
-      contact_phone: undefined,
-    });
-    expect(loadDraft().jobId).toBe("old-job");
-    expect(loadDraft().selected).toEqual(["x"]);
-  });
-
-  it("prefers the new keys over the legacy bundle", () => {
-    localStorage.setItem("broadcast:state:v1", JSON.stringify({ accessCode: "OLD" }));
-    saveSession({ accessCode: "NEW", verified: false });
-
-    expect(loadSession().accessCode).toBe("NEW");
+    expect(loadSession()).toEqual({});
+    expect(loadDraft()).toEqual({});
   });
 });

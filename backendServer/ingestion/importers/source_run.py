@@ -137,6 +137,9 @@ def poll_sources_with_run_tracking(
         except SourceRefused as exc:
             logger.warning(f"Refused to poll {source.name}: {exc}")
         except Exception as e:
-            logger.error(f"Error polling {source.name}: {e}")
+            # exc_info=True: without a traceback, a broken source degrades to a
+            # single-line log entry indistinguishable from routine noise, which
+            # is how a dead source went unnoticed in prod for weeks.
+            logger.error(f"Error polling {source.name}: {e}", exc_info=True)
 
     return total_new

@@ -1,9 +1,11 @@
+from datetime import timedelta
 from unittest import mock
 
 from django.http import Http404
 from django.test import RequestFactory, TransactionTestCase, override_settings, tag
+from django.utils import timezone
 
-from devtools.views import probe_stream
+from devtools.views import PROBE_WRITE_SKIPPED_READONLY_DB, probe_stream
 from ingestion.importers.errors import (
     REFUSAL_EMPTY_FETCH,
     REFUSAL_NON_PUBLIC_URL,
@@ -42,8 +44,21 @@ class _FakeResponse:
 
 
 class _FakeScraperItem:
-    def __init__(self, title):
+    """Mirrors ingestion/scraping/scrapers/base.py's RawEventData shape —
+    the probe's write-dry-run stage (ticket 35.6) now reads every field a
+    real scraper item carries, not just `.title`, so the fixture needs to
+    carry all of them or the write stage would AttributeError silently
+    underneath tests that don't specifically assert on write-stage frames.
+    """
+
+    def __init__(self, title, source_uid):
         self.title = title
+        self.source_uid = source_uid
+        self.description = "A fake event for tests."
+        self.location = "Fake Venue"
+        self.start = timezone.now() + timedelta(days=7)
+        self.end = None
+        self.source_url = ""
 
 
 class _FakeScraper:
@@ -51,7 +66,10 @@ class _FakeScraper:
     wait_selector = None
 
     def extract(self, html):
-        return [_FakeScraperItem("Concert in the Park"), _FakeScraperItem("Art Walk")]
+        return [
+            _FakeScraperItem("Concert in the Park", "concert-1"),
+            _FakeScraperItem("Art Walk", "art-walk-1"),
+        ]
 
 
 @tag("db")
@@ -230,6 +248,14 @@ class ProbeStreamViewTests(TransactionTestCase):
         self.assertEqual(parse_end["item_count"], 2)
         self.assertEqual(parse_end["sample_titles"], ["Concert in the Park", "Art Walk"])
 
+        write_end = next(
+            d
+            for k, d in frames
+            if k == "stage" and d.get("stage") == "write" and d.get("status") == "end"
+        )
+        self.assertEqual(write_end["would_create"], 2)
+        self.assertNotIn("error", [k for k, _ in frames])
+
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
@@ -248,9 +274,10 @@ class ProbeStreamViewTests(TransactionTestCase):
             mock.patch("devtools.views.render_page") as mock_render,
         ):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
-            self._consume(resp)
+            frames = self._consume(resp)
             mock_render.assert_not_called()
 
+        self.assertNotIn("error", [k for k, _ in frames])
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
@@ -323,3 +350,141 @@ class ProbeStreamViewTests(TransactionTestCase):
         kinds = [k for k, _ in frames]
         self.assertIn("resolved", kinds)
         self.assertNotIn("error", kinds)
+
+    # ── Ticket 35.6: write-path dry run ─────────────────────────────────────
+
+    @override_settings(DEBUG=True)
+    @mock.patch("devtools.views.requests.get")
+    def test_ics_probe_emits_write_stage_and_leaves_no_rows(self, mock_get):
+        """The write stage is new: fetch+parse alone used to be the whole probe,
+        which is exactly what let all three collectors probe green during the
+        8-day outage while the pipeline was dead downstream of parse. This
+        proves the write stage actually runs (not just that no rows survive,
+        which the other tests already established) and that DB state is
+        provably identical before and after, not merely "assumed empty".
+        """
+        source = EventSource.objects.create(
+            name="ICS Test",
+            source_type="ics",
+            url="https://example.com/feed.ics",
+        )
+        mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)
+        raw_count_before = RawEvent.objects.count()
+        staged_count_before = StagedEvent.objects.count()
+
+        with mock.patch("devtools.views._validate_url"):
+            resp = probe_stream(self._get({"source_id": str(source.id)}))
+            frames = self._consume(resp)
+
+        write_frames = [d for k, d in frames if k == "stage" and d.get("stage") == "write"]
+        statuses = [d["status"] for d in write_frames]
+        self.assertEqual(statuses, ["start", "end"])
+        write_end = write_frames[1]
+        self.assertEqual(write_end["item_count"], 1)
+        self.assertEqual(write_end["would_create"], 1)
+        self.assertTrue(write_end["rolled_back"])
+
+        kinds = [k for k, _ in frames]
+        self.assertIn("done", kinds)
+        self.assertNotIn("error", kinds)
+
+        self.assertEqual(RawEvent.objects.count(), raw_count_before)
+        self.assertEqual(StagedEvent.objects.count(), staged_count_before)
+        self._assert_no_writes(source)
+
+    @override_settings(DEBUG=True)
+    @mock.patch("devtools.views.requests.get")
+    def test_write_stage_failure_yields_error_frame_not_done(self, mock_get):
+        """A source whose fetch+parse succeed but whose write step fails must
+        render a failing frame, not "Done" — that's the entire point of this
+        ticket. Patches RawEvent.get_or_create to blow up, standing in for a
+        real write-path regression (bad conversion, broken migration, etc.)
+        that the old fetch+parse-only probe could never have caught.
+        """
+        source = EventSource.objects.create(
+            name="ICS Test",
+            source_type="ics",
+            url="https://example.com/feed.ics",
+        )
+        mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)
+
+        # RawEvent.objects.using(db) resolves get_or_create fresh on the bound
+        # QuerySet each call, so patching the manager's own attribute wouldn't
+        # intercept it — patch it at the QuerySet class instead.
+        with (
+            mock.patch("devtools.views._validate_url"),
+            mock.patch(
+                "django.db.models.query.QuerySet.get_or_create",
+                side_effect=Exception("write boom"),
+            ),
+        ):
+            resp = probe_stream(self._get({"source_id": str(source.id)}))
+            frames = self._consume(resp)
+
+        # No successful "write end" frame — the write step raised instead of completing.
+        write_end_frames = [
+            d
+            for k, d in frames
+            if k == "stage" and d.get("stage") == "write" and d.get("status") == "end"
+        ]
+        self.assertEqual(write_end_frames, [])
+
+        errors = [d for k, d in frames if k == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("write boom", errors[0]["message"])
+
+        # A write failure still must not leave anything behind.
+        self._assert_no_writes(source)
+
+    @override_settings(DEBUG=True)
+    @mock.patch("devtools.views._resolve_db", return_value="prod_readonly")
+    def test_prod_readonly_skips_write_stage_with_explanatory_frame(self, mock_resolve_db):
+        """`prod_readonly` is a genuinely read-only Postgres role — attempting
+        a write there wouldn't even reach the rollback, it would just raise
+        InsufficientPrivilege. The probe must recognize the alias up front and
+        degrade to a clear explanatory frame instead of crashing.
+
+        Patches `_resolve_db` directly rather than actually registering a
+        second `prod_readonly` alias: `DATABASES` is one of Django's
+        COMPLEX_OVERRIDE_SETTINGS, so `override_settings(DATABASES=...)`
+        doesn't reliably rebuild the live `connections` handler mid-test, and
+        the thing under test here is the probe's own alias check
+        (`db == "prod_readonly"` in `_probe_dry_run_write`), not Django's
+        multi-database routing — the source lookup itself still resolves
+        against the real (default) test DB, exactly as `_resolve_db` would
+        continue to route every other query for this "prod_readonly" value.
+        """
+        source = EventSource.objects.create(
+            name="ICS Test",
+            source_type="ics",
+            url="https://example.com/feed.ics",
+        )
+
+        # `prod_readonly` isn't a registered alias in the test settings (it's
+        # popped in backend/settings/test.py), so `EventSource.objects.using(
+        # "prod_readonly")` would hit a real ConnectionDoesNotExist before the
+        # probe ever reaches the write stage this test is about. Route the
+        # source lookup back to the real (default) test DB regardless of the
+        # `db` argument it's called with — `_resolve_db` is already mocked
+        # above to force "prod_readonly" through, which is what actually
+        # drives `_probe_dry_run_write`'s read-only-alias check.
+        with (
+            mock.patch("devtools.views.requests.get") as mock_get,
+            mock.patch("devtools.views._validate_url"),
+            mock.patch.object(EventSource.objects, "using", return_value=EventSource.objects),
+        ):
+            mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)
+            resp = probe_stream(self._get({"source_id": str(source.id)}))
+            frames = self._consume(resp)
+
+        write_frames = [d for k, d in frames if k == "stage" and d.get("stage") == "write"]
+        statuses = [d["status"] for d in write_frames]
+        self.assertEqual(statuses, ["start", "skipped"])
+        skipped = write_frames[1]
+        self.assertEqual(skipped["reason"], PROBE_WRITE_SKIPPED_READONLY_DB)
+        self.assertIn("read-only", skipped["detail"])
+
+        kinds = [k for k, _ in frames]
+        self.assertNotIn("error", kinds)
+        self.assertIn("done", kinds)
+        self._assert_no_writes(source)

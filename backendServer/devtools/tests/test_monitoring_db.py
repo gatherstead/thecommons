@@ -675,16 +675,19 @@ class SourceHealthIntegrationTests(TestCase):
             )
 
         # 5 queries as documented pre-existing (sources, raw, no_staged,
-        # staged-by-status, funnel-staged) + 1 for the single recent-runs
+        # staged-by-status, funnel-staged) + 1 for the un-windowed all-time
+        # raw/latest-created_at query (35.4) + 1 for the single recent-runs
         # fetch + 1 for the `resolve_source_runs_state()` probe that gates it
-        # = 7 total.
+        # = 8 total.
         #
         # The invariant under test is unchanged: still *independent of source
         # count*, still no N+1. The availability probe is a fixed O(1) cost
         # paid once per collector_summary() call, not once per source — it's
         # what lets the monitor degrade instead of 500 when prod lacks
         # `ingestion_sourcerun` (see monitoring.resolve_source_runs_state).
-        with self.assertNumQueries(7):
+        # The all-time query is the same shape: one grouped query over
+        # source_ids regardless of source count, not one per source.
+        with self.assertNumQueries(8):
             collector_summary("default", self.start, self.end)
 
     def test_passing_runs_state_skips_the_availability_probe(self):
@@ -709,9 +712,106 @@ class SourceHealthIntegrationTests(TestCase):
             status="ok",
         )
 
-        # The same 7 queries as the test above, minus the availability probe.
-        with self.assertNumQueries(6):
+        # The same 8 queries as the test above, minus the availability probe.
+        with self.assertNumQueries(7):
             collector_summary("default", self.start, self.end, runs_state=RUNS_AVAILABLE)
+
+
+@tag("db")
+class RawZeroDisambiguationTests(TestCase):
+    """35.4: `raw == 0` in the funnel window must distinguish "zero in this
+    window" (real rows exist, just older than the window) from "zero ever"
+    (this source has never produced a single RawEvent) — the real-prod
+    scenario that motivated this ticket: Carrboro Public Events had 63
+    all-time rows invisible at the default 30d window, while Visit Pittsboro
+    and The Plant NC had genuinely never ingested anything.
+    """
+
+    def setUp(self):
+        self.now = timezone.now()
+        self.start = self.now - timedelta(days=30)
+        self.end = self.now + timedelta(days=1)
+
+    def test_zero_in_window_with_all_time_rows_reports_newest_and_count(self):
+        source = EventSource.objects.create(
+            name="Carrboro Public Events",
+            source_type="ics",
+            url="https://carrboro.example.com/feed.ics",
+            active=True,
+        )
+        newest = self.now - timedelta(days=75)
+        RawEvent.objects.create(
+            source=source, raw_title="Old 1", raw_start=newest, source_uid="old1"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=newest)
+        older = newest - timedelta(days=5)
+        RawEvent.objects.create(
+            source=source, raw_title="Old 2", raw_start=older, source_uid="old2"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old2").update(created_at=older)
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Carrboro Public Events")
+        self.assertEqual(row["funnel"]["raw"], 0)
+        self.assertEqual(row["raw_all_time"], 2)
+        self.assertEqual(row["latest_raw_created_at"], newest.isoformat())
+        self.assertIn("2 all-time", row["raw_zero_note"])
+        self.assertIn("widen the window", row["raw_zero_note"])
+        self.assertNotIn("never produced", row["raw_zero_note"])
+
+    def test_zero_in_window_and_zero_ever_reports_never_produced(self):
+        EventSource.objects.create(
+            name="Visit Pittsboro",
+            source_type="ics",
+            url="https://pittsboro.example.com/feed.ics",
+            active=True,
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Visit Pittsboro")
+        self.assertEqual(row["funnel"]["raw"], 0)
+        self.assertEqual(row["raw_all_time"], 0)
+        self.assertIsNone(row["latest_raw_created_at"])
+        self.assertEqual(row["raw_zero_note"], "never produced a raw event")
+
+    def test_raw_zero_note_is_none_when_window_has_rows(self):
+        source = EventSource.objects.create(
+            name="Healthy Source",
+            source_type="ics",
+            url="https://healthy.example.com/feed.ics",
+            active=True,
+        )
+        RawEvent.objects.create(
+            source=source, raw_title="Fresh", raw_start=self.now, source_uid="fresh1"
+        )
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Healthy Source")
+        self.assertEqual(row["funnel"]["raw"], 1)
+        self.assertIsNone(row["raw_zero_note"])
+
+    def test_windowed_raw_count_is_unaffected_by_all_time_query(self):
+        # 35.4 only adds signal — the existing windowed funnel values (already
+        # verified correct against prod) must not change.
+        source = EventSource.objects.create(
+            name="Mixed History Source",
+            source_type="ics",
+            url="https://mixed.example.com/feed.ics",
+            active=True,
+        )
+        RawEvent.objects.create(
+            source=source, raw_title="In window", raw_start=self.now, source_uid="new1"
+        )
+        old = self.now - timedelta(days=90)
+        RawEvent.objects.create(
+            source=source, raw_title="Out of window", raw_start=old, source_uid="old1"
+        )
+        RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=old)
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Mixed History Source")
+        self.assertEqual(row["funnel"]["raw"], 1)
+        self.assertEqual(row["raw_count"], 1)
+        self.assertEqual(row["raw_all_time"], 2)
+        self.assertIsNone(row["raw_zero_note"])
 
 
 @tag("db")

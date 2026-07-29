@@ -2,9 +2,14 @@
 scrape task to its own queue so headless Chromium never lands on the default
 worker shared with digests/ingestion."""
 
+from unittest import mock
+
+from celery.exceptions import Retry
 from django.conf import settings
-from django.test import TestCase, tag
+from django.test import TestCase, override_settings, tag
 from django_celery_beat.models import PeriodicTask
+
+from ingestion.tasks import scrape_all_sources_task
 
 
 @tag("db")
@@ -25,3 +30,21 @@ class ScrapeTaskRoutingTests(TestCase):
             settings.CELERY_TASK_ROUTES["ingestion.tasks.scrape_all_sources_task"]["queue"],
             "scrape",
         )
+
+
+@tag("db")
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+class ScrapeTaskRetryTests(TestCase):
+    def test_failing_poll_retries_task(self):
+        with mock.patch(
+            "ingestion.tasks.poll_all_scraper_sources",
+            side_effect=RuntimeError("connection reset"),
+        ) as poll:
+            # In eager mode self.retry() raises Retry rather than re-executing
+            # inline; this confirms a transient failure is retried rather than
+            # silently dropping the day's poll (previously this task had no
+            # retry configuration at all).
+            with self.assertRaises(Retry):
+                scrape_all_sources_task.delay()
+
+        self.assertEqual(poll.call_count, 1)

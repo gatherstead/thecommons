@@ -1,4 +1,6 @@
+import os
 from datetime import UTC, datetime, timedelta
+from unittest import mock
 
 from django.test import SimpleTestCase, tag
 
@@ -40,7 +42,21 @@ def make_run(status, error_message=""):
 
 @tag("fast")
 class SourceHealthTests(SimpleTestCase):
-    """source_health is pure: plain dicts in, no DB, no I/O."""
+    """source_health is pure: plain dicts in, no DB, no I/O.
+
+    None of these fixtures are testing shard-aware staleness (see
+    `ShardAwareStalenessTests` below for that) — they're asserting the
+    unsharded thresholds documented on each test, so `INGEST_SHARD_COUNT` is
+    pinned to unset here rather than left at whatever `.env` happens to have
+    (this repo's `.env` sets `INGEST_SHARD_COUNT=3` for prod parity, which
+    would otherwise silently widen every stale_after_hours in this class).
+    """
+
+    def setUp(self):
+        env_without_shard = {k: v for k, v in os.environ.items() if k != "INGEST_SHARD_COUNT"}
+        patcher = mock.patch.dict(os.environ, env_without_shard, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_inactive_source_is_never_error(self):
         row = make_row(active=False, last_polled_dt=None, raw_count=0, published=0)
@@ -241,3 +257,60 @@ class SourceHealthTests(SimpleTestCase):
         row = make_row(last_polled_dt=None, raw_count=0, published=0)
         result = source_health(row, [make_run("failed", "boom")], NOW)
         self.assertEqual(result["level"], "error")
+
+
+@tag("fast")
+class ShardAwareStalenessTests(SimpleTestCase):
+    """35.3: staleness must account for `INGEST_SHARD_COUNT`.
+
+    Prod runs `INGEST_SHARD_COUNT=3` — day-of-year sharding means a source is
+    only eligible to poll on one day in three, so its real cadence is
+    `poll_interval_hours * 3`, not `poll_interval_hours` alone. Judging a real
+    72h cadence against the unsharded 48h threshold (`24h * _STALE_POLL_MULTIPLIER`)
+    made a perfectly healthy prod source render a permanent `error` badge.
+    """
+
+    def _with_shard(self, value):
+        if value is None:
+            env = {k: v for k, v in os.environ.items() if k != "INGEST_SHARD_COUNT"}
+            return mock.patch.dict(os.environ, env, clear=True)
+        return mock.patch.dict(os.environ, {"INGEST_SHARD_COUNT": value})
+
+    def test_60h_since_poll_with_shard_3_is_not_error(self):
+        # 24h poll_interval * shard 3 * _STALE_POLL_MULTIPLIER(2) = 144h grace
+        # — 60h is well inside it.
+        row = make_row(poll_interval_hours=24, last_polled_dt=NOW - timedelta(hours=60))
+        with self._with_shard("3"):
+            result = source_health(row, [make_run("ok")], NOW)
+        self.assertNotEqual(result["level"], "error")
+
+    def test_60h_since_poll_with_shard_1_is_error(self):
+        # Same source, sharding disabled: 24h * 1 * 2 = 48h grace, 60h exceeds it.
+        row = make_row(poll_interval_hours=24, last_polled_dt=NOW - timedelta(hours=60))
+        with self._with_shard("1"):
+            result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "error")
+
+    def test_60h_since_poll_with_shard_unset_is_error(self):
+        # Unset must behave identically to shard 1 (sharding disabled),
+        # mirroring `ingestion.tasks._resolve_env_shard`.
+        row = make_row(poll_interval_hours=24, last_polled_dt=NOW - timedelta(hours=60))
+        with self._with_shard(None):
+            result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "error")
+
+    def test_unparseable_shard_count_falls_back_to_unsharded(self):
+        row = make_row(poll_interval_hours=24, last_polled_dt=NOW - timedelta(hours=60))
+        with self._with_shard("not-a-number"):
+            result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "error")
+
+    def test_assumed_shard_count_is_visible_in_reasons(self):
+        row = make_row(
+            poll_interval_hours=24,
+            last_polled_dt=NOW - timedelta(hours=200),
+        )
+        with self._with_shard("3"):
+            result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "error")
+        self.assertTrue(any("shard count 3" in r for r in result["reasons"]))

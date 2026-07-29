@@ -41,7 +41,16 @@ def _resolve_env_shard():
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def run_ingestion_pipeline(self):
-    """Run the full ingestion pipeline as one task.
+    """Run the ICS-poll leg of the ingestion pipeline as one task.
+
+    Polls ICS sources ONLY (`poll_all_ics_sources`) — http/scraper sources are
+    NOT touched here. Those are polled by the separate `scrape_all_sources_task`
+    on its own beat schedule (`scrape-sources-daily`), routed to the dedicated
+    `scrape` queue. The two are intentionally NOT chained: see ingest_events.py's
+    Step 1 vs Step 1b for the command-line equivalent of this split. A prior
+    version of this docstring claimed to mirror ingest_events end-to-end, which
+    was false and part of why two `http`-type sources went unpolled for weeks
+    with nobody noticing — don't repeat that mistake.
 
     Each step is wrapped so one failure logs and lets the rest proceed (mirroring
     the ingest_events command). If any step raised, the whole task retries — up to
@@ -94,14 +103,32 @@ def run_ingestion_pipeline(self):
     logger.info("run_ingestion_pipeline: complete")
 
 
-@shared_task
-def scrape_all_sources_task():
-    """Poll scraper-type EventSources (renders headless Chromium). Routed to the
-    dedicated `scrape` queue so browser memory stays off the default worker."""
-    shard = _resolve_env_shard()
-    new_count = poll_all_scraper_sources(shard=shard)
-    logger.info("scrape_all_sources_task: %s new raw events", new_count)
-    return new_count
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def scrape_all_sources_task(self):
+    """Poll `http`- and `scraper`-type EventSources. Routed to the dedicated
+    `scrape` queue so headless-browser memory stays off the default worker.
+
+    Despite the queue name, most of the critical path here is NOT a browser:
+    `poll_all_scraper_sources` covers both `http` and `scraper` source types,
+    and `http` sources are fetched with plain `requests` (no Chromium at all —
+    see `_fetch_via_http` in scraper_importer.py). Only `scraper`-type sources
+    render headless Chromium. Both current production sources in this task's
+    remit (Visit Pittsboro, The Plant NC) are `http`, so Chromium isn't in
+    their path; don't assume it is when debugging a stall here.
+
+    Retries on any exception, up to 3 times with a 5-min backoff, matching
+    run_ingestion_pipeline — this task previously had no retry at all, so a
+    transient failure (e.g. a single flaky fetch) just silently dropped the
+    day's poll.
+    """
+    try:
+        shard = _resolve_env_shard()
+        new_count = poll_all_scraper_sources(shard=shard)
+        logger.info("scrape_all_sources_task: %s new raw events", new_count)
+        return new_count
+    except Exception as e:
+        logger.error("scrape_all_sources_task failed: %s", e)
+        raise self.retry(exc=e) from e
 
 
 @shared_task

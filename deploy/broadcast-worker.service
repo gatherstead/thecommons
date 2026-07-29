@@ -21,8 +21,13 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/thecommons/backendServer
 EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
-ExecStart=/snap/bin/uv run celery -A backend worker -Q broadcast -c 1 -l info
-Restart=on-failure
+# .venv/bin/celery, not `uv run` — see celery.service for why: `uv run`
+# through snap put this unit's process in a user-scope that a logout could
+# tear down. Execing the venv binary directly removes that mechanism.
+ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend worker -Q broadcast -c 1 -l info
+# Restart=always is belt-and-braces (see celery.service) in case this unit
+# is ever reverted to `uv run` or linger (DEPLOY.md) is ever lost.
+Restart=always
 RestartSec=5
 # Screenshot/download dirs (BROADCAST_SCREENSHOT_DIR / BROADCAST_DOWNLOAD_DIR
 # in .env) must be writable by ubuntu, e.g. /home/ubuntu/broadcast/.

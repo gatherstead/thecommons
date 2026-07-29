@@ -3,6 +3,7 @@ import re
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.db import OperationalError
 from django.http import Http404
 from django.test import RequestFactory, TestCase, override_settings, tag
@@ -109,6 +110,78 @@ class MonitorViewTests(TestCase):
         # the one place in these tables the em-dash still belongs.
         content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
         self.assertIn("<td>—</td>", content)
+
+    # ── 35.4: zero-in-window vs. zero-ever ──────────────────────────────────
+
+    @override_settings(DEBUG=True)
+    def test_never_produced_source_renders_distinct_note(self):
+        EventSource.objects.create(
+            name="Visit Pittsboro",
+            source_type="ics",
+            url="https://pittsboro.example.com/feed.ics",
+            active=True,
+        )
+        content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
+        self.assertIn("never produced a raw event", content)
+
+    @override_settings(DEBUG=True)
+    def test_stale_window_source_renders_all_time_count_and_newest_date(self):
+        source = EventSource.objects.create(
+            name="Carrboro Public Events",
+            source_type="ics",
+            url="https://carrboro.example.com/feed.ics",
+            active=True,
+        )
+        old = self.now - timedelta(days=75)
+        RawEvent.objects.create(source=source, raw_title="Old", raw_start=old, source_uid="old1")
+        RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=old)
+
+        content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
+        self.assertIn("1 all-time", content)
+        self.assertIn("widen the window", content)
+        self.assertNotIn("never produced a raw event", content)
+
+    # ── 35.10: which database this page is reading must be unambiguous ─────
+
+    # The `.db-banner.db-prod` CSS rule is always present in <style>, so a
+    # plain substring check for "db-prod" in the page would pass regardless
+    # of which branch rendered — this pulls the class attribute actually
+    # applied to the <span class="db-banner ..."> element.
+    DB_BANNER_RE = re.compile(r'<span class="db-banner ([^"]*)">')
+
+    @override_settings(DEBUG=True)
+    def test_default_db_banner_names_default(self):
+        content = monitor(self._get("/devtools/monitor")).content.decode()
+        banner_class = self.DB_BANNER_RE.search(content).group(1)
+        self.assertEqual(banner_class, "db-default")
+        self.assertIn("default (local)", content)
+
+    @override_settings(DEBUG=True)
+    def test_prod_readonly_db_banner_names_prod(self):
+        content = monitor(self._get("/devtools/monitor", {"db": "prod_readonly"})).content.decode()
+        # prod_readonly isn't configured in tests, so `_resolve_db` falls back.
+        banner_class = self.DB_BANNER_RE.search(content).group(1)
+        self.assertEqual(banner_class, "db-default")
+
+    @override_settings(DEBUG=True)
+    def test_prod_readonly_db_banner_when_configured(self):
+        # `_resolve_db` only honors `?db=prod_readonly` when that alias is
+        # actually configured — simulate configuration by registering the
+        # alias (pointed at the same test DB, never actually queried: mocking
+        # `resolve_source_runs_state` to `RUNS_UNREACHABLE` short-circuits
+        # `monitor()` before either summary query runs, mirroring
+        # `_render_with_state` below).
+        databases_with_prod = {**settings.DATABASES, "prod_readonly": settings.DATABASES["default"]}
+        with (
+            override_settings(DATABASES=databases_with_prod),
+            patch("devtools.views.resolve_source_runs_state", return_value=RUNS_UNREACHABLE),
+        ):
+            content = monitor(
+                self._get("/devtools/monitor", {"db": "prod_readonly"})
+            ).content.decode()
+        banner_class = self.DB_BANNER_RE.search(content).group(1)
+        self.assertEqual(banner_class, "db-prod")
+        self.assertIn("prod_readonly (read-only)", content)
 
     # ── Degradation banners ─────────────────────────────────────────────────
 

@@ -1,0 +1,20 @@
+# Runs healthcheck.service hourly — copy to /etc/systemd/system/healthcheck.timer
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now healthcheck.timer
+#
+# Deliberately NOT a django-celery-beat entry: beat itself is one of the
+# things this checks, so scheduling it through beat would mean a dead beat
+# silences its own alarm. A systemd timer runs independent of the app stack —
+# it fires even if Postgres, Redis, and every Celery process are down, so
+# those failures actually surface as FAILs instead of just not running.
+
+[Unit]
+Description=Run The Commons health check hourly
+
+[Timer]
+OnCalendar=hourly
+# Spread startup checks so a reboot doesn't pile every timer onto :00.
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

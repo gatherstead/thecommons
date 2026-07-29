@@ -24,6 +24,24 @@
   .monitor .controls select { padding: 0.3rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem; }
   .monitor .controls .db-label.prod-active { color: #dc2626; }
 
+  /* Ticket 35.10: which database this page is reading must be unmissable —
+     the toggle in .controls is easy to glance past, and a `?db=default` page
+     that happens to render an empty Collectors table (a stale local
+     DATABASE_URL, not a bug) looks identical to one reading prod. This badge
+     restates the same `db` value the toggle already reflects, just louder. */
+  .monitor .db-banner {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+  .monitor .db-banner.db-default { background: #e0e7ff; color: #3730a3; }
+  .monitor .db-banner.db-prod { background: #fee2e2; color: #991b1b; }
+
   .monitor table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 0.5rem; }
   .monitor th, .monitor td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; text-align: left; }
   .monitor th { background: #f3f4f6; font-weight: 700; }
@@ -32,6 +50,10 @@
   .monitor tr.source-row.inactive { color: #9ca3af; }
   .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .monitor td.num.zero { color: #b6bcc6; }
+  /* Ticket 35.4: distinguishes "zero in this window" from "zero ever" inline,
+     next to the muted 0 the funnel-cell convention already renders — see
+     `_raw_zero_note` in monitoring.py for the two message shapes. */
+  .monitor .zero-note { font-weight: 400; font-size: 0.78rem; color: #92400e; white-space: nowrap; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
   .monitor .notice {
     background: #fef3c7;
@@ -97,6 +119,16 @@
   .monitor .btn-probe:hover { background: #f9fafb; border-color: #9ca3af; }
   .monitor .btn-probe:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
 
+  .monitor .probe-caveat {
+    font-size: 0.75rem;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+
   .monitor .probe-status { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; }
   .monitor .probe-status .spinner {
     display: inline-block;
@@ -128,6 +160,7 @@
   .monitor .probe-log .probe-resolved { color: #93c5fd; }
   .monitor .probe-log .probe-stage { color: #d1d5db; }
   .monitor .probe-log .probe-refused { color: #fca5a5; }
+  .monitor .probe-log .probe-skipped { color: #fbbf24; }
   .monitor .probe-log .probe-error { color: #f87171; }
   .monitor .probe-log .probe-done { color: #86efac; }
   .monitor .probe-log .probe-traceback {
@@ -141,6 +174,11 @@
 
 <div class="monitor">
   <h1>Ingestion &amp; Broadcast Monitor</h1>
+  <p>
+    <span class="db-banner {% if db == 'prod_readonly' %}db-prod{% else %}db-default{% endif %}">
+      Reading: {% if db == "prod_readonly" %}prod_readonly (read-only){% else %}default (local){% endif %}
+    </span>
+  </p>
   <p class="description">
     Per-collector and per-broadcast event counts for the selected window. Click a row to see the
     underlying raw events (or broadcast submissions).
@@ -228,7 +266,7 @@
         zeros. A *blank* funnel cell is therefore diagnostic — it means the
         template lookup missed and the server sent no integer at all.
         {% endcomment %}
-        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}"{% if c.raw_zero_note %} title="{{ c.raw_zero_note }}"{% endif %}>{{ c.funnel.raw }}{% if c.raw_zero_note %}<span class="zero-note"> &mdash; {{ c.raw_zero_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
         <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
@@ -279,7 +317,7 @@
         See the note on the collectors table: muted `0` for real zeros, the
         em-dash reserved for genuinely-absent values.
         {% endcomment %}
-        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}">{{ c.funnel.raw }}</td>
+        <td class="num funnel-cell{% if not c.funnel.raw %} zero{% endif %}"{% if c.raw_zero_note %} title="{{ c.raw_zero_note }}"{% endif %}>{{ c.funnel.raw }}{% if c.raw_zero_note %}<span class="zero-note"> &mdash; {{ c.raw_zero_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.unprocessed %} zero{% endif %}">{{ c.funnel.unprocessed }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_staged %} zero{% endif %}">{{ c.funnel.no_staged }}</td>
         <td class="num funnel-cell{% if not c.funnel.duplicate %} zero{% endif %}">{{ c.funnel.duplicate }}</td>
@@ -404,7 +442,11 @@
   }
 
   // Probe tab: streams GET /devtools/probe?source_id=<id>&db=<db> (SSE) into a
-  // log pane. Mirrors playground.html's EventSource handling (see
+  // log pane. Dry-runs fetch, parse, AND write (ticket 35.6) — every write the
+  // probe issues is rolled back server-side, so a write-path failure now shows
+  // up as a failing "write" stage frame instead of a false-green "Done" (the
+  // exact failure mode that misdirected an 8-day outage investigation toward
+  // the network layer). Mirrors playground.html's EventSource handling (see
   // playground.html:1364-1421) including the `streamDone` guard against the
   // native 'error' event EventSource fires on normal connection close after
   // 'done' — without it, every successful probe would render a spurious error.
@@ -414,6 +456,12 @@
     var streamDone = false;
 
     panel.innerHTML =
+      '<div class="probe-caveat">' +
+      "<strong>Client-IP caveat:</strong> this probe runs from your machine, not the " +
+      "production poller — it cannot detect IP- or User-Agent-based blocking by the " +
+      "source's own WAF. A green probe proves the write path works from here, not that " +
+      "prod can reach this source." +
+      "</div>" +
       '<div class="probe-status" id="probe-status-' + sourceId + '">' +
       '<span class="spinner"></span>Probing… (<span class="probe-elapsed">0</span>s)' +
       "</div>" +
@@ -465,9 +513,24 @@
         if (data.http_status != null) extras += " http_status=" + escHtml(data.http_status);
         if (data.bytes != null) extras += " bytes=" + escHtml(data.bytes);
         if (data.item_count != null) extras += " item_count=" + escHtml(data.item_count);
+        if (data.would_create != null) extras += " would_create=" + escHtml(data.would_create);
+        if (data.rolled_back) extras += " (rolled back — nothing written)";
         if (data.sample_titles && data.sample_titles.length) {
           extras += "<br>sample titles: " + data.sample_titles.map(escHtml).join("; ");
         }
+      }
+      // The "write" stage can also land on "skipped" (read-only DB, e.g.
+      // prod_readonly — see PROBE_WRITE_SKIPPED_READONLY_DB) rather than
+      // start/end; render it like `refused` (amber, named reason + detail)
+      // instead of pretending it ran.
+      if (data.status === "skipped") {
+        appendFrame(
+          "probe-skipped",
+          "<strong>" + escHtml(data.stage) + "</strong> " + badge("skipped") + " " +
+            escHtml(data.reason) +
+            (data.detail ? "<br>" + escHtml(data.detail) : "")
+        );
+        return;
       }
       // Reuse the badge() helper's running/done palette (defined for run statuses)
       // for stage start/end, so an in-progress stage reads amber and a finished

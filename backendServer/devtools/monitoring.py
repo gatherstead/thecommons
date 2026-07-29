@@ -9,9 +9,11 @@ readable on the target database (see `resolve_source_runs_state`).
 Read-only: no `.save()`/`.delete()` anywhere in this module.
 """
 
+import os
+
 from django.conf import settings
 from django.db import OperationalError, ProgrammingError
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
@@ -154,6 +156,40 @@ def _worse(level_a, level_b):
     return level_a if _HEALTH_RANK[level_a] <= _HEALTH_RANK[level_b] else level_b
 
 
+def _assumed_shard_count() -> int:
+    """How many day-of-year shards `INGEST_SHARD_COUNT` splits polling into.
+
+    Sharding means each source is only *eligible* to poll on `1 / shard_count`
+    of days, so the real cadence between polls is `poll_interval_hours *
+    shard_count`, not `poll_interval_hours` alone. Ignoring that made a
+    perfectly healthy sharded prod (shard_count=3, so a real ~72h cadence
+    against a 48h `_STALE_POLL_MULTIPLIER` threshold) render a permanent
+    `error` badge.
+
+    Mirrors the parsing in `ingestion/tasks.py::_resolve_env_shard` (unset,
+    unparseable, or `<= 1` all disable sharding -> shard count 1) exactly,
+    duplicated rather than imported: `tasks.py` pulls in Celery and the full
+    importer/scraper/services stack, which is much heavier than this "pure
+    query service" module wants for a three-line env parse, and
+    `ingestion.tasks` is not otherwise a dependency here. If
+    `_resolve_env_shard`'s parsing rules ever change, update both.
+
+    Also a real wart worth naming: this reads a *local* env var to judge a
+    remote `prod_readonly` database's staleness, since the devtool has no way
+    to ask prod what its own `INGEST_SHARD_COUNT` is. `_staleness_signal`
+    surfaces the assumed count in its reason strings so that mismatch is
+    visible on screen instead of silently wrong.
+    """
+    m_env = os.environ.get("INGEST_SHARD_COUNT")
+    if not m_env:
+        return 1
+    try:
+        m = int(m_env)
+    except ValueError:
+        return 1
+    return m if m > 1 else 1
+
+
 def _staleness_signal(source_row, now):
     """Evaluate the last-polled rule; return `(level, reason)` or None.
 
@@ -161,13 +197,23 @@ def _staleness_signal(source_row, now):
     never reports `error` — a source added an hour ago and one that has been
     hard-failing for weeks must not render the same red badge, or the operator
     learns to distrust red. Judged against the same grace period the staleness
-    rule already uses (`poll_interval_hours * _STALE_POLL_MULTIPLIER`), only
-    measured from `created_at`: inside it the source simply isn't due for a
+    rule already uses (`poll_interval_hours * shard_count * _STALE_POLL_MULTIPLIER`),
+    only measured from `created_at`: inside it the source simply isn't due for a
     first poll yet (`unknown`); past it, something should have polled it and
     didn't (`warn`). `error` stays reserved for a source that demonstrably
     polled and then stopped.
+
+    `shard_count` (from `_assumed_shard_count`) widens the grace period because
+    day-of-year sharding means a source is only eligible to poll on one day in
+    every `shard_count` — prod runs `INGEST_SHARD_COUNT=3`, so its real poll
+    cadence is `poll_interval_hours * 3`, not `poll_interval_hours` alone. Every
+    reason string names the assumed shard count explicitly, because this is a
+    *local* env var judging a database that may not be local (`prod_readonly`)
+    — see `_assumed_shard_count`'s docstring.
     """
-    stale_after_hours = source_row["poll_interval_hours"] * _STALE_POLL_MULTIPLIER
+    shard_count = _assumed_shard_count()
+    stale_after_hours = source_row["poll_interval_hours"] * shard_count * _STALE_POLL_MULTIPLIER
+    shard_note = f" (assuming shard count {shard_count})"
     last_polled_dt = source_row.get("last_polled_dt")
 
     if last_polled_dt is None:
@@ -182,19 +228,20 @@ def _staleness_signal(source_row, now):
             return (
                 "unknown",
                 f"never polled, but created only {age_hours:.1f}h ago; "
-                f"not yet due for a first poll (expected within {stale_after_hours}h)",
+                f"not yet due for a first poll (expected within {stale_after_hours}h)"
+                f"{shard_note}",
             )
         return (
             "warn",
             f"never polled since creation {age_hours:.1f}h ago, "
-            f"expected within {stale_after_hours}h",
+            f"expected within {stale_after_hours}h{shard_note}",
         )
 
     age_hours = (now - last_polled_dt).total_seconds() / 3600
     if age_hours > stale_after_hours:
         return (
             "error",
-            f"last polled {age_hours:.1f}h ago, expected within {stale_after_hours}h",
+            f"last polled {age_hours:.1f}h ago, expected within {stale_after_hours}h{shard_note}",
         )
     return None
 
@@ -246,6 +293,24 @@ def source_health(source_row, recent_runs, now):
     return {"level": level, "reasons": reasons}
 
 
+def _raw_zero_note(raw_all_time, latest_raw_created_at_dt, now):
+    """Compose the message for a `raw == 0` funnel cell — see module docstring
+    on `_source_rows`'s all-time query for why this distinction matters.
+
+    Suite 33 established that a blank funnel cell (not `0`) is what signals a
+    real bug, so this only ever supplements the `0` already rendered — it
+    never replaces it or renders in place of a cell.
+    """
+    if raw_all_time == 0:
+        return "never produced a raw event"
+    age_days = (now - latest_raw_created_at_dt).total_seconds() / 86400
+    newest = latest_raw_created_at_dt.date().isoformat()
+    return (
+        f"0 in window; {raw_all_time} all-time, newest {newest} "
+        f"({age_days:.0f}d ago) — widen the window"
+    )
+
+
 def _source_rows(db, start, end, source_type_filter, runs_state=None):
     # Staleness is a wall-clock question ("has this source polled recently?"),
     # so it is measured against real `now`, never the window's `end`. In prod
@@ -288,6 +353,21 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
     )
     raw_counts = {row["source"]: row["n"] for row in raw_rows}
     unprocessed_counts = {row["source"]: row["unprocessed"] for row in raw_rows}
+
+    # Deliberately un-windowed (no created_at filter): a source with zero raw
+    # events *in this window* can mean either "nothing new lately" (real rows
+    # exist, just outside the window) or "this source has never produced a
+    # single row, ever" — the funnel above can't tell those apart, and the
+    # latter is the real headline. One additional grouped query over
+    # source_ids, same shape as `raw_rows` above — not per-source, no N+1.
+    all_time_rows = (
+        RawEvent.objects.using(db)
+        .filter(source_id__in=source_ids)
+        .values("source")
+        .annotate(n=Count("id"), latest=Max("created_at"))
+    )
+    raw_all_time_counts = {row["source"]: row["n"] for row in all_time_rows}
+    latest_raw_created_at = {row["source"]: row["latest"] for row in all_time_rows}
 
     no_staged_counts = {
         row["source"]: row["n"]
@@ -372,6 +452,16 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
         staged_status_counts = staged_by_source.get(source_id, dict.fromkeys(_STAGED_STATUSES, 0))
         funnel_staged = funnel_staged_by_source.get(source_id, {})
         recent_runs = runs_by_source.get(source_id, [])
+        raw_all_time = raw_all_time_counts.get(source_id, 0)
+        raw_in_window = raw_counts.get(source_id, 0)
+        # Only computed for a zero-in-window row — a healthy funnel has
+        # nothing to disambiguate, and this saves the datetime math on every
+        # other row.
+        raw_zero_note = (
+            _raw_zero_note(raw_all_time, latest_raw_created_at.get(source_id), now)
+            if raw_in_window == 0
+            else None
+        )
         last_run = (
             {
                 "status": recent_runs[0]["status"],
@@ -389,7 +479,18 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             "url": source["url"],
             "active": source["active"],
             "last_polled": _iso(source["last_polled"]),
-            "raw_count": raw_counts.get(source_id, 0),
+            "raw_count": raw_in_window,
+            # Un-windowed, so this template can tell "zero in this window" from
+            # "zero ever" — see the query comment above. `raw_all_time` stays 0
+            # (not missing) for a source with no rows at all, matching the rest
+            # of this module's "0 is a real answer, blank is a bug" convention.
+            "raw_all_time": raw_all_time,
+            "latest_raw_created_at": _iso(latest_raw_created_at.get(source_id)),
+            # Only set when `raw_count == 0` — see `_raw_zero_note`. Renders as
+            # a tooltip/subtext on the `raw` funnel cell instead of the plain
+            # "0", turning "8 muted zeros" into "1 stale source + 2 real
+            # never-ingested sources" at a glance.
+            "raw_zero_note": raw_zero_note,
             "staged_by_status": staged_status_counts,
             "published_count": funnel_staged.get("published", 0),
             # Buckets are mutually exclusive — each raw event lands in exactly
@@ -398,7 +499,7 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             # terminal `published` status), and `approved` is the residual:
             # approved but not yet published. See the annotations above.
             "funnel": {
-                "raw": raw_counts.get(source_id, 0),
+                "raw": raw_in_window,
                 "unprocessed": unprocessed_counts.get(source_id, 0),
                 "no_staged": no_staged_counts.get(source_id, 0),
                 "duplicate": staged_status_counts["duplicate"],

@@ -12,7 +12,8 @@
 # System-level checks (RAM/disk/systemd/cron) are done here in bash; app-level
 # checks are delegated to `manage.py healthcheck`, whose STATUS|name|detail lines
 # are colorized below. Exits non-zero if any critical check fails so it can feed
-# monitoring later.
+# monitoring — including a stale/never-run beat schedule, which is now a FAIL,
+# not a WARN (a dead scheduler is an outage, not a suggestion).
 #
 # Tunables (env vars, with defaults):
 #   RAM_WARN=80  RAM_FAIL=95     # % memory used

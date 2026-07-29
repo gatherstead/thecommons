@@ -12,6 +12,15 @@ view (`devtools/views.py`) starts with `if not settings.DEBUG: raise Http404` �
 appends it to `INSTALLED_APPS`; `backend/urls.py` only includes `devtools.urls` when
 `settings.DEBUG`). It is never reachable in prod.
 
+**Which database you're looking at is always visible.** The page header renders a
+`Reading: default (local)` / `Reading: prod_readonly (read-only)` badge next to the title,
+restating the same `db` query param the window/DB toggle in `.controls` already reflects —
+just louder, and unmissable even if the toggle itself is glanced past. This matters because
+`?db=default` against a stale local `DATABASE_URL` renders an empty Collectors table that
+looks identical, at a glance, to a genuinely-empty prod read — the badge is the one thing on
+the page that always answers "which database, unambiguously" regardless of what the tables
+below it show.
+
 ---
 
 ## The funnel
@@ -47,6 +56,30 @@ That leaves a third state worth knowing: a **blank** funnel cell is diagnostic. 
 the server sent integer zero; blank means the template lookup missed and no value was sent
 at all — a real bug, not an empty window.
 
+### Zero in this window vs. zero ever
+
+A muted `0` in the `raw` column answers "did this source produce anything in the selected
+window", which conflates two very different situations: a source that's just quiet right
+now (real rows exist, just older than the window) and a source that has **never** produced
+a single `RawEvent`. On a real prod page this showed up as eight identical muted zeros
+across three collectors — indistinguishable from a broken page — when the actual story was
+one stale-window source and two sources that had never ingested anything at all.
+
+`_source_rows` (`devtools/monitoring.py`) now runs one additional un-windowed grouped query
+per `collector_summary` / `broadcast_inbound_summary` call — `raw_all_time` (a plain count)
+and `latest_raw_created_at` (`Max(created_at)`) over the same `source_ids`, same shape as
+the windowed `raw` query, so it stays O(1) per page render regardless of source count. When
+`funnel.raw == 0`, `_raw_zero_note` composes one of two messages, rendered as a subscript
+next to the `0` (and as its tooltip):
+
+- Rows exist outside the window: `0 in window; 63 all-time, newest 2026-05-14 (75d ago) —
+  widen the window`.
+- No rows exist, ever: `never produced a raw event`.
+
+The windowed `funnel.raw` value itself is unchanged — this is purely additional signal, not
+a fix to the windowed count (which was verified correct against prod; see the git history
+around ticket 35.4 if that assumption ever needs re-checking).
+
 ### Two traps
 
 **The buckets are not mutually exclusive and do not sum to `raw`.** They're independent
@@ -78,12 +111,32 @@ still been wrong for anyone diffing against a `prod_readonly` snapshot taken ear
 `error`. Three constants drive the rules:
 
 - `_STALE_POLL_MULTIPLIER = 2` — a source is stale once it's gone `2 ×
-  poll_interval_hours` without polling.
+  poll_interval_hours × shard_count` without polling (see shard note below).
 - `_CONSECUTIVE_FAILURE_THRESHOLD = 2` — two consecutive non-`ok` runs (after filtering out
   `skipped`) trip the error rule regardless of the latest run's own status.
 - `_RECENT_RUNS_PER_SOURCE = 5` — how many recent `SourceRun` rows are pulled per source to
   evaluate the consecutive-failure rule (padded above the threshold so a stray `skipped`
   run doesn't push a real failure out of the window).
+
+**Staleness is shard-aware.** Prod runs `INGEST_SHARD_COUNT=3` — day-of-year sharding means
+each source is only *eligible* to poll on one day in three, so the real cadence between
+polls is `poll_interval_hours × shard_count`, not `poll_interval_hours` alone. Every
+staleness threshold in this module (`_staleness_signal`, `monitoring.py`) multiplies by
+`_assumed_shard_count()` before comparing, so a source with `poll_interval_hours=24` under
+shard 3 gets a ~144h grace period instead of 48h. Before this, a perfectly healthy sharded
+prod rendered a permanent red `error` badge — a false alarm on every single row, all the
+time.
+
+`_assumed_shard_count()` parses `INGEST_SHARD_COUNT` from the **local** process's
+environment, duplicating (not importing) the same parsing rules as
+`ingestion/tasks.py::_resolve_env_shard` (unset, unparseable, or `≤ 1` all mean shard count
+1 — sharding disabled). This is a real wart: the devtool is judging a *remote*
+`prod_readonly` database's staleness using a *local* env var, and there is no way for it to
+ask prod what its own `INGEST_SHARD_COUNT` actually is. The mitigation is visibility, not a
+fix — every staleness reason string names the assumed count explicitly, e.g. `last polled
+60.0h ago, expected within 144h (assuming shard count 3)`, so a mismatch between local and
+prod configuration is something an operator can see and account for, not something silently
+wrong.
 
 Rules, most severe first:
 
@@ -101,13 +154,14 @@ Rules, most severe first:
    trip (staleness might still catch it if polling has actually stalled). But a source
    that failed, was `skipped` twice while not due, then failed again *is* 2 consecutive
    failures once the `skipped` rows are filtered out of the sequence.
-3. **`error` — staleness.** `now - last_polled` exceeds `poll_interval_hours × 2`. Measured
-   against real `now`, not the window end (see above). This rule requires a non-null
-   `last_polled`: **`error` is reserved for evidenced failure**, meaning a source that
-   demonstrably polled and then stopped.
+3. **`error` — staleness.** `now - last_polled` exceeds `poll_interval_hours × shard_count ×
+   2`. Measured against real `now`, not the window end (see above). This rule requires a
+   non-null `last_polled`: **`error` is reserved for evidenced failure**, meaning a source
+   that demonstrably polled and then stopped.
 4. **`warn` / `unknown` — never polled.** A null `last_polled` is *absence of signal*, not
-   evidence of failure, so it never reports `error`. It's judged against the same grace
-   period (`poll_interval_hours × _STALE_POLL_MULTIPLIER`), measured from `created_at`:
+   evidence of failure, so it never reports `error`. It's judged against the same
+   shard-aware grace period (`poll_interval_hours × shard_count × _STALE_POLL_MULTIPLIER`),
+   measured from `created_at`:
    - Inside the grace period → **`unknown`**: the source isn't due for a first poll yet.
    - Past it → **`warn`**: something should have polled it and didn't.
 
@@ -157,24 +211,48 @@ from "this crashed" and from "this ran cleanly and found nothing."
 ## The probe
 
 `GET /devtools/probe?source_id=<int>&db=<alias>` — an SSE stream (`probe_stream`,
-`devtools/views.py:379`) that dry-runs the fetch+parse stage for one `EventSource`.
+`devtools/views.py:560`) that dry-runs the fetch, parse, **and write** stages for one
+`EventSource`.
 
-It is a genuine dry run: it **never writes** `RawEvent`, `StagedEvent`, or `SourceRun`
-rows, and **never touches** `source.last_polled`. That's why it's safe to point at
-`?db=prod_readonly` — it reuses the same fetch/parse logic as the real importers but
-stops before the ORM-write phase entirely (no writes issued against either alias).
+**Why write is in scope (ticket 35.6):** during an 8-day prod outage, all three
+collectors probed green — HTTP 200, dozens of items parsed — while the pipeline was
+completely dead. Fetch+parse alone can't catch a write-path regression (a broken
+datetime conversion, a `get_or_create` failure, a migration prod hasn't picked up yet),
+so a probe that stops at parse can report success on a dead pipeline. The probe now
+builds the exact `RawEvent` rows the real importer would create and issues them against
+the target database inside a transaction, so a write-path failure surfaces as a failing
+`write` stage frame instead of a silent `Done`.
 
-### SSE frames (five, not four)
+It is still a genuine dry run: it **never leaves a row behind**. Every write goes through
+`transaction.atomic()` with `transaction.set_rollback(True, ...)` forced at the end of the
+block (`_probe_dry_run_write`), so even a fully successful dry run rolls back —
+`RawEvent`/`StagedEvent`/`SourceRun` counts and `source.last_polled` are unchanged after
+the stream ends, proven by a test that asserts row counts before/after. Pointed at
+`?db=prod_readonly`, the write stage is skipped outright rather than attempted and rolled
+back: `prod_readonly` is a genuinely read-only Postgres role (`SELECT` only, enforced at
+the DB level — see "Prod read-only safety" below), so an attempted write there wouldn't
+even reach the rollback and would instead surface as an opaque `InsufficientPrivilege`.
+The probe checks the `db` alias before issuing any write statement and substitutes a
+`write` stage frame with `status: "skipped"` and an explanatory `detail` instead.
+
+**Client-IP caveat.** The probe runs from the operator's laptop, not the production VM —
+it structurally cannot detect IP- or User-Agent-based blocking by the source's own WAF.
+This was a live false hypothesis during the outage investigation (network layer got
+blamed while the real fault was downstream of parse). The Probe tab in `monitor.html`
+states this caveat directly, not just here: a green probe proves the write path works
+*from this machine*, not that prod's poller can reach the source at all.
+
+### SSE frames (still five event types — `write` is a `stage`, not a new type)
 
 | Frame | Payload | When |
 |---|---|---|
 | `resolved` | `{source_id, name, source_type, url}` | Always first — confirms which source and DB alias were resolved. |
-| `stage` | `{stage: "fetch"\|"parse", status: "start"\|"end", ...}` | Progress through the fetch and parse steps (bytes fetched, item count, up to 3 sample titles). |
-| `refused` | `{reason, detail}` | A guard declined the probe — see reason codes below. |
-| `error` | `{exception_class, message, traceback}` | Something threw during fetch/parse. |
+| `stage` | `{stage: "fetch"\|"parse"\|"write", status: "start"\|"end"\|"skipped", ...}` | Progress through fetch, parse, and write. `fetch`/`parse` carry byte counts, item count, up to 3 sample titles on their `end` frame. `write` carries `item_count` and `would_create` on `end`, or `reason`/`detail` on `skipped` (read-only DB — see below). |
+| `refused` | `{reason, detail}` | A guard declined the probe before fetch even started — see reason codes below. |
+| `error` | `{exception_class, message, traceback}` | Something threw during fetch, parse, or write — including a write-path failure that used to be invisible to this tool. |
 | `done` | `{}` | Always last (in a `finally`), regardless of outcome. |
 
-### Reason codes (`ingestion/importers/errors.py`)
+### Reason codes (`ingestion/importers/errors.py`, plus one probe-local code)
 
 | Code | Meaning |
 |---|---|
@@ -183,6 +261,7 @@ stops before the ORM-write phase entirely (no writes issued against either alias
 | `empty_fetch` | The HTTP/ICS fetch succeeded but returned an empty body. |
 | `nothing_to_poll` | Probe-only: `source_type` is `direct` or `email` — no fetch step exists for these types (the real poll loop never reaches this because it pre-filters to pollable types; the probe can be pointed at any source row). |
 | `unknown_source_type` | Probe-only: `source_type` doesn't match any of `ics`/`scraper`/`http` (defensive — shouldn't happen given model choices). |
+| `readonly_db_write_dry_run_unavailable` | Probe-only, carried on a `stage`/`write`/`skipped` frame (not a `refused`, since fetch and parse already succeeded) — `db=prod_readonly`, so the write dry-run was skipped rather than attempted. Defined in `devtools/views.py` as `PROBE_WRITE_SKIPPED_READONLY_DB`, not in `ingestion/importers/errors.py`, since it isn't a refusal the real importers can ever hit. |
 
 ### Launching a probe from the monitor
 
@@ -192,18 +271,21 @@ drilldown as clicking the row itself, via the `renderTabs()` helper — on a thi
 **Probe** tab and immediately starts streaming `GET /devtools/probe?source_id=<id>&db=<db>`.
 The button calls `e.stopPropagation()` so it doesn't also toggle the drilldown open/closed,
 and the currently selected DB toggle (`currentDb()`) is passed through, so probing while
-"Prod DB" is checked reads the prod source config.
+"Prod DB" is checked reads the prod source config (and skips the write stage, per above).
 
 While the stream is open the Probe tab shows a spinner with a live elapsed-second
 counter (no cancel button — a scraper probe launches headless Chromium and can
 legitimately run 10–30s) and the triggering button is disabled; both clear on whichever
-terminal frame arrives. Each SSE frame renders distinctly in the log pane: `resolved`
-names the source, `stage` frames show fetch/parse start and end (with byte counts, item
-counts, and sample titles on the end frame), `refused` prints the guard name and detail
-prominently (the reason this whole probe exists), and `error` renders the message and, if
-present, the traceback. The client mirrors `playground.html`'s `EventSource` handling,
-including its `streamDone` flag, so the native `error` event the browser fires on normal
-connection close right after `done` is ignored instead of rendering as a spurious failure.
+terminal frame arrives. A caveat line above the log pane states the client-IP limitation
+up front, before any frame renders. Each SSE frame renders distinctly in the log pane:
+`resolved` names the source, `stage` frames show fetch/parse/write start, end, or skipped
+(with byte counts, item counts, sample titles, or the read-only-DB explanation as
+applicable), `refused` prints the guard name and detail prominently (the reason this whole
+probe exists), and `error` renders the message and, if present, the traceback — now
+reachable from a write-path failure, not just fetch/parse. The client mirrors
+`playground.html`'s `EventSource` handling, including its `streamDone` flag, so the native
+`error` event the browser fires on normal connection close right after `done` is ignored
+instead of rendering as a spurious failure.
 
 ---
 
@@ -240,9 +322,13 @@ writing to prod. Layered defenses, from primary to secondary:
    it plainly: "Read-only: no `.save()`/`.delete()` anywhere in this module." Every query
    function also calls `_db_ok(db)` first, so an unconfigured `prod_readonly` alias
    degrades to an empty result instead of raising.
-3. **Defense in depth — the probe's dry-run guarantee.** `probe_stream` never reaches the
-   ORM-write phase of the real importers (see above), so even a probe pointed at
-   `prod_readonly` can't write there.
+3. **Defense in depth — the probe's dry-run guarantee.** `probe_stream` now does reach the
+   ORM-write phase (ticket 35.6 — see "The probe" above), but every write it issues is
+   wrapped in `transaction.atomic()` with a forced `set_rollback(True)`, so nothing it
+   writes is ever committed. Against `prod_readonly` specifically, the probe skips the
+   write attempt outright rather than relying on the rollback — the alias check happens
+   before any write statement is issued, so there's no dependency on Postgres rejecting
+   the write for this layer to hold.
 
 None of layers 2–3 would matter if the role behind `PROD_DATABASE_URL` were read-write —
 the Postgres grant is the control that makes pointing dev tooling at prod data safe at all.

@@ -23,11 +23,20 @@ EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
 # not this unit's own cgroup), so a logout that tears down user-1001.slice
 # (linger off) took the whole async stack down silently for 8 days from
 # 2026-07-21 — clean exit, status=0/SUCCESS, so Restart=on-failure declined to
-# restart it. Execing the venv binary directly removes that mechanism
-# entirely, the same way gunicorn (which never went through snap) stayed up
-# 68 days straight through the incident. See DEPLOY.md and
+# restart it. Execing the venv binary directly removes that mechanism entirely.
+# The control group is exact: gunicorn (.venv/bin/gunicorn, never through snap)
+# entered active at 2026-07-21 12:46:00 — the SAME deploy, the SAME logout that
+# killed celery at 12:46:26 — and was still up 8 days later when this was fixed.
+# Same session, same teardown, opposite outcome; snap-vs-venv is the only
+# difference. See DEPLOY.md and
 # docs/prod-incident-2026-07-21-scheduler-outage.md for the full writeup.
-ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend worker -l info --concurrency=2
+#
+# -n: all three workers otherwise default to `celery@<hostname>`, and duplicate
+# nodenames make `inspect`/`control` ambiguous (DuplicateNodenameWarning —
+# multiple replies for one name) and can misroute a revoke. NOTE the doubled
+# percent: systemd expands a bare %h to the *user home directory*, so `%%h` is
+# what passes a literal `%h` through for celery to expand to the hostname.
+ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend worker -n commons-default@%%h -l info --concurrency=2
 # Restart=always is belt-and-braces, not the primary fix: if this unit is
 # ever reverted to `uv run` or `loginctl enable-linger ubuntu` (DEPLOY.md) is
 # ever lost, a logout-driven exit is still status=0/SUCCESS, which

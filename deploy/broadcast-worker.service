@@ -24,7 +24,10 @@ EnvironmentFile=/home/ubuntu/thecommons/backendServer/.env
 # .venv/bin/celery, not `uv run` — see celery.service for why: `uv run`
 # through snap put this unit's process in a user-scope that a logout could
 # tear down. Execing the venv binary directly removes that mechanism.
-ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend worker -Q broadcast -c 1 -l info
+# -n commons-broadcast@%%h — unique nodename so `inspect`/`control` can address
+# this worker specifically. `%%h` (doubled) passes a literal `%h` to celery; a
+# bare %h is a systemd specifier for the user home dir. See celery.service.
+ExecStart=/home/ubuntu/thecommons/backendServer/.venv/bin/celery -A backend worker -Q broadcast -n commons-broadcast@%%h -c 1 -l info
 # Restart=always is belt-and-braces (see celery.service) in case this unit
 # is ever reverted to `uv run` or linger (DEPLOY.md) is ever lost.
 Restart=always

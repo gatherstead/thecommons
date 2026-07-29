@@ -527,6 +527,18 @@ All four `ExecStart=` lines exec `/home/ubuntu/thecommons/backendServer/.venv/bi
 directly rather than `uv run celery` — see §4 for why (the 2026-07-21 outage) and the
 one-shot vs long-lived `uv` rule in the Facts table above.
 
+The three **workers** also pass `-n commons-{default,scrape,broadcast}@%%h`. Without it
+they all default to `celery@<hostname>`, and duplicate nodenames make
+`celery -A backend inspect|control` ambiguous — it returns several replies under one
+name (`DuplicateNodenameWarning`) and can misroute a revoke. The doubled `%%` is
+required: systemd expands a bare `%h` to the *user home directory*, so `%%h` is what
+passes a literal `%h` through for celery to expand to the hostname. Verify with:
+
+```bash
+cd /home/ubuntu/thecommons/backendServer && .venv/bin/celery -A backend inspect ping
+# expect three distinct nodes: commons-default@, commons-scrape@, commons-broadcast@
+```
+
 ```bash
 sudo systemctl status   <unit>
 sudo systemctl restart  <unit>

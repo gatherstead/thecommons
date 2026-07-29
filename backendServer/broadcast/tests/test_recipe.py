@@ -219,7 +219,11 @@ class Abc11SubmitterIdentityTest(SimpleTestCase):
 
     def test_submitter_and_contact_fields_resolve_from_event(self):
         recipe = get_adapter("abc11_community").recipe(
-            _event(organizer_name="Jane's Studio", contact_email="jane@studio.test", contact_phone="555-1234")
+            _event(
+                organizer_name="Jane's Studio",
+                contact_email="jane@studio.test",
+                contact_phone="555-1234",
+            )
         )
         by_selector = {f["selector"]: f["value"] for f in recipe["fields"]}
         self.assertEqual(by_selector["#cf33704"], "Jane's Studio")

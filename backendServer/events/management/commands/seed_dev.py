@@ -12,6 +12,8 @@ TOWNS = [
     ("hillsborough", "Hillsborough"),
     ("durham", "Durham"),
     ("pittsboro", "Pittsboro"),
+    ("siler-city", "Siler City"),
+    ("bynum", "Bynum"),
 ]
 
 TAGS = [

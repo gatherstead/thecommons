@@ -15,12 +15,12 @@ class PublishAllApprovedTests(TestCase):
     def setUp(self):
         Town.objects.get_or_create(slug="carrboro", defaults={"name": "Carrboro"})
 
-    def _staged(self, title, status, **kwargs):
+    def _staged(self, title, status, town="Carrboro", **kwargs):
         return StagedEvent.objects.create(
             title=title,
             description="d",
             location_name="Venue",
-            town="Carrboro",
+            town=town,
             start_datetime=START,
             status=status,
             **kwargs,
@@ -89,3 +89,37 @@ class PublishAllApprovedTests(TestCase):
         original.refresh_from_db()
         self.assertEqual(original.status, "published")
         self.assertEqual(dupe.duplicate_of_id, original.id)
+
+    def test_chatham_county_towns_publish(self):
+        """Regression for 35.14. Gemini classifies Chatham County events into
+        "Siler City" / "Bynum"; before events 0016 seeded those Towns, every one
+        of them hit the `no Town matches slug` branch and was skipped — ~26 in a
+        single prod run, including an event titled "Chatham County Parks and
+        Recreation Summer Camp". Pittsboro, the county seat, was already covered.
+        """
+        self._staged("Growers & Makers Market", "approved", town="Siler City")
+        self._staged("Bynum Front Porch Music", "approved", town="Bynum")
+
+        result = publish_all_approved()
+
+        self.assertEqual(result["published"], 2)
+        self.assertEqual(
+            dict(Event.objects.values_list("title", "town__slug")),
+            {"Growers & Makers Market": "siler-city", "Bynum Front Porch Music": "bynum"},
+        )
+
+    def test_unmatched_town_is_skipped_but_retried(self):
+        """A town outside coverage (Apex is not in the service area) is still
+        skipped — but the row keeps published_event=None, so the terminal
+        approved->published sweep leaves it alone and the next run retries it.
+        That is why adding a Town row backfills previously-dropped events with
+        no separate migration.
+        """
+        self._staged("Somewhere Else", "approved", town="Apex")
+
+        result = publish_all_approved()
+
+        self.assertEqual(result["published"], 0)
+        self.assertEqual(result["removed"], 0)
+        self.assertFalse(Event.objects.exists())
+        self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "approved")

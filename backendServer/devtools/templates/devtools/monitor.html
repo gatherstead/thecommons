@@ -247,6 +247,7 @@
         <th class="num">Held for review</th>
         <th class="num">Rejected</th>
         <th class="num">Approved</th>
+        <th class="num">No town</th>
         <th class="num">Published</th>
         <th></th>
       </tr>
@@ -274,10 +275,11 @@
         <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>
+      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="16"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -302,6 +304,7 @@
         <th class="num">Held for review</th>
         <th class="num">Rejected</th>
         <th class="num">Approved</th>
+        <th class="num">No town</th>
         <th class="num">Published</th>
         <th></th>
       </tr>
@@ -325,10 +328,11 @@
         <td class="num funnel-cell{% if not c.funnel.held_for_review %} zero{% endif %}">{{ c.funnel.held_for_review }}</td>
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
+        <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="14"></td></tr>
+      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>
       {% endfor %}
     </tbody>
   </table>

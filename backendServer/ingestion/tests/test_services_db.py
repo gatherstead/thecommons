@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
+from io import StringIO
 
+from django.core.management import call_command
 from django.test import TestCase, tag
 
 from events.models import Event, Town
@@ -108,12 +110,12 @@ class PublishAllApprovedTests(TestCase):
             {"Growers & Makers Market": "siler-city", "Bynum Front Porch Music": "bynum"},
         )
 
-    def test_unmatched_town_is_skipped_but_retried(self):
-        """A town outside coverage (Apex is not in the service area) is still
-        skipped — but the row keeps published_event=None, so the terminal
-        approved->published sweep leaves it alone and the next run retries it.
-        That is why adding a Town row backfills previously-dropped events with
-        no separate migration.
+    def test_unmatched_town_is_marked_skipped_no_town(self):
+        """A town outside coverage (Apex is not in the service area) is moved to
+        the terminal-ish `skipped_no_town` status rather than left `approved`.
+        `approved` means "will be published", which was false for these rows —
+        ticket 36.1. The row is not deleted (it survives as a dedupe anchor —
+        see CANDIDATE_STATUSES) and no Event is created.
         """
         self._staged("Somewhere Else", "approved", town="Apex")
 
@@ -122,4 +124,70 @@ class PublishAllApprovedTests(TestCase):
         self.assertEqual(result["published"], 0)
         self.assertEqual(result["removed"], 0)
         self.assertFalse(Event.objects.exists())
-        self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "approved")
+        self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "skipped_no_town")
+
+    def test_second_run_does_not_relog_an_already_skipped_row(self):
+        """36.1's stated QA: a second consecutive pipeline run must not
+        re-emit the 'no Town matches' warning for a row the first run already
+        handled. Once skipped, the row is `skipped_no_town`, not `approved`,
+        so the `status="approved"` queryset in publish_all_approved no longer
+        selects it at all — the log line naturally fires zero times.
+        """
+        self._staged("Somewhere Else", "approved", town="Apex")
+
+        with self.assertLogs("ingestion.services", level="WARNING") as cm:
+            publish_all_approved()
+        self.assertTrue(any("no Town matches" in msg for msg in cm.output))
+
+        # Second run: nothing left in the `approved` queue for Apex, so no
+        # logger call happens at all. assertNoLogs would be ideal but isn't
+        # available on this Django's TestCase; assert the queryset is empty
+        # and re-running is a no-op instead.
+        self.assertEqual(StagedEvent.objects.filter(status="approved", town="Apex").count(), 0)
+        result = publish_all_approved()
+        self.assertEqual(result, {"published": 0, "already_published": 0, "removed": 0})
+        self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "skipped_no_town")
+
+    def test_skipped_row_is_still_a_dedupe_candidate(self):
+        """A re-scrape of an already-skipped, out-of-coverage event must match
+        the existing skipped_no_town row instead of creating a fresh row every
+        poll — that would just trade one leak (retrying forever) for another
+        (an unbounded pile of skipped duplicates). CANDIDATE_STATUSES includes
+        skipped_no_town for exactly this reason.
+        """
+        original = self._staged("Somewhere Else", "approved", town="Apex")
+        publish_all_approved()
+        original.refresh_from_db()
+        self.assertEqual(original.status, "skipped_no_town")
+
+        rescraped = self._staged("Somewhere Else", "pending", town="Apex")
+        dup = find_duplicate(rescraped)
+        self.assertEqual(dup, original)
+
+    def test_reopen_skipped_towns_command_reopens_matching_rows(self):
+        """The chosen re-open strategy: coverage changes are not free anymore
+        (unlike the old always-retry behavior) — an explicit management command
+        must be run after adding a Town so previously-skipped rows return to
+        `approved` for the next publish run to pick up. Rows whose town is still
+        uncovered are left alone.
+        """
+        self._staged("Apex Show", "approved", town="Apex")
+        publish_all_approved()
+        self.assertEqual(StagedEvent.objects.get(title="Apex Show").status, "skipped_no_town")
+
+        self._staged("Durham Show", "approved", town="Durham")
+        publish_all_approved()
+        self.assertEqual(StagedEvent.objects.get(title="Durham Show").status, "skipped_no_town")
+
+        Town.objects.create(slug="apex", name="Apex")
+
+        out = StringIO()
+        call_command("reopen_skipped_towns", stdout=out)
+
+        self.assertEqual(StagedEvent.objects.get(title="Apex Show").status, "approved")
+        self.assertEqual(StagedEvent.objects.get(title="Durham Show").status, "skipped_no_town")
+        self.assertIn("Reopened 1 of 2", out.getvalue())
+
+        result = publish_all_approved()
+        self.assertEqual(result["published"], 1)
+        self.assertEqual(Event.objects.get(title="Apex Show").town.slug, "apex")

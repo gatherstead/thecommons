@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from devtools.monitoring import (
+    _STAGED_STATUSES,
     RUNS_AVAILABLE,
     RUNS_DB_NOT_CONFIGURED,
     RUNS_MISSING_TABLE,
@@ -191,6 +192,21 @@ class MonitoringQueryServiceTests(TestCase):
             submission=self.submission, site_key="site-two", status="failed"
         )
 
+    def _expected_staged_by_status(self, **nonzero):
+        """Build a full `staged_by_status` expectation from `_STAGED_STATUSES`.
+
+        `staged_by_status` always has one key per `StagedEvent.STATUS_CHOICES`
+        (see `_STAGED_STATUSES` in monitoring.py), so a dict hardcoding only
+        the statuses that existed when a test was written breaks the moment a
+        new status is added — exactly what happened when ticket 36.1 added
+        `skipped_no_town`. Deriving the full key set here instead means these
+        tests only need to say which counts are nonzero, and still fail loudly
+        if any count (including a newly-added status's) is wrong.
+        """
+        expected = dict.fromkeys(_STAGED_STATUSES, 0)
+        expected.update(nonzero)
+        return expected
+
     def test_collector_summary_counts_are_exact(self):
         rows = {r["name"]: r for r in collector_summary("default", self.start, self.end)}
 
@@ -201,7 +217,9 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(a["raw_count"], 7)
         self.assertEqual(
             a["staged_by_status"],
-            {"pending": 2, "approved": 0, "rejected": 1, "duplicate": 1, "published": 1},
+            self._expected_staged_by_status(
+                pending=2, approved=0, rejected=1, duplicate=1, published=1
+            ),
         )
         self.assertEqual(a["published_count"], 1)
 
@@ -209,7 +227,9 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(b["raw_count"], 1)
         self.assertEqual(
             b["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0, "published": 0},
+            self._expected_staged_by_status(
+                pending=0, approved=0, rejected=0, duplicate=0, published=0
+            ),
         )
         self.assertEqual(b["published_count"], 0)
 
@@ -228,6 +248,7 @@ class MonitoringQueryServiceTests(TestCase):
                 "held_for_review": 1,
                 "rejected": 1,
                 "approved": 0,
+                "no_town": 0,
                 "published": 1,
             },
         )
@@ -244,6 +265,7 @@ class MonitoringQueryServiceTests(TestCase):
                 "held_for_review": 0,
                 "rejected": 0,
                 "approved": 0,
+                "no_town": 0,
                 "published": 0,
             },
         )
@@ -265,23 +287,58 @@ class MonitoringQueryServiceTests(TestCase):
         indefinitely, since `auto_publish_safe_events` early-returns when nothing
         is pending. This test therefore reads both from `funnel`, not from
         `staged_by_status`.
+
+        Sums every bucket *except* `raw` itself, rather than naming each bucket,
+        so a future bucket added to `funnel` without being wired into the sum
+        (as happened when ticket 36.1 added `skipped_no_town` and it fell into
+        no bucket at all — see `test_skipped_no_town_bucket_reconciles`) fails
+        this test instead of silently passing.
         """
         rows = collector_summary("default", self.start, self.end) + broadcast_inbound_summary(
             "default", self.start, self.end
         )
         for row in rows:
             funnel = row["funnel"]
-            accounted = (
-                funnel["unprocessed"]
-                + funnel["no_staged"]
-                + funnel["duplicate"]
-                + funnel["unscored"]
-                + funnel["held_for_review"]
-                + funnel["rejected"]
-                + funnel["approved"]
-                + funnel["published"]
-            )
+            accounted = sum(v for k, v in funnel.items() if k != "raw")
             self.assertEqual(accounted, funnel["raw"], row["name"])
+
+    def test_skipped_no_town_bucket_reconciles(self):
+        """A source with a `skipped_no_town` row still sums to `raw`.
+
+        Ticket 36.1 added the terminal-ish `skipped_no_town` status for staged
+        events whose town has no matching `Town` row (previously these stayed
+        `approved` forever and were re-logged on every pipeline run). The
+        `funnel` dict has a dedicated `no_town` bucket for it — without one,
+        these rows fall through into no bucket at all and the funnel silently
+        stops summing to `raw`, which is exactly what happened before this fix.
+        """
+        raw = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="No Matching Town",
+            raw_start=self.start + timedelta(hours=1),
+            processed=True,
+        )
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="No Matching Town",
+            description="d",
+            location_name="l",
+            town="some-uncovered-town",
+            start_datetime=self.start + timedelta(hours=1),
+            status="skipped_no_town",
+        )
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        funnel = row["funnel"]
+        self.assertEqual(funnel["no_town"], 1)
+        accounted = sum(v for k, v in funnel.items() if k != "raw")
+        self.assertEqual(accounted, funnel["raw"])
+        self.assertEqual(
+            row["no_town_note"],
+            "1 skipped — town not in coverage (see `manage.py reopen_skipped_towns` once added)",
+        )
 
     def test_published_bucket_counts_approved_rows_with_a_live_event(self):
         """A row that has an Event but hasn't been swept yet still reads as
@@ -327,7 +384,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["raw_count"], 1)
         self.assertEqual(
             row["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1, "published": 0},
+            self._expected_staged_by_status(duplicate=1),
         )
         self.assertEqual(row["published_count"], 0)
 

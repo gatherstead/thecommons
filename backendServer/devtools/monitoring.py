@@ -311,6 +311,25 @@ def _raw_zero_note(raw_all_time, latest_raw_created_at_dt, now):
     )
 
 
+def _no_town_note(no_town_count: int) -> str | None:
+    """Compose the message for a nonzero `no_town` funnel cell.
+
+    Ticket 36.1's whole motivation: a source can sit at `raw > 0, published =
+    0` forever with no explanation, because its town is deliberately out of
+    coverage (e.g. Apex, Durham on prod). `skipped_no_town` is terminal-ish —
+    `publish_all_approved` only logs it once per row — so this note is the
+    monitor surfacing that same explanation instead of leaving the operator to
+    rediscover it in the logs. Mirrors `_raw_zero_note`: only rendered when
+    there is something to explain, never replacing the plain count.
+    """
+    if no_town_count == 0:
+        return None
+    return (
+        f"{no_town_count} skipped — town not in coverage "
+        f"(see `manage.py reopen_skipped_towns` once added)"
+    )
+
+
 def _source_rows(db, start, end, source_type_filter, runs_state=None):
     # Staleness is a wall-clock question ("has this source polled recently?"),
     # so it is measured against real `now`, never the window's `end`. In prod
@@ -423,6 +442,13 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             approved_unpublished=Count(
                 "id", filter=Q(status="approved", published_event__isnull=True)
             ),
+            # Terminal-ish: `publish_all_approved` couldn't resolve the row's
+            # town to a real `Town` (see ingestion/services.py). Was folded
+            # into `approved` before ticket 36.1 introduced this status, which
+            # silently hid these rows forever behind an `approved` count that
+            # never moved. Disjoint from every other bucket here, same as
+            # `approved_unpublished`.
+            skipped_no_town=Count("id", filter=Q(status="skipped_no_town")),
         )
     )
     funnel_staged_by_source = {row["raw_event__source_id"]: row for row in funnel_staged_qs}
@@ -462,6 +488,8 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             if raw_in_window == 0
             else None
         )
+        no_town_count = funnel_staged.get("skipped_no_town", 0)
+        no_town_note = _no_town_note(no_town_count)
         last_run = (
             {
                 "status": recent_runs[0]["status"],
@@ -491,13 +519,21 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             # "0", turning "8 muted zeros" into "1 stale source + 2 real
             # never-ingested sources" at a glance.
             "raw_zero_note": raw_zero_note,
+            # Only set when `no_town > 0` — see `_no_town_note`. Renders as a
+            # tooltip/subtext on the `no_town` funnel cell so a source stuck
+            # at `raw > 0, published = 0` because its town is out of coverage
+            # reads as "explained", not "broken".
+            "no_town_note": no_town_note,
             "staged_by_status": staged_status_counts,
             "published_count": funnel_staged.get("published", 0),
             # Buckets are mutually exclusive — each raw event lands in exactly
             # one — so they sum to `raw`. `published` is every row carrying a
             # live Event (whether or not the sweep has flipped it to the
-            # terminal `published` status), and `approved` is the residual:
-            # approved but not yet published. See the annotations above.
+            # terminal `published` status), `approved` is the residual:
+            # approved but not yet published, and `no_town` is the terminal-ish
+            # `skipped_no_town` status (ticket 36.1) — a row whose town isn't
+            # in coverage, never re-attempted until `reopen_skipped_towns`
+            # runs. See the annotations above.
             "funnel": {
                 "raw": raw_in_window,
                 "unprocessed": unprocessed_counts.get(source_id, 0),
@@ -507,6 +543,7 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
                 "held_for_review": funnel_staged.get("held_for_review", 0),
                 "rejected": staged_status_counts["rejected"],
                 "approved": funnel_staged.get("approved_unpublished", 0),
+                "no_town": no_town_count,
                 "published": funnel_staged.get("published", 0),
             },
             "last_run": last_run,

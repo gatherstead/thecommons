@@ -206,11 +206,13 @@ def ingest_direct_submission(raw_event_id, user_id):
         town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
         if town_obj is None:
             logger.warning(
-                "Holding direct submission '%s' — no Town matches slug '%s' (gemini town=%r)",
+                "Skipping direct submission '%s' — no Town matches slug '%s' (gemini town=%r)",
                 staged.title,
                 town_slug,
                 staged.town,
             )
+            staged.status = "skipped_no_town"
+            staged.save(update_fields=["status"])
             return None
 
         is_verified = user is not None and user.user_type == "BUSINESS"

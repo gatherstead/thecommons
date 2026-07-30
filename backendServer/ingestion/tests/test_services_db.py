@@ -1,13 +1,16 @@
+import json
 from datetime import UTC, datetime
 from io import StringIO
+from unittest import mock
 
 from django.core.management import call_command
 from django.test import TestCase, tag
 
 from events.models import Event, Town
+from events.tests.factories import make_town, make_user
 from ingestion.deduplicator import find_duplicate
-from ingestion.models import StagedEvent
-from ingestion.services import publish_all_approved
+from ingestion.models import EventSource, RawEvent, StagedEvent
+from ingestion.services import ingest_direct_submission, publish_all_approved
 
 START = datetime(2099, 6, 1, 18, 0, tzinfo=UTC)
 
@@ -191,3 +194,109 @@ class PublishAllApprovedTests(TestCase):
         result = publish_all_approved()
         self.assertEqual(result["published"], 1)
         self.assertEqual(Event.objects.get(title="Apex Show").town.slug, "apex")
+
+
+@tag("db")
+class IngestDirectSubmissionTownMissTests(TestCase):
+    """Ticket 36.7: the direct-submission town-miss branch (services.py, inside
+    ingest_direct_submission) used to `return None` with no status change,
+    leaving the StagedEvent stuck pending forever. It must now land terminal
+    at status="skipped_no_town", mirroring the publish_all_approved sweep path
+    (36.1) so the row is not a dead end and remains a dedupe anchor.
+    """
+
+    STD_PAYLOAD = {
+        "title": "Out of Area Show",
+        "description": "A show somewhere uncovered.",
+        "location_name": "Some Venue",
+        "town": "Apex",
+        "tags": [],
+        "price": 10,
+    }
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Direct Feed",
+            source_type="ics",
+            url="https://feed.test/direct.ics",
+        )
+        self.raw = RawEvent.objects.create(
+            source=self.source,
+            raw_title="Raw Out of Area Show",
+            raw_description="A show",
+            raw_location="Some Venue, Apex, NC",
+            raw_start=START,
+            source_url="",  # avoids fetch_page_text network call
+            source_uid="direct-uid-apex",
+        )
+        # Apex is intentionally not seeded as a Town — out of coverage.
+        self.user = make_user(user_type="BUSINESS")
+
+    def _gemini_mocks(self, std_payload, score):
+        """Same pattern as test_direct_ingest_db.py: a single patch with
+        side_effect so standardize_event and score_event each get their own
+        fake genai.Client() (both modules reference the same `genai` object).
+        """
+        fake_std = mock.Mock()
+        fake_std.models.generate_content.return_value = mock.Mock(text=json.dumps(std_payload))
+        fake_scorer = mock.Mock()
+        fake_scorer.models.generate_content.return_value = mock.Mock(
+            text=json.dumps({"score": score, "notes": ""})
+        )
+        return mock.patch(
+            "ingestion.standardizer.genai.Client",
+            side_effect=[fake_std, fake_scorer],
+        )
+
+    def test_out_of_coverage_town_lands_terminal_skipped_no_town(self):
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            result = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(result)
+        self.assertFalse(Event.objects.exists())
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.status, "skipped_no_town")
+
+    def test_resubmit_of_out_of_coverage_event_does_not_stack_rows(self):
+        """ingest_direct_submission tears down the prior staged row for the
+        same RawEvent at the top of the function (idempotency: re-standardize
+        fresh) *before* find_duplicate runs, so the re-submit case here isn't
+        "dedup blocks a second row" — it's "there is only ever one staged row
+        per RawEvent, and it lands skipped_no_town again on each resubmit."
+        The regression this guards is a second Event or a pile of duplicate
+        staged rows, neither of which should happen.
+        """
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            first = ingest_direct_submission(self.raw.id, self.user.id)
+        self.assertIsNone(first)
+        self.assertEqual(StagedEvent.objects.count(), 1)
+        first_staged_id = StagedEvent.objects.get().id
+
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            second = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(second)
+        self.assertFalse(Event.objects.exists())
+        self.assertEqual(StagedEvent.objects.count(), 1)
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.status, "skipped_no_town")
+        # The old row was torn down and a fresh one created (same RawEvent,
+        # new pk) — not left stacked, and not silently reused either.
+        self.assertNotEqual(staged.id, first_staged_id)
+
+    def test_coverage_added_later_is_not_auto_reopened_by_direct_ingest(self):
+        """reopen_skipped_towns has no source filter (confirmed out of scope
+        for 36.7), so it already reopens direct-source rows once a Town is
+        added — this just documents that ingest_direct_submission itself does
+        not retry/reopen anything; the management command is the only path
+        back to `approved` for a previously-skipped direct row.
+        """
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            ingest_direct_submission(self.raw.id, self.user.id)
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.status, "skipped_no_town")
+
+        make_town(slug="apex", name="Apex")
+
+        staged.refresh_from_db()
+        self.assertEqual(staged.status, "skipped_no_town")

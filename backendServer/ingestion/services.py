@@ -60,13 +60,22 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
                     town_slug = staged.town.lower().replace(" ", "-") if staged.town else None
                     town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
                     if town_obj is None:
+                        # Terminal-ish status, not a delete: `skipped_no_town` rows
+                        # stay out of the `approved` queryset above, so this branch
+                        # (and its log line) only ever fires once per row instead of
+                        # re-logging on every subsequent run. They remain dedupe
+                        # candidates (CANDIDATE_STATUSES in deduplicator.py) and are
+                        # reopened deliberately via `manage.py reopen_skipped_towns`
+                        # once coverage is added — see that command's docstring.
                         logger.warning(
-                            "Dropping staged event '%s' — no Town matches slug '%s'"
+                            "Skipping staged event '%s' — no Town matches slug '%s'"
                             " (gemini town=%r)",
                             staged.title,
                             town_slug,
                             staged.town,
                         )
+                        staged.status = "skipped_no_town"
+                        staged.save(update_fields=["status"])
                         continue
                 if staged.raw_event_id and staged.raw_event and staged.raw_event.source:
                     source_name = staged.raw_event.source.name
@@ -197,11 +206,13 @@ def ingest_direct_submission(raw_event_id, user_id):
         town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
         if town_obj is None:
             logger.warning(
-                "Holding direct submission '%s' — no Town matches slug '%s' (gemini town=%r)",
+                "Skipping direct submission '%s' — no Town matches slug '%s' (gemini town=%r)",
                 staged.title,
                 town_slug,
                 staged.town,
             )
+            staged.status = "skipped_no_town"
+            staged.save(update_fields=["status"])
             return None
 
         is_verified = user is not None and user.user_type == "BUSINESS"

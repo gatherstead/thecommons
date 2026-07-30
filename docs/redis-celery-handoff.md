@@ -169,8 +169,12 @@ bash deploy/healthcheck.sh        # ✓/!/✗ for RAM, disk, all units, Redis, D
 ```
 
 This is the fastest way to confirm beat is actually firing: the Application section
-runs `manage.py healthcheck`, which reports each `PeriodicTask`'s `enabled` flag and
-`last_run_at` freshness (daily stale after ~25h, weekly after ~8d) and flags any
+runs `manage.py healthcheck`, which reports each `PeriodicTask`'s `enabled` flag and,
+for each of the four seeded crontab-backed tasks (`ingest-events-daily`,
+`scrape-sources-daily`, `weekly-digest-sunday`, `broadcast-orphan-recovery`), derives
+the expected fire time from that task's own crontab and flags a missed occurrence —
+`DEFAULT_STALENESS_HOURS` now only backs the must-exist task check and a fallback
+window for interval-backed tasks with no crontab to derive from. It also flags any
 leftover OS-cron `ingest_events`/`send_weekly_digest` entries that would double-run.
 Exits non-zero on any critical failure. Details in [DEPLOY.md](../DEPLOY.md#health-check).
 

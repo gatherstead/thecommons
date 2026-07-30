@@ -29,7 +29,11 @@ BROADCAST_TIME_WINDOW_HOURS = 12
 # remain permanent dedupe anchors (see `services.publish_all_approved`).
 # `rejected` is deliberately excluded: matching against it would silently
 # duplicate-mark a host who fixed a flagged problem and resubmitted.
-CANDIDATE_STATUSES = ["pending", "approved", "duplicate", "published"]
+# `skipped_no_town` is included so a re-scrape of an already-skipped,
+# out-of-coverage event matches the existing row instead of creating a fresh
+# `skipped_no_town` row every poll — one terminal row per event, not one per
+# scrape (see services.publish_all_approved).
+CANDIDATE_STATUSES = ["pending", "approved", "duplicate", "published", "skipped_no_town"]
 
 _LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+")
 

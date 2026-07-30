@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
 from devtools.monitoring import (
+    _STAGED_STATUSES,
     RUNS_AVAILABLE,
     RUNS_DB_NOT_CONFIGURED,
     RUNS_MISSING_TABLE,
@@ -191,6 +192,21 @@ class MonitoringQueryServiceTests(TestCase):
             submission=self.submission, site_key="site-two", status="failed"
         )
 
+    def _expected_staged_by_status(self, **nonzero):
+        """Build a full `staged_by_status` expectation from `_STAGED_STATUSES`.
+
+        `staged_by_status` always has one key per `StagedEvent.STATUS_CHOICES`
+        (see `_STAGED_STATUSES` in monitoring.py), so a dict hardcoding only
+        the statuses that existed when a test was written breaks the moment a
+        new status is added — exactly what happened when ticket 36.1 added
+        `skipped_no_town`. Deriving the full key set here instead means these
+        tests only need to say which counts are nonzero, and still fail loudly
+        if any count (including a newly-added status's) is wrong.
+        """
+        expected = dict.fromkeys(_STAGED_STATUSES, 0)
+        expected.update(nonzero)
+        return expected
+
     def test_collector_summary_counts_are_exact(self):
         rows = {r["name"]: r for r in collector_summary("default", self.start, self.end)}
 
@@ -201,7 +217,9 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(a["raw_count"], 7)
         self.assertEqual(
             a["staged_by_status"],
-            {"pending": 2, "approved": 0, "rejected": 1, "duplicate": 1, "published": 1},
+            self._expected_staged_by_status(
+                pending=2, approved=0, rejected=1, duplicate=1, published=1
+            ),
         )
         self.assertEqual(a["published_count"], 1)
 
@@ -209,7 +227,9 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(b["raw_count"], 1)
         self.assertEqual(
             b["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 0, "published": 0},
+            self._expected_staged_by_status(
+                pending=0, approved=0, rejected=0, duplicate=0, published=0
+            ),
         )
         self.assertEqual(b["published_count"], 0)
 
@@ -228,6 +248,7 @@ class MonitoringQueryServiceTests(TestCase):
                 "held_for_review": 1,
                 "rejected": 1,
                 "approved": 0,
+                "no_town": 0,
                 "published": 1,
             },
         )
@@ -244,6 +265,7 @@ class MonitoringQueryServiceTests(TestCase):
                 "held_for_review": 0,
                 "rejected": 0,
                 "approved": 0,
+                "no_town": 0,
                 "published": 0,
             },
         )
@@ -265,23 +287,58 @@ class MonitoringQueryServiceTests(TestCase):
         indefinitely, since `auto_publish_safe_events` early-returns when nothing
         is pending. This test therefore reads both from `funnel`, not from
         `staged_by_status`.
+
+        Sums every bucket *except* `raw` itself, rather than naming each bucket,
+        so a future bucket added to `funnel` without being wired into the sum
+        (as happened when ticket 36.1 added `skipped_no_town` and it fell into
+        no bucket at all — see `test_skipped_no_town_bucket_reconciles`) fails
+        this test instead of silently passing.
         """
         rows = collector_summary("default", self.start, self.end) + broadcast_inbound_summary(
             "default", self.start, self.end
         )
         for row in rows:
             funnel = row["funnel"]
-            accounted = (
-                funnel["unprocessed"]
-                + funnel["no_staged"]
-                + funnel["duplicate"]
-                + funnel["unscored"]
-                + funnel["held_for_review"]
-                + funnel["rejected"]
-                + funnel["approved"]
-                + funnel["published"]
-            )
+            accounted = sum(v for k, v in funnel.items() if k != "raw")
             self.assertEqual(accounted, funnel["raw"], row["name"])
+
+    def test_skipped_no_town_bucket_reconciles(self):
+        """A source with a `skipped_no_town` row still sums to `raw`.
+
+        Ticket 36.1 added the terminal-ish `skipped_no_town` status for staged
+        events whose town has no matching `Town` row (previously these stayed
+        `approved` forever and were re-logged on every pipeline run). The
+        `funnel` dict has a dedicated `no_town` bucket for it — without one,
+        these rows fall through into no bucket at all and the funnel silently
+        stops summing to `raw`, which is exactly what happened before this fix.
+        """
+        raw = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="No Matching Town",
+            raw_start=self.start + timedelta(hours=1),
+            processed=True,
+        )
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="No Matching Town",
+            description="d",
+            location_name="l",
+            town="some-uncovered-town",
+            start_datetime=self.start + timedelta(hours=1),
+            status="skipped_no_town",
+        )
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        funnel = row["funnel"]
+        self.assertEqual(funnel["no_town"], 1)
+        accounted = sum(v for k, v in funnel.items() if k != "raw")
+        self.assertEqual(accounted, funnel["raw"])
+        self.assertEqual(
+            row["no_town_note"],
+            "1 skipped — town not in coverage (see `manage.py reopen_skipped_towns` once added)",
+        )
 
     def test_published_bucket_counts_approved_rows_with_a_live_event(self):
         """A row that has an Event but hasn't been swept yet still reads as
@@ -314,6 +371,29 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["funnel"]["approved"], 0)
         self.assertEqual(row["published_count"], 2)
 
+    def test_published_note_is_none_when_window_has_published_rows(self):
+        # Collector A already has one published row in this window (setUp's
+        # "a7" StagedEvent) — nothing to disambiguate, so no note.
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        self.assertGreater(row["funnel"]["published"], 0)
+        self.assertIsNone(row["published_note"])
+
+    def test_published_all_time_counts_live_events_by_source_name(self):
+        # Attribution is purely by Event.source_name — no source FK exists on
+        # Event, and Event carries no creation timestamp, so this is
+        # necessarily an un-windowed, all-time count (ticket 36.6).
+        make_event(title="Live Event One", source_name="Collector B")
+        make_event(title="Live Event Two", source_name="Collector B")
+        make_event(title="Unrelated Event", source_name="Some Other Source")
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector B"
+        ]
+        self.assertEqual(row["published_all_time"], 2)
+        self.assertEqual(row["published_note"], "0 in window; 2 events live all-time")
+
     def test_direct_source_excluded_from_collector_summary(self):
         names = [r["name"] for r in collector_summary("default", self.start, self.end)]
         self.assertNotIn("Direct Host Submission", names)
@@ -327,7 +407,7 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["raw_count"], 1)
         self.assertEqual(
             row["staged_by_status"],
-            {"pending": 0, "approved": 0, "rejected": 0, "duplicate": 1, "published": 0},
+            self._expected_staged_by_status(duplicate=1),
         )
         self.assertEqual(row["published_count"], 0)
 
@@ -652,6 +732,68 @@ class SourceHealthIntegrationTests(TestCase):
         self.assertEqual(row["health"]["level"], "warn")
         self.assertIn("polling but zero new raw events in window", row["health"]["reasons"])
 
+    def test_zero_published_in_window_but_live_all_time_downgrades_warn(self):
+        # Ticket 36.6: a source published entirely before suite 34 (e.g.
+        # Carrboro, The Plant NC) has zero *surviving* StagedEvent anchors
+        # windowed on raw_event__created_at, forever — but its events are
+        # still live on the site. That must not warn.
+        source = EventSource.objects.create(
+            name="Carrboro Commons",
+            source_type="ics",
+            url="https://carrboro.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        RawEvent.objects.create(
+            source=source,
+            raw_title="Raw With No Surviving Anchor",
+            raw_start=self.now,
+            processed=True,
+            source_uid="carrboro-1",
+        )
+        # The live Event that proves this source has genuinely worked before,
+        # attributed purely by source_name (Event has no source FK).
+        make_event(title="Old Carrboro Event", source_name="Carrboro Commons")
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Carrboro Commons")
+        self.assertEqual(row["funnel"]["published"], 0)
+        self.assertEqual(row["published_all_time"], 1)
+        self.assertNotEqual(row["health"]["level"], "warn")
+        self.assertFalse(
+            any("none published in window" in reason for reason in row["health"]["reasons"])
+        )
+        self.assertEqual(row["published_note"], "0 in window; 1 events live all-time")
+
+    def test_zero_published_and_zero_ever_still_warns(self):
+        # Regression: a source with raw in-window and genuinely zero live
+        # events ever must still warn — the downgrade is scoped to sources
+        # with a real all-time publish history, not a blanket suppression.
+        source = EventSource.objects.create(
+            name="Never Published Source",
+            source_type="ics",
+            url="https://never.example.com/feed.ics",
+            active=True,
+            poll_interval_hours=1,
+            last_polled=self.now - timedelta(minutes=5),
+        )
+        RawEvent.objects.create(
+            source=source,
+            raw_title="Raw With Nothing Downstream",
+            raw_start=self.now,
+            processed=True,
+            source_uid="never-1",
+        )
+
+        rows = collector_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Never Published Source")
+        self.assertEqual(row["funnel"]["published"], 0)
+        self.assertEqual(row["published_all_time"], 0)
+        self.assertEqual(row["health"]["level"], "warn")
+        self.assertIn("raw events arriving but none published in window", row["health"]["reasons"])
+        self.assertIsNone(row["published_note"])
+
     def test_raw_events_recent_runs_fetched_in_single_query(self):
         # Regardless of source count, the recent-runs fetch backing
         # source_health must be one query, not one per source.
@@ -676,18 +818,19 @@ class SourceHealthIntegrationTests(TestCase):
 
         # 5 queries as documented pre-existing (sources, raw, no_staged,
         # staged-by-status, funnel-staged) + 1 for the un-windowed all-time
-        # raw/latest-created_at query (35.4) + 1 for the single recent-runs
-        # fetch + 1 for the `resolve_source_runs_state()` probe that gates it
-        # = 8 total.
+        # raw/latest-created_at query (35.4) + 1 for the un-windowed all-time
+        # published-Event-by-source_name query (36.6) + 1 for the single
+        # recent-runs fetch + 1 for the `resolve_source_runs_state()` probe
+        # that gates it = 9 total.
         #
         # The invariant under test is unchanged: still *independent of source
         # count*, still no N+1. The availability probe is a fixed O(1) cost
         # paid once per collector_summary() call, not once per source — it's
         # what lets the monitor degrade instead of 500 when prod lacks
         # `ingestion_sourcerun` (see monitoring.resolve_source_runs_state).
-        # The all-time query is the same shape: one grouped query over
-        # source_ids regardless of source count, not one per source.
-        with self.assertNumQueries(8):
+        # Both all-time queries are the same shape: one grouped query over
+        # every source in the call regardless of source count, not one per source.
+        with self.assertNumQueries(9):
             collector_summary("default", self.start, self.end)
 
     def test_passing_runs_state_skips_the_availability_probe(self):
@@ -712,8 +855,8 @@ class SourceHealthIntegrationTests(TestCase):
             status="ok",
         )
 
-        # The same 8 queries as the test above, minus the availability probe.
-        with self.assertNumQueries(7):
+        # The same 9 queries as the test above, minus the availability probe.
+        with self.assertNumQueries(8):
             collector_summary("default", self.start, self.end, runs_state=RUNS_AVAILABLE)
 
 

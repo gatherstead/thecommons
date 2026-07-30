@@ -190,7 +190,7 @@ The endpoint upserts a singleton `EventSource(name="Direct Host Submission", sou
 5. **Safety gate:** `safety_score <= SAFETY_SCORE_THRESHOLD` → publish immediately; otherwise the `StagedEvent` stays `status='pending'` (visible in the host/admin dashboard for manual review) with no live `Event` created.
 6. **Publish (create-or-update):** reuses the `publish_all_approved` field mapping but overrides `source_name = "Direct submission by host"`, sets `created_by = user`, and `is_verified = (user.user_type == 'BUSINESS')`. If a prior published `Event` exists (re-edit path), it is updated in place; otherwise a new `Event` is created and linked.
 7. **StagedEvent retained** — unlike the bulk `publish_all_approved` flow, the `StagedEvent` row is kept so the edit chain survives future re-submissions.
-8. **Town resolution** reuses `Town.objects.filter(slug=...)`. If no matching `Town` exists, the event is logged and held (no `Event` created).
+8. **Town resolution** reuses `Town.objects.filter(slug=...)`. If no matching `Town` exists, the event is logged and the `StagedEvent` is set to the terminal `status='skipped_no_town'` (no `Event` created) — the same terminal status the `publish_all_approved` sweep path uses for out-of-coverage towns, so the row remains a dedupe anchor (`deduplicator.CANDIDATE_STATUSES`) rather than a perpetually-pending dead end. `manage.py reopen_skipped_towns` reopens it (it has no source filter) once coverage is added.
 
 ### Isolation
 

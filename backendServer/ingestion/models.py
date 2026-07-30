@@ -102,6 +102,7 @@ class StagedEvent(models.Model):
         ("rejected", "Rejected"),
         ("duplicate", "Duplicate"),
         ("published", "Published"),
+        ("skipped_no_town", "Skipped — No Matching Town"),
     ]
 
     raw_event = models.OneToOneField(

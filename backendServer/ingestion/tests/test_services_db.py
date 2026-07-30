@@ -114,13 +114,13 @@ class PublishAllApprovedTests(TestCase):
         )
 
     def test_unmatched_town_is_marked_skipped_no_town(self):
-        """A town outside coverage (Apex is not in the service area) is moved to
-        the terminal-ish `skipped_no_town` status rather than left `approved`.
-        `approved` means "will be published", which was false for these rows —
-        ticket 36.1. The row is not deleted (it survives as a dedupe anchor —
-        see CANDIDATE_STATUSES) and no Event is created.
+        """A town outside coverage (Greensboro is not in the service area) is
+        moved to the terminal-ish `skipped_no_town` status rather than left
+        `approved`. `approved` means "will be published", which was false for
+        these rows — ticket 36.1. The row is not deleted (it survives as a
+        dedupe anchor — see CANDIDATE_STATUSES) and no Event is created.
         """
-        self._staged("Somewhere Else", "approved", town="Apex")
+        self._staged("Somewhere Else", "approved", town="Greensboro")
 
         result = publish_all_approved()
 
@@ -136,17 +136,19 @@ class PublishAllApprovedTests(TestCase):
         so the `status="approved"` queryset in publish_all_approved no longer
         selects it at all — the log line naturally fires zero times.
         """
-        self._staged("Somewhere Else", "approved", town="Apex")
+        self._staged("Somewhere Else", "approved", town="Greensboro")
 
         with self.assertLogs("ingestion.services", level="WARNING") as cm:
             publish_all_approved()
         self.assertTrue(any("no Town matches" in msg for msg in cm.output))
 
-        # Second run: nothing left in the `approved` queue for Apex, so no
+        # Second run: nothing left in the `approved` queue for Greensboro, so no
         # logger call happens at all. assertNoLogs would be ideal but isn't
         # available on this Django's TestCase; assert the queryset is empty
         # and re-running is a no-op instead.
-        self.assertEqual(StagedEvent.objects.filter(status="approved", town="Apex").count(), 0)
+        self.assertEqual(
+            StagedEvent.objects.filter(status="approved", town="Greensboro").count(), 0
+        )
         result = publish_all_approved()
         self.assertEqual(result, {"published": 0, "already_published": 0, "removed": 0})
         self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "skipped_no_town")
@@ -158,12 +160,12 @@ class PublishAllApprovedTests(TestCase):
         (an unbounded pile of skipped duplicates). CANDIDATE_STATUSES includes
         skipped_no_town for exactly this reason.
         """
-        original = self._staged("Somewhere Else", "approved", town="Apex")
+        original = self._staged("Somewhere Else", "approved", town="Greensboro")
         publish_all_approved()
         original.refresh_from_db()
         self.assertEqual(original.status, "skipped_no_town")
 
-        rescraped = self._staged("Somewhere Else", "pending", town="Apex")
+        rescraped = self._staged("Somewhere Else", "pending", town="Greensboro")
         dup = find_duplicate(rescraped)
         self.assertEqual(dup, original)
 
@@ -174,26 +176,26 @@ class PublishAllApprovedTests(TestCase):
         `approved` for the next publish run to pick up. Rows whose town is still
         uncovered are left alone.
         """
-        self._staged("Apex Show", "approved", town="Apex")
+        self._staged("Greensboro Show", "approved", town="Greensboro")
         publish_all_approved()
-        self.assertEqual(StagedEvent.objects.get(title="Apex Show").status, "skipped_no_town")
+        self.assertEqual(StagedEvent.objects.get(title="Greensboro Show").status, "skipped_no_town")
 
-        self._staged("Durham Show", "approved", town="Durham")
+        self._staged("Charlotte Show", "approved", town="Charlotte")
         publish_all_approved()
-        self.assertEqual(StagedEvent.objects.get(title="Durham Show").status, "skipped_no_town")
+        self.assertEqual(StagedEvent.objects.get(title="Charlotte Show").status, "skipped_no_town")
 
-        Town.objects.create(slug="apex", name="Apex")
+        Town.objects.create(slug="greensboro", name="Greensboro")
 
         out = StringIO()
         call_command("reopen_skipped_towns", stdout=out)
 
-        self.assertEqual(StagedEvent.objects.get(title="Apex Show").status, "approved")
-        self.assertEqual(StagedEvent.objects.get(title="Durham Show").status, "skipped_no_town")
+        self.assertEqual(StagedEvent.objects.get(title="Greensboro Show").status, "approved")
+        self.assertEqual(StagedEvent.objects.get(title="Charlotte Show").status, "skipped_no_town")
         self.assertIn("Reopened 1 of 2", out.getvalue())
 
         result = publish_all_approved()
         self.assertEqual(result["published"], 1)
-        self.assertEqual(Event.objects.get(title="Apex Show").town.slug, "apex")
+        self.assertEqual(Event.objects.get(title="Greensboro Show").town.slug, "greensboro")
 
 
 @tag("db")
@@ -209,7 +211,7 @@ class IngestDirectSubmissionTownMissTests(TestCase):
         "title": "Out of Area Show",
         "description": "A show somewhere uncovered.",
         "location_name": "Some Venue",
-        "town": "Apex",
+        "town": "Greensboro",
         "tags": [],
         "price": 10,
     }
@@ -224,12 +226,12 @@ class IngestDirectSubmissionTownMissTests(TestCase):
             source=self.source,
             raw_title="Raw Out of Area Show",
             raw_description="A show",
-            raw_location="Some Venue, Apex, NC",
+            raw_location="Some Venue, Greensboro, NC",
             raw_start=START,
             source_url="",  # avoids fetch_page_text network call
-            source_uid="direct-uid-apex",
+            source_uid="direct-uid-greensboro",
         )
-        # Apex is intentionally not seeded as a Town — out of coverage.
+        # Greensboro is intentionally not seeded as a Town — out of coverage.
         self.user = make_user(user_type="BUSINESS")
 
     def _gemini_mocks(self, std_payload, score):
@@ -296,7 +298,7 @@ class IngestDirectSubmissionTownMissTests(TestCase):
         staged = StagedEvent.objects.get()
         self.assertEqual(staged.status, "skipped_no_town")
 
-        make_town(slug="apex", name="Apex")
+        make_town(slug="greensboro", name="Greensboro")
 
         staged.refresh_from_db()
         self.assertEqual(staged.status, "skipped_no_town")

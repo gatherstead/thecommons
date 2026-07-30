@@ -1,6 +1,6 @@
 # PRD — Centralized Auth Origin & DB-Backed Access Codes
 
-**Status:** Implemented (2026-07-07) · **Related:** supersedes the `HostAccessGrant` code→user model from the direct-submission work · **Isolation:** all access/tier/code logic stays in `broadcast/` (verifies JWTs via `backend/jwt_auth.py`; never imports `events`/`ingestion` — `broadcast/tests/test_isolation.py` must stay green)
+**Status:** Implemented (2026-07-07); **D1 auth-origin UI shipped as a standalone portal** (ticket 37.11, still Phase-1 — routes live inside the Next.js app, no standalone auth service) · **Related:** supersedes the `HostAccessGrant` code→user model from the direct-submission work · **Isolation:** all access/tier/code logic stays in `broadcast/` (verifies JWTs via `backend/jwt_auth.py`; never imports `events`/`ingestion` — `broadcast/tests/test_isolation.py` must stay green)
 
 **Deviations from spec (as shipped):** metering fires at `POST /broadcast/preview` only (not the general "broadcast front door"); `client_label` for JWT users is the full email address; broadcastWeb uses email + password sign-in/sign-up forms (not the lazy one-field "enter" flow).
 
@@ -43,7 +43,7 @@ Captured verbatim from the original request, mapped to where each is addressed:
 
 | # | Decision |
 |---|---|
-| D1 | **Phase 1 auth origin only:** reverse-proxy the *existing* Better Auth to a dedicated auth subdomain + shared cookie domain; repoint `BETTER_AUTH_JWKS_URL`. Full extraction deferred. |
+| D1 | **Phase 1 auth origin only:** reverse-proxy the *existing* Better Auth to a dedicated auth subdomain + shared cookie domain; repoint `BETTER_AUTH_JWKS_URL`. **Shipped (37.11):** the auth UI itself was consolidated into a standalone **portal** — a route group (`theCommonsWeb/src/app/(portal)/`: `/signin`, `/join`, `/set-password`, `/forgot-password`) served at the auth origin, replacing each app's embedded auth form. Every service redirects into it with an allowlisted `?redirect_to=`. Still Phase 1: the portal's routes live inside the same Next.js app as everything else — no standalone auth service. Full extraction deferred. |
 | D2 | **Access codes: hard cut to SQL.** Remove `BROADCAST_ACCESS_CODES`. Codes live only in the `AccessCode` table; `client_label` now comes from `AccessCode.label`. |
 | D3 | **Access model stays in `broadcast/`.** Isolation preserved. |
 | D4 | **Config distribution is manual per-service env** ("dual-read" clarified) — no shared-config service/plumbing. |
@@ -143,8 +143,8 @@ Set the same values by hand in each service's env (no shared-config plumbing):
 1. **Backend access foundation** — `BroadcastAccess` / `AccessCode` / `AccessCodeUse` models, `resolve_access`, tier permissions, `GET /broadcast/access`, the four CLI commands; **remove `BROADCAST_ACCESS_CODES`**; **drop `HostAccessGrant`**. Migration + tests. (No frontend dependency.)
 2. **Ingestion direct-submit rework** — ownership via JWT else `None`; delete grant model/resolver/migration; update T0/T3 tests.
 3. **Auth origin (Phase 1, infra/config)** — auth subdomain, `.thecommons.town` cookie domain, `trustedOrigins`/CORS, repoint `BETTER_AUTH_JWKS_URL`.
-4. **broadcastWeb** — embedded Better Auth client, login + tier-aware UI, Bearer on all calls, keep code path.
-5. **Docs** — auth topology, access model, CLI, preserved isolation contract.
+4. **broadcastWeb** — embedded Better Auth client, login + tier-aware UI, Bearer on all calls, keep code path. **Shipped as of 37.11:** superseded by the portal redirect model — broadcastWeb's own inline `AuthModal` was removed in favor of a full navigation to the shared portal's `/signin`, which returns the user to the exact broadcast URL via the cross-subdomain session cookie.
+5. **Docs** — auth topology, access model, CLI, preserved isolation contract. See [ARCHITECTURE.md#authentication](../ARCHITECTURE.md#authentication), [broadcast.md](broadcast.md), `theCommonsWeb/AGENTS.md`, `broadcastWeb/AGENTS.md`.
 
 ## 12. Risks & open questions
 

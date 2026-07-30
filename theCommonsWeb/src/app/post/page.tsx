@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { EventPayload } from '../../models/eventsModels';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
@@ -15,14 +14,15 @@ import { Select } from '../../components/ui/Select';
 import { Textarea } from '../../components/ui/Textarea';
 import { Button } from '../../components/ui/Button';
 
-// Survives the redirect to /auth: the event the user filled in before hitting the
-// auth wall is stashed here and auto-submitted once they return authenticated.
+// Survives the redirect to the portal: the event the user filled in before hitting
+// the auth wall is stashed here and auto-submitted once they return authenticated.
 const PENDING_EVENT_KEY = 'pendingEventPayload';
+
+const AUTH_ORIGIN = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
 
 type Step = 'town' | 'category' | 'details' | 'done';
 
 export default function PostEventPage() {
-    const router = useRouter();
     const { token, isAuthenticated, isInitializing } = useAuth();
 
     const queryClient = useQueryClient();
@@ -101,13 +101,10 @@ export default function PostEventPage() {
 
         if (!isAuthenticated) {
             try { sessionStorage.setItem(PENDING_EVENT_KEY, JSON.stringify(payload)); } catch { /* ignore */ }
-            const params = new URLSearchParams({
-                redirect: '/post',
-                intent: 'post-event',
-                heading: 'Almost there…',
-                subheading: 'We just need an account so we can credit your post and let you manage it later.',
-            });
-            router.push(`/auth/signup?${params.toString()}`);
+            const redirectTo = encodeURIComponent(
+                typeof window !== 'undefined' ? `${window.location.origin}/post` : '/post'
+            );
+            window.location.href = `${AUTH_ORIGIN}/join?redirect_to=${redirectTo}`;
             return;
         }
 

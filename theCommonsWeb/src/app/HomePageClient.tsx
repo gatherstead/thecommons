@@ -12,6 +12,8 @@ import { FeedStatusBar } from '../components/events/FeedStatusBar';
 import { CalendarView } from '../components/events/CalendarView';
 import { EventDetailModal } from '../components/events/EventDetailModal';
 
+const AUTH_ORIGIN = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
+
 function isSameDay(a: Date, b: Date) {
   return (
     a.getDate() === b.getDate() &&
@@ -116,7 +118,12 @@ export default function HomePageClient() {
     selectedTags,
     onTagToggle: toggleTag,
     currentUser: user,
-    onSignIn: () => router.push('/auth/login?redirect=/'),
+    onSignIn: () => {
+      const redirectTo = encodeURIComponent(
+        typeof window !== 'undefined' ? `${window.location.origin}/` : '/'
+      );
+      window.location.href = `${AUTH_ORIGIN}/signin?redirect_to=${redirectTo}`;
+    },
     onSignOut: logout,
   };
 

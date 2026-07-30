@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `37`
+**Next suite number:** `38`
 
 ## Suite ledger
 
@@ -24,14 +24,15 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 23 | Dev tooling / slash-commands | Needs QA | 23.1–23.6 | _(pending)_ |
 | 24 | Notion sync (outbox → Kanban) | Needs QA | 24.1–24.2 | _(pending)_ |
 | 25 | Broadcast dispatch on Celery (kill the 3s Neon poll) | Needs QA | 25.1–25.9 | _(pending)_ |
-| 29 | Standalone auth portal (auth.thecommons.town) | Needs QA | 29.1–29.7 | _(pending)_ |
-| 30 | Broadcast auth + access-code debugging (JWT bridge, sign-in 401, tier-0, request reduction, hard reset) | Needs QA | 30.1–30.8 | _(pending)_ |
+| 29 | Standalone auth portal (auth.thecommons.town) | Open | 29.1–29.7 (never built → superseded by suite 37) | _(pending)_ |
+| 30 | Broadcast auth + access-code debugging (JWT bridge, sign-in 401, tier-0, request reduction, hard reset) | Needs QA | 30.1,30.5–30.8 shipped; 30.2–30.4 → suite 37 | _(pending)_ |
 | 31 | Broadcast client-feedback fixes (organizer/contact fields, AI autofill, TW tags + image uploads, ABC11 identity + date/time) | In Prod | 31.1–31.11 | _(pending)_ |
 | 32 | Ingestion observability devtool (run history, live probe, funnel metrics, health flags) | In Prod | 32.1–32.8 | _(pending)_ |
 | 33 | Ingestion monitor diagnostics correctness (health levels, zero legibility, GRANT detection) | In Prod | 33.1–33.5 | _(pending)_ |
 | 34 | Ingestion pipeline resilience (dedupe corpus, standardizer fallback, direct-submission delivery) | In Prod | 34.1–34.5 | _(pending)_ |
 | 35 | Prod scheduler outage (snap-uv user-slice teardown) + monitor correctness | In Prod | 35.1–35.11, 35.13, 35.14 (35.12 merged into 35.8) | _(pending)_ |
 | 36 | Ingestion funnel dead-ends (out-of-coverage limbo, town-less events, missed sends, beat bookkeeping) | Needs QA | 36.1–36.4, 36.6–36.7 (36.5 closed won't-fix; 36.8 investigation → benign, no code) | _(pending)_ |
+| 37 | Central auth reintegration — standalone portal + fix the live JWT bridge | Needs QA | 37.1–37.8, 37.10, 37.11 built+Needs QA (dev E2E 6/6); 37.9 Open (deploy-gated); completes 29 + unbuilt half of 30 | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

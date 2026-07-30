@@ -1,10 +1,28 @@
-import { Suspense } from 'react';
-import { AuthFlow } from '../AuthFlow';
+import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 
-export default function SignupPage() {
-    return (
-        <Suspense fallback={null}>
-            <AuthFlow defaultSignIn={false} />
-        </Suspense>
-    );
+// Legacy entry point — the apex app no longer renders its own signup UI.
+// Bounce straight to the portal's /join, preserving any old params
+// (redirect, intent=digest, heading/subheading are folded into redirect_to).
+export default async function SignupPage({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+    const sp = await searchParams;
+    const h = await headers();
+    const host = h.get('host') ?? 'thecommons.town';
+    const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
+    const apex = `${proto}://${host}`;
+
+    const rawRedirect =
+        typeof sp.redirect === 'string'
+            ? sp.redirect
+            : sp.intent === 'digest'
+                ? '/profile#digest'
+                : '/';
+    const redirectTo = rawRedirect.startsWith('http') ? rawRedirect : `${apex}${rawRedirect}`;
+
+    const authOrigin = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
+    redirect(`${authOrigin}/join?redirect_to=${encodeURIComponent(redirectTo)}`);
 }

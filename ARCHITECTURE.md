@@ -130,13 +130,19 @@ Auth via Bearer JWT or `X-Broadcast-Access-Code` header, resolved to a tier by `
 
 ## Authentication
 
-**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts`, `src/hooks/useAuth.tsx`, `src/app/api/auth/set-password/route.ts`
+**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts`, `src/lib/redirect-allowlist.ts`, `src/hooks/useAuth.tsx`, `src/app/(portal)/`, `src/components/layout/SiteChrome.tsx`, `src/app/api/auth/set-password/route.ts`
 
-Auth is owned by **Better Auth running inside Next.js** — there are no Django login/signup endpoints. Django only *verifies* tokens.
+Auth is owned by **Better Auth running inside Next.js**, fronted by a standalone **portal** — there are no Django login/signup endpoints, and no app renders its own embedded auth form anymore. Django only *verifies* tokens.
 
 ### Auth-origin topology
 
-Better Auth is served at **`https://auth.thecommons.town`** (reverse-proxied by nginx on the shared VM; still physically the Next.js app). A **shared cookie domain `.thecommons.town`** (`BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town`, `SameSite=None; Secure`) lets one session span the apex app and `broadcast.thecommons.town`. Every client points its Better Auth client at `BETTER_AUTH_URL` / `VITE_BETTER_AUTH_URL` = `https://auth.thecommons.town`. Django's `BETTER_AUTH_JWKS_URL` also points at this origin. `trustedOrigins` in `src/lib/auth.ts` lists apex, www, broadcast subdomain, localhost:3000, localhost:5173, and any `BETTER_AUTH_TRUSTED_ORIGINS` env additions.
+Better Auth — and the portal UI in front of it — is served at **`https://auth.thecommons.town`** (reverse-proxied by nginx on the shared VM; still physically the Next.js app, same `theCommonsWeb` codebase). In dev the portal is unproxied, at `localhost:3000` (same origin as the rest of the app). A **shared cookie domain `.thecommons.town`** (`BETTER_AUTH_COOKIE_DOMAIN=.thecommons.town`, `SameSite=None; Secure`, wired via `crossSubDomainCookies` in `src/lib/auth.ts` — active only when `BETTER_AUTH_COOKIE_DOMAIN` is set) lets one session span the apex app, `auth.`, and `broadcast.thecommons.town`. Every client points its Better Auth client at `BETTER_AUTH_URL` / `VITE_BETTER_AUTH_URL` = `https://auth.thecommons.town`. Django's `BETTER_AUTH_JWKS_URL` also points at this origin. `trustedOrigins` in `src/lib/auth.ts` lists apex, www, broadcast subdomain, localhost:3000, localhost:5173, and any `BETTER_AUTH_TRUSTED_ORIGINS` env additions.
+
+### The portal
+
+The portal is a route group, `src/app/(portal)/`, inside the same Next.js app — not a separate service. Routes: `/signin`, `/join` (passwordless lazy-auth create-account), `/set-password`, `/forgot-password`. `PortalShell` (`src/app/(portal)/PortalShell.tsx`) renders standalone split-panel chrome with a SIGN IN / CREATE ACCOUNT tab switcher; a client gate, `src/components/layout/SiteChrome.tsx` (checks `usePathname()` against the portal paths), hides the apex `Header`/`Footer`/banners on those routes so the portal has its own chrome, while every other route is unchanged.
+
+Every service that needs a user to authenticate redirects into the portal with `?redirect_to=<absolute URL>`. `src/lib/redirect-allowlist.ts` exports `resolveRedirect(raw, fallback='/')`, which validates the destination against an allowlist (`thecommons.town`, `*.thecommons.town`, `localhost`/`127.0.0.1` in dev) as an open-redirect guard; the portal completes sign-in with `window.location.href = resolveRedirect(...)` — a full cross-subdomain navigation, not a client-side route change. The apex app's own former embedded flow (`src/app/auth/AuthFlow.tsx`, `src/app/auth/google-popup/`) was removed; `/auth`, `/auth/login`, `/auth/signup` are now thin server-redirect shims that map the old `?redirect=`/`?intent=` params to an absolute `redirect_to` and bounce into the portal. In-app "Sign in"/"Sign up" entry points (Header, sidebar, post gate, digest CTA) navigate straight to the portal. `broadcastWeb` does the same: its former inline `AuthModal` was removed, and its "Sign in / Create account" button does a full navigation to `${VITE_BETTER_AUTH_URL}/signin?redirect_to=<current broadcast URL>` — the shared session brings the user back.
 
 ### The bridge
 - Browser authenticates with Better Auth and holds a session cookie.
@@ -161,7 +167,7 @@ Users secure the account later via `POST /api/auth/set-password` (links a `crede
 Django computes it from the `BetterAuthAccount` mirror (`provider_id='credential'` with a non-null password) and returns it on `/auth/me` and `/events/me/profile`. No column, no migration.
 
 ### Google sign-in — DISABLED
-Commented out in `src/lib/auth.ts`, `src/app/auth/AuthFlow.tsx`, and `src/app/auth/google-popup/`. Revisit later (needs a post-OAuth account-type step).
+Commented out in `src/lib/auth.ts`. The client popup flow that used to live at `src/app/auth/google-popup/` was removed along with the rest of the pre-portal embedded auth UI; re-enabling Google sign-in needs a new post-OAuth account-type step built into the portal. Revisit later.
 
 ---
 
@@ -231,13 +237,16 @@ The main site is **Next.js 16 App Router**. Root layout (`src/app/layout.tsx`) w
 | `/post` | `app/post/page.tsx` | client | Submit an event (auth-gated) |
 | `/profile` | `app/profile/page.tsx` | client | Edit profile, digest prefs, security section |
 | `/dashboard` | `app/dashboard/page.tsx` | client | Manage submitted events + business listing |
-| `/auth` | `app/auth/page.tsx` | server | Redirects to `/auth/signup` |
-| `/auth/login` | `app/auth/login/page.tsx` | server shell → client `AuthFlow` | Login |
-| `/auth/signup` | `app/auth/signup/page.tsx` | server shell → client `AuthFlow` | Signup |
-| `/auth/google-popup[/complete]` | `app/auth/google-popup/` | client | DISABLED Google OAuth popup |
+| `/auth`, `/auth/login`, `/auth/signup` | `app/auth/{page,login/page,signup/page}.tsx` | server redirect shim | Legacy entry points — map old `?redirect=`/`?intent=` to `redirect_to` and bounce into the portal (`/join` or `/signin`) |
+| `/signin` | `app/(portal)/signin/page.tsx` | client (`PortalShell` + `SignInForm`) | Portal sign-in |
+| `/join` | `app/(portal)/join/page.tsx` | client (`PortalShell` + `JoinForm`) | Portal passwordless create-account |
+| `/set-password` | `app/(portal)/set-password/page.tsx` | client | Set a password on a passwordless account |
+| `/forgot-password` | `app/(portal)/forgot-password/page.tsx` | client | Password reset request |
 | `/events/[uuid]` | `app/events/[uuid]/page.tsx` | server (async) | Event detail (`generateMetadata` + OpenGraph) |
 | `/api/auth/[...all]` | `app/api/auth/[...all]/route.ts` | route | Better Auth handler |
 | `/api/auth/set-password` | `app/api/auth/set-password/route.ts` | route | Set password on a passwordless account |
+
+`/auth/google-popup/` (the disabled Google OAuth popup) was removed along with the rest of the pre-portal embedded auth UI — see [§Authentication](#authentication).
 
 ### Data layer (TanStack Query)
 - `src/lib/queryClient.ts` — `getQueryClient()` returns a per-request client on the server and a browser singleton on the client. Defaults: `staleTime/gcTime: Infinity`, no refetch on focus/reconnect, `retry: 1`.

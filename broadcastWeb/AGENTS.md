@@ -34,7 +34,19 @@ cd broadcastWeb && pnpm install && pnpm dev
 Env vars: see `.env.example`. `VITE_BROADCAST_API_BASE_URL` points at the Django
 API; `VITE_BROADCAST_EXTENSION_ID` enables the manual-review button;
 `VITE_BETTER_AUTH_URL` points at the Better Auth origin (`https://auth.thecommons.town`
-in prod, `http://localhost:3000` in dev) — required for the in-SPA login/signup/signout flow.
+in prod, `http://localhost:3000` in dev) — required for sign-in and for `authClient.signOut()`.
+
+## Auth
+
+There is no embedded login/signup form in this SPA — the former inline `AuthModal`
+component was deleted. `App.tsx`'s "Sign in / Create account" button does a full-page
+navigation to `${VITE_BETTER_AUTH_URL}/signin?redirect_to=<current broadcast URL>`,
+i.e. the shared auth **portal** in `theCommonsWeb` (`src/app/(portal)/`). The
+`.thecommons.town`-scoped session cookie means completing sign-in there returns the
+browser to this exact page, already authenticated — no token-passing needed.
+`lib/authClient.ts` (Better Auth client) still exists in this app, but only to read the
+session, mint a JWT (`fetchJwt`), and call `signOut()` — never to render a sign-in form.
+Details: [`../ARCHITECTURE.md#authentication`](../ARCHITECTURE.md#authentication).
 
 > pnpm-managed — `npm install` fails on the symlinked store. Use pnpm everywhere.
 

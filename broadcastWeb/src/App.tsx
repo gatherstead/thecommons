@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-import AuthModal from "./components/AuthModal";
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
@@ -203,8 +202,6 @@ export default function App() {
   const [accessError, setAccessError] = useState("");
   const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-
-  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
@@ -536,6 +533,13 @@ export default function App() {
     }
   };
 
+  // Full navigation to the shared auth portal — the cross-subdomain session
+  // brings the user back to this exact URL automatically after sign-in.
+  const handleSignIn = () => {
+    const authUrl = import.meta.env.VITE_BETTER_AUTH_URL || "http://localhost:3000";
+    window.location.href = `${authUrl}/signin?redirect_to=${encodeURIComponent(window.location.href)}`;
+  };
+
   // Signing out wipes the form entirely — clear both persistence scopes and
   // reload for a guaranteed-clean, stale-data-free mount (same approach as
   // handleHardReset). try/finally so the reload still fires if signOut rejects.
@@ -774,8 +778,6 @@ export default function App() {
         <div className="rule-double" />
       </header>
 
-      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
-
       <section className="section">
         <h2>Access</h2>
         <ol className="access-steps">
@@ -794,7 +796,7 @@ export default function App() {
             ) : (
               <>
                 <p className="hint">Use your account, or create one in a few seconds.</p>
-                <button type="button" onClick={() => setShowAuthModal(true)}>
+                <button type="button" onClick={handleSignIn}>
                   Sign in / Create account
                 </button>
               </>

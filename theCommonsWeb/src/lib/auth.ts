@@ -81,10 +81,25 @@ export const auth = betterAuth({
                 after: async (createdUser) => {
                     const userType =
                         (createdUser as { user_type?: string }).user_type ?? 'LOCAL';
-                    await db.execute(sql`
-                        INSERT INTO public.events_userprofile (uuid, user_id, user_type, primary_city, address, email_preference)
-                        VALUES (gen_random_uuid(), ${createdUser.id}, ${userType}, '', '', 'NEVER')
-                    `);
+                    // This mirror INSERT must never block account creation: Better Auth
+                    // runs this hook inside the signup transaction, so a throw here
+                    // would roll back the just-inserted `account` credential row and
+                    // leave a `user` with no way to sign in. ON CONFLICT DO NOTHING
+                    // guards duplicate mirror rows; the try/catch guards everything
+                    // else (schema/column drift, etc). A user may transiently exist
+                    // without an events_userprofile row until backfilled — acceptable.
+                    try {
+                        await db.execute(sql`
+                            INSERT INTO public.events_userprofile (uuid, user_id, user_type, primary_city, address, email_preference)
+                            VALUES (gen_random_uuid(), ${createdUser.id}, ${userType}, '', '', 'NEVER')
+                            ON CONFLICT DO NOTHING
+                        `);
+                    } catch (err) {
+                        console.error(
+                            `[auth] failed to mirror events_userprofile for user ${createdUser.id}:`,
+                            err,
+                        );
+                    }
                 },
             },
         },

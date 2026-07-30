@@ -153,6 +153,8 @@ Permission classes: `RequiresBroadcastTier1` (preview / submit / recipe / job en
 
 **Frontend (`broadcastWeb`):** one textfield does double duty, labeled by login state — logged out it's "Access Code" (`getAccess`, anonymous TRIAL resolution, persisted in localStorage); logged in it relabels to "Upgrade Account" (`redeemAccessCode` → `POST /broadcast/redeem`, permanent, nothing persisted client-side since the grant now lives server-side against the account).
 
+**Sign-in:** there is no embedded auth UI in the SPA (the former inline `AuthModal` component was removed). The "Sign in / Create account" button (`App.tsx`'s `handleSignIn`) does a full-page navigation to `${VITE_BETTER_AUTH_URL}/signin?redirect_to=<current broadcast URL>` — i.e. the shared auth **portal** (`theCommonsWeb`'s `src/app/(portal)/`, served at `https://auth.thecommons.town` in prod / `http://localhost:3000` in dev; see [ARCHITECTURE.md#authentication](../ARCHITECTURE.md#authentication)). Because the session cookie is scoped to `.thecommons.town`, completing sign-in in the portal returns the browser to the exact broadcast URL it left, already authenticated. `broadcastWeb/src/lib/authClient.ts` still exists — it's the Better Auth client used to read the session, mint a JWT (`fetchJwt`), and call `signOut()`, not to render any sign-in form.
+
 **Admin (`/admin/broadcast/accesscode/`):** self-serve code creation — `AccessCodeAdmin.save_model` generates and hashes a fresh raw code on creation and shows it once via a success message banner (never stored, never shown again). A `trial_days` convenience field on the add form sets `expires_at` relative to now. `BroadcastAccess` is also registered for visibility into current permanent grants.
 
 ## API endpoints

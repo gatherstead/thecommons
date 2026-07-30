@@ -4,38 +4,35 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '../../hooks/useAuth';
 
+const AUTH_ORIGIN = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
+
 export function HeaderAuthNav() {
     const { isAuthenticated, isInitializing, user, logout } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
     const isOnHome = pathname === '/';
-    const isOnLogin = pathname === '/auth/login';
-    const isOnSignup = pathname === '/auth/signup';
 
     if (isInitializing) return null;
 
     if (!isAuthenticated) {
-        const navLinkClass = "text-[11px] uppercase tracking-widest no-underline hover:text-[var(--color-accent)] transition-colors";
+        const navLinkClass = "text-[11px] uppercase tracking-widest no-underline hover:text-[var(--color-accent)] transition-colors bg-transparent border-none cursor-pointer p-0";
         const sep = <span className="text-[var(--color-border-light)] text-xs" aria-hidden="true">/</span>;
-        const next = encodeURIComponent(pathname || '/');
 
-        let left: React.ReactNode;
-        let right: React.ReactNode;
+        const redirectTo = () =>
+            encodeURIComponent(typeof window !== 'undefined' ? window.location.href : '/');
 
-        if (isOnLogin) {
-            left = <Link href="/" className={navLinkClass}>Home</Link>;
-            right = <Link href="/auth/signup" className={navLinkClass}>Sign Up</Link>;
-        } else if (isOnSignup) {
-            left = <Link href="/auth/login" className={navLinkClass}>Log In</Link>;
-            right = <Link href="/" className={navLinkClass}>Home</Link>;
-        } else {
-            left = <Link href={`/auth/login?redirect=${next}`} className={navLinkClass}>Log In</Link>;
-            right = <Link href={`/auth/signup?redirect=${next}`} className={navLinkClass}>Sign Up</Link>;
-        }
+        const goToSignIn = () => {
+            window.location.href = `${AUTH_ORIGIN}/signin?redirect_to=${redirectTo()}`;
+        };
+        const goToSignUp = () => {
+            window.location.href = `${AUTH_ORIGIN}/join?redirect_to=${redirectTo()}`;
+        };
 
         return (
             <div className="flex items-center justify-center gap-4 py-1.5">
-                {left}{sep}{right}
+                <button type="button" onClick={goToSignIn} className={navLinkClass}>Log In</button>
+                {sep}
+                <button type="button" onClick={goToSignUp} className={navLinkClass}>Sign Up</button>
             </div>
         );
     }

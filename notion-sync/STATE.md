@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `36`
+**Next suite number:** `37`
 
 ## Suite ledger
 
@@ -31,6 +31,7 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 33 | Ingestion monitor diagnostics correctness (health levels, zero legibility, GRANT detection) | In Prod | 33.1–33.5 | _(pending)_ |
 | 34 | Ingestion pipeline resilience (dedupe corpus, standardizer fallback, direct-submission delivery) | In Prod | 34.1–34.5 | _(pending)_ |
 | 35 | Prod scheduler outage (snap-uv user-slice teardown) + monitor correctness | In Prod | 35.1–35.11, 35.13, 35.14 (35.12 merged into 35.8) | _(pending)_ |
+| 36 | Ingestion funnel dead-ends (out-of-coverage limbo, town-less events, missed sends, beat bookkeeping) | Needs QA | 36.1–36.4 (36.5 closed won't-fix — its 13h window would have masked 36.4) | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

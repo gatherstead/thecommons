@@ -389,3 +389,88 @@ If this keeps recurring across future migrations, the more durable fix is runnin
 `ALTER DEFAULT PRIVILEGES` as (or granted by) whatever role prod migrations actually run
 as — but that's a role-alignment decision to make deliberately, not a blanket workaround
 to apply here.
+
+---
+
+## Beat scheduler: last_run_at persistence lag
+
+This section is about `manage.py healthcheck` (the systemd-driven prod healthcheck run
+by `healthcheck.service`, documented in [DEPLOY.md](../DEPLOY.md#health-check)) and
+`django_celery_beat`'s scheduler, not the `/devtools/monitor` dashboard the rest of this
+doc covers — it lives here because the incident originates in the same
+poll/schedule/freshness family of problems and `backend/settings/base.py` points here for
+the writeup.
+
+**Symptom (2026-07-29, ticket 36.4):** `manage.py healthcheck` reported
+`beat:broadcast-orphan-recovery STALE — last run 9.7h ago (> 7h window)` every hour on
+prod, making `healthcheck.service` a permanently failing systemd unit even though the
+task was actually running on schedule.
+
+**Root cause.** `django_celery_beat`'s `DatabaseScheduler` keeps `PeriodicTask.last_run_at`
+in memory and only writes it to Postgres when celery's `Scheduler._do_sync()` runs. Both
+sync triggers were defeated:
+
+1. `backend/settings/base.py` sets `CELERY_BEAT_MAX_LOOP_INTERVAL = 6 * 60 * 60`. That
+   becomes `Scheduler.max_interval` (`celery/beat.py:252-258`), overriding
+   django_celery_beat's `DEFAULT_MAX_INTERVAL = 5` (`django_celery_beat/schedulers.py:33`).
+   In `Service.start()` (`celery/beat.py:633-655`), `_do_sync()` is only called after
+   `time.sleep(interval)`, and only inside `if interval and interval > 0.0` — so beat can
+   sleep up to 6 hours between sync opportunities.
+2. `Scheduler.apply_async`'s `finally` block (`celery/beat.py:416-418`) is the other
+   trigger, gated on `should_sync()` (`celery/beat.py:381-387`). Its task-count clause is
+   dead because `app.conf.beat_sync_every` defaults to **0**. Its time clause requires
+   `monotonic() - _last_sync > sync_every` where `sync_every = 180` (3 minutes) — so a task
+   firing shortly after a prior sync flushes nothing.
+
+**Measured proof on prod** (read-only queries plus one authorized `-l debug` restart):
+
+```
+22:24:33  BEFORE   last_run_at = 2026-07-29 12:00:01.808480+00   total_run_count =  9
+22:24:35  systemctl restart celerybeat
+22:24:37  AFTER    last_run_at = 2026-07-29 18:00:00.021322+00   total_run_count = 10
+```
+
+The 18:00 write had been buffered in memory for 4h24m and was flushed only by celery's
+shutdown path (`Service.start()`'s `finally: self.sync()`). Beat's journal showed
+`Sending due task broadcast-orphan-recovery` at `18:00:00,023`, and the broadcast worker
+logged the task `received` and `succeeded in 0.083s` — the task was sent and executed on
+time. Only the bookkeeping write was late. Beat had one process, `NRestarts=0`, and no
+errors or warnings above DEBUG in `journalctl -u celerybeat`.
+
+**Hypotheses that were disproven** (recorded so nobody re-chases them):
+
+- *A dev/prod database split* — ruled out: `DJANGO_ENV=prod`, DB host
+  `ep-late-smoke-...-pooler`, name `neondb`.
+- *A swallowed `ObjectDoesNotExist`/`TypeError` in `DatabaseScheduler.sync()`*
+  (`django_celery_beat/schedulers.py:459`, which re-adds the failed name to `_dirty` and
+  retries forever with no log above DEBUG) — ruled out: `save()` succeeded fine at
+  shutdown against the same pk.
+- *A stale in-memory `_schedule` overwriting the fresh value* — ruled out: memory held the
+  18:00 value, not 12:00.
+- *Clock skew.* This one is a trap worth documenting on its own: beat's startup banner
+  (`celery beat vX.Y.Z is starting. / LocalTime -> ...`) is flushed at process
+  **teardown** and reports that process's own *start* time, so in `journalctl` it looks
+  like beat's clock is running behind the system clock. It isn't. Verified across three
+  consecutive restarts, where each banner's `LocalTime` matched the previous PID's
+  `beat: Starting...` timestamp exactly.
+
+**The fix:** `CELERY_BEAT_SYNC_EVERY = 1` in `backend/settings/base.py`, which maps to
+`app.conf.beat_sync_every` → `Scheduler.sync_every_tasks` (`celery/beat.py:262-264`),
+forcing a sync after every task send. This costs one UPDATE per task fire and does not
+change beat's DB poll rate — deliberately, since `CELERY_BEAT_MAX_LOOP_INTERVAL` exists to
+reduce Neon serverless wake-ups, and that trade-off is still worth making. Regression test:
+`backendServer/events/tests/test_beat_last_run_persistence.py`.
+
+**Why this matters for monitoring:** before this fix, `last_run_at` could lag reality by
+up to `CELERY_BEAT_MAX_LOOP_INTERVAL` (6 hours), so any staleness check reading that
+column was measuring a lagging value, not a real one. That's why a 7h window on a 6h-period
+task produced false alarms — and why the tempting fix of "just widen the window to 13h"
+would have been wrong: it papers over the false alarm but doesn't fix the actual defect
+(a real multi-hour outage would then also go undetected for up to 13h). Widening the
+window here would have hidden a genuine bug rather than fixed it.
+
+**How to tell a persistence lag from a real outage:** restart `celerybeat` and re-read the
+`PeriodicTask` row. Beat's shutdown path always flushes (`Service.start()`'s
+`finally: self.sync()`), so a `last_run_at` that jumps forward immediately after the
+restart was sitting in memory, not missed — the task fired, the write was just late. If
+the value doesn't move after a restart, that's a real gap: the task actually isn't firing.

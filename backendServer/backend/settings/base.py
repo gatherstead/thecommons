@@ -150,7 +150,23 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # Upper bound on beat's sleep between ticks — it still wakes exactly on time for
 # actual due tasks (scrape 3:30am, ingest 4:00am, digest), this only caps how often
 # it re-polls the DB for schedule changes in between, to reduce Neon wake-ups.
+#
+# Trade-off: DatabaseScheduler keeps `PeriodicTask.last_run_at` in memory and only
+# flushes it to Postgres on a sync. With beat_sync_every left at its default (0),
+# the only other sync trigger is time-based (every 3 min, capped by this interval),
+# so last_run_at can visibly lag reality by up to 6h until CELERY_BEAT_SYNC_EVERY
+# (below) forces a flush after every task send instead. See docs/ingestion-monitoring.md
+# "Beat scheduler: last_run_at persistence lag" for the full incident writeup.
 CELERY_BEAT_MAX_LOOP_INTERVAL = 6 * 60 * 60
+# Force a DB sync after every single task send (celery/beat.py Scheduler.should_sync:
+# `self.sync_every_tasks and self._tasks_since_sync >= self.sync_every_tasks`), maps to
+# app.conf.beat_sync_every via Scheduler.__init__ (celery/beat.py:262-264). Without this,
+# a task firing within 180s of the prior sync (beat_sync_every default 0 disables the
+# task-count trigger, and the time-based trigger is `sync_every=180`) leaves
+# last_run_at stuck in memory until the next sync opportunity — up to 6h away given
+# CELERY_BEAT_MAX_LOOP_INTERVAL above. Costs one UPDATE per task fire; does not touch
+# the loop interval or Neon poll rate.
+CELERY_BEAT_SYNC_EVERY = 1
 CELERY_TIMEZONE = "UTC"
 
 # Headless-Chrome scraping is memory-heavy — pin it to its own queue drained by a

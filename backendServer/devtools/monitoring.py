@@ -17,6 +17,7 @@ from django.db.models import Count, Max, Q
 from django.utils import timezone
 
 from broadcast.models import BroadcastSubmission, BroadcastTarget
+from events.models import Event
 from ingestion.models import EventSource, RawEvent, SourceRun, StagedEvent
 
 _STAGED_STATUSES = [choice[0] for choice in StagedEvent.STATUS_CHOICES]
@@ -251,10 +252,10 @@ def source_health(source_row, recent_runs, now):
 
     `source_row` is one row as produced by `_source_rows` (dict with `active`,
     `poll_interval_hours`, `last_polled_dt` and `created_at` — real datetimes,
-    not the ISO strings on the public row shape — `raw_count`, `funnel`).
-    `recent_runs` is a list of dicts (most-recent-first) with `status`,
-    `finished_at`, `error_message` for one source. `now` is a datetime compared
-    against `last_polled_dt` / `created_at`.
+    not the ISO strings on the public row shape — `raw_count`, `funnel`,
+    `published_all_time`). `recent_runs` is a list of dicts (most-recent-first)
+    with `status`, `finished_at`, `error_message` for one source. `now` is a
+    datetime compared against `last_polled_dt` / `created_at`.
 
     Returns {"level": "ok" | "unknown" | "warn" | "error" | "inactive",
     "reasons": [str, ...]}. Every applicable rule is evaluated and its reason
@@ -287,8 +288,20 @@ def source_health(source_row, recent_runs, now):
             reasons.append("polling but zero new raw events in window")
             level = _worse(level, "warn")
         elif source_row["funnel"]["published"] == 0:
-            reasons.append("raw events arriving but none published in window")
-            level = _worse(level, "warn")
+            # Suite 34+ sources can sit at zero *surviving StagedEvent
+            # anchors* windowed on raw_event__created_at forever — the
+            # StagedEvent that fed a live Event can be gone (pruned, or
+            # published before this window existed) while the Event itself
+            # is still live on the site. `published_all_time` (an all-time,
+            # un-windowed Event count keyed by source_name — see
+            # `_source_rows`) is the honest signal for "has this source ever
+            # actually gotten something published"; only warn when that is
+            # also zero, or a perfectly healthy source (Carrboro, The Plant
+            # NC) cries wolf forever just because its old anchors don't
+            # survive the window.
+            if source_row.get("published_all_time", 0) == 0:
+                reasons.append("raw events arriving but none published in window")
+                level = _worse(level, "warn")
 
     return {"level": level, "reasons": reasons}
 
@@ -328,6 +341,24 @@ def _no_town_note(no_town_count: int) -> str | None:
         f"{no_town_count} skipped — town not in coverage "
         f"(see `manage.py reopen_skipped_towns` once added)"
     )
+
+
+def _published_note(published_all_time: int) -> str | None:
+    """Compose the message for a `published == 0` funnel cell.
+
+    Ticket 36.6's motivation: `published` is windowed on
+    `raw_event__created_at` via a *surviving* `StagedEvent` anchor — a source
+    published entirely before suite 34 can have zero surviving anchors in any
+    window forever, even though its events are live on the site right now.
+    `published_all_time` (an un-windowed, all-time `Event` count keyed by
+    `source_name` — see `_source_rows`) is the honest "has this ever actually
+    worked" signal `StagedEvent` can't provide once its anchors are gone.
+    Mirrors `_raw_zero_note` / `_no_town_note`: only rendered when there is
+    something to explain, never replacing the plain `0` count.
+    """
+    if published_all_time == 0:
+        return None
+    return f"0 in window; {published_all_time} events live all-time"
 
 
 def _source_rows(db, start, end, source_type_filter, runs_state=None):
@@ -387,6 +418,18 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
     )
     raw_all_time_counts = {row["source"]: row["n"] for row in all_time_rows}
     latest_raw_created_at = {row["source"]: row["latest"] for row in all_time_rows}
+
+    # All-time live Event count per source, keyed by `EventSource.name` since
+    # `Event` carries no source FK or creation timestamp — only a free-text
+    # `source_name` (see ticket 36.6). This cannot be windowed the way
+    # `raw`/`published` are; it is deliberately the un-windowed "has this
+    # source ever gotten anything published, ever" signal, mirroring
+    # `all_time_rows` above. One grouped query for every source in this call,
+    # not per-source — no N+1.
+    published_all_time_by_name = {
+        row["source_name"]: row["n"]
+        for row in Event.objects.using(db).values("source_name").annotate(n=Count("pk"))
+    }
 
     no_staged_counts = {
         row["source"]: row["n"]
@@ -490,6 +533,11 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
         )
         no_town_count = funnel_staged.get("skipped_no_town", 0)
         no_town_note = _no_town_note(no_town_count)
+        published_in_window = funnel_staged.get("published", 0)
+        published_all_time = published_all_time_by_name.get(source["name"], 0)
+        # Only computed for a zero-in-window row — mirrors `raw_zero_note`:
+        # a healthy funnel has nothing to disambiguate.
+        published_note = _published_note(published_all_time) if published_in_window == 0 else None
         last_run = (
             {
                 "status": recent_runs[0]["status"],
@@ -524,6 +572,19 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             # at `raw > 0, published = 0` because its town is out of coverage
             # reads as "explained", not "broken".
             "no_town_note": no_town_note,
+            # All-time, un-windowed count of live Events attributed to this
+            # source by `Event.source_name` — see the `published_all_time_by_name`
+            # query above. `Event` has no source FK or creation timestamp, so
+            # this cannot be windowed the way `raw_all_time` is; it is the
+            # honest "has this source ever gotten anything published, ever"
+            # signal for a source whose old StagedEvent anchors no longer
+            # survive the funnel window (ticket 36.6).
+            "published_all_time": published_all_time,
+            # Only set when `published == 0` in-window — see `_published_note`.
+            # Renders as a tooltip/subtext on the `published` funnel cell so a
+            # source that's actually healthy all-time doesn't read as broken
+            # just because its funnel window has nothing to show.
+            "published_note": published_note,
             "staged_by_status": staged_status_counts,
             "published_count": funnel_staged.get("published", 0),
             # Buckets are mutually exclusive — each raw event lands in exactly

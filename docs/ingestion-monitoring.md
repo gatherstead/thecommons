@@ -80,6 +80,36 @@ The windowed `funnel.raw` value itself is unchanged — this is purely additiona
 a fix to the windowed count (which was verified correct against prod; see the git history
 around ticket 35.4 if that assumption ever needs re-checking).
 
+### `published` zero in this window vs. zero ever (ticket 36.6)
+
+The `published` bucket has the same "zero in this window" ambiguity as `raw`, but for a
+different structural reason: `published` is windowed on `raw_event__created_at` via a
+**surviving** `StagedEvent` anchor. A source whose events were all published before suite 34
+can have **zero surviving anchors in any window, forever**, even though those events are
+live on the site right now. On prod this made healthy, long-running sources like Carrboro
+Commons and The Plant NC render `warn` — "raw events arriving but none published in window"
+— permanently, because the funnel had no way to see past its own windowed anchors.
+
+`_source_rows` runs one additional grouped, un-windowed query per `collector_summary` /
+`broadcast_inbound_summary` call: `Event.objects.values("source_name").annotate(n=Count("id"))`,
+grouped once across every source in the call (not per-source — same O(1) discipline as
+`raw_all_time`). `Event` carries no source foreign key or creation timestamp, so attribution
+is by `EventSource.name == Event.source_name` (not DB-unique, but practically unique) and the
+count is necessarily all-time, not windowed — there is no `Event` timestamp to window it by.
+The result is exposed per row as `published_all_time`.
+
+When `funnel.published == 0`, `_published_note` composes one of two outcomes:
+
+- The source has live Events all-time: `0 in window; 12 events live all-time`, rendered as a
+  subscript next to the `0` (and its tooltip) on the `published` cell in both tables.
+- The source has never published anything, ever: no note (`None`) — the plain `0` already
+  tells the whole story, same as `_no_town_note`'s "nothing to explain" branch.
+
+**This also changes the warn rule** (see "Health levels" below): `source_health` no longer
+warns on `published == 0` in-window when `published_all_time >= 1`. A source with raw events
+arriving and genuinely zero live events, ever, still warns — the downgrade is scoped to
+sources with a real all-time publish history, not a blanket suppression of this warn.
+
 ### Two traps
 
 **The buckets are not mutually exclusive and do not sum to `raw`.** They're independent
@@ -171,12 +201,19 @@ Rules, most severe first:
 5. **`warn` — funnel stalls.** The two rules are mutually exclusive (`if raw_count == 0 ...
    elif published == 0`):
    - Zero `raw` events in the window ("polling but zero new raw events in window").
-   - Otherwise, zero `published` events in the window ("raw events arriving but none
-     published in window").
+   - Otherwise, zero `published` events in the window **and zero live Events for this
+     source all-time** ("raw events arriving but none published in window").
 
    Both are **suppressed entirely for a never-polled source** — they presuppose polling,
    and without the suppression the badge tooltip contradicts itself ("never polled; polling
    but zero new raw events in window").
+
+   The `published == 0` branch is additionally gated on `published_all_time == 0` (ticket
+   36.6 — see "`published` zero in this window vs. zero ever" above): a source whose
+   `StagedEvent` anchors don't survive the current window but that has published live
+   Events at some point in the past is **not** warned — the all-time count is the honest
+   signal that this source has actually worked, and the funnel window's blindness to
+   pre-window anchors is not evidence of a real stall.
 6. **`ok`** — none of the above.
 
 Every applicable rule contributes its own reason string to `reasons: [...]`; the response

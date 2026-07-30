@@ -52,7 +52,9 @@
   .monitor td.num.zero { color: #b6bcc6; }
   /* Ticket 35.4: distinguishes "zero in this window" from "zero ever" inline,
      next to the muted 0 the funnel-cell convention already renders — see
-     `_raw_zero_note` in monitoring.py for the two message shapes. */
+     `_raw_zero_note` in monitoring.py for the two message shapes. Also used
+     by `_no_town_note` (no_town cell) and `_published_note` (published
+     cell, ticket 36.6) — same convention, different funnel columns. */
   .monitor .zero-note { font-weight: 400; font-size: 0.78rem; color: #92400e; white-space: nowrap; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
   .monitor .notice {
@@ -276,7 +278,7 @@
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
-        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}"{% if c.published_note %} title="{{ c.published_note }}"{% endif %}>{{ c.funnel.published }}{% if c.published_note %}<span class="zero-note"> &mdash; {{ c.published_note }}</span>{% endif %}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
       <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="16"></td></tr>
@@ -329,7 +331,7 @@
         <td class="num funnel-cell{% if not c.funnel.rejected %} zero{% endif %}">{{ c.funnel.rejected }}</td>
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
-        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}">{{ c.funnel.published }}</td>
+        <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}"{% if c.published_note %} title="{{ c.published_note }}"{% endif %}>{{ c.funnel.published }}{% if c.published_note %}<span class="zero-note"> &mdash; {{ c.published_note }}</span>{% endif %}</td>
         <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
       </tr>
       <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>

@@ -11,10 +11,36 @@ ping (DB 0), Django cache round-trip (DB 1), a Celery worker `control.ping`, and
 every django-celery-beat PeriodicTask (enabled + last-run freshness). Exits
 non-zero if any *critical* check fails so it can feed monitoring — staleness is
 one of those: a schedule that stopped firing IS an outage, not a warning.
+
+Freshness for a crontab-backed task is judged by deriving the *expected* next
+fire time from the crontab itself (via `crontab.remaining_estimate`), not by a
+hand-tuned staleness window — a window necessarily exceeds the task's own
+period, so it always has a blind spot at least one period wide (a missed
+weekly send would ride along for ~8 days). Instead we ask the schedule "what
+was the next fire time after last_run_at?" and FAIL as soon as that time has
+passed (past a grace allowance — see crontab_grace_seconds() below), so a
+missed occurrence surfaces within hours, not days.
+DEFAULT_STALENESS_HOURS is kept for two narrower roles: (1) the must-exist set
+— a seeded task missing from the schedule entirely is a FAIL — and (2) a
+fallback window for interval-backed or schedule-less PeriodicTask rows, where
+there is no crontab to derive an expected fire time from.
+
+`PeriodicTask.last_run_at` is not written the instant a task fires: beat's
+`DatabaseScheduler` keeps it in memory and only persists it on a sync. That
+sync is now forced after every single task send by `CELERY_BEAT_SYNC_EVERY = 1`
+(see backend/settings/base.py), so last_run_at lags reality by roughly one
+task execution, not by `CELERY_BEAT_MAX_LOOP_INTERVAL` (hours). If
+`CELERY_BEAT_SYNC_EVERY` is ever unset/disabled, the old worst case comes
+back, so `crontab_grace_seconds()` re-widens automatically rather than
+silently staying tight. A naive "is remaining negative" check would misreport
+a healthy-but-unsynced task as MISSED, so `crontab_grace_seconds()` absorbs
+that plausible persistence lag before declaring MISSED; see
+`_crontab_freshness` for the WARN/FAIL split within that grace window.
 """
 
 import json
 import os
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
@@ -28,19 +54,77 @@ OK, WARN, FAIL = "OK", "WARN", "FAIL"
 # only these, the app is on dev settings and will 400 every real request.
 LOCALHOST_ONLY = {"localhost", "127.0.0.1", "[::1]"}
 
-# Per-task freshness windows (hours). A seeded task whose last_run_at is older
-# than this — or that has never run — is flagged FAIL. This dict also doubles
-# as the set of tasks that must exist in the schedule at all (see
-# _check_periodic_tasks): every task the pipeline depends on belongs here, or
-# its staleness silently passes forever (2026-07-21 scheduler outage).
+# Tasks that must exist in the schedule (a missing entry is a FAIL — see
+# _check_periodic_tasks, guarding the 2026-07-21 scheduler outage), and the
+# fallback staleness window (hours) used only when a task has no crontab to
+# derive an expected-fire time from (interval schedule, or no schedule at
+# all). Crontab-backed tasks are judged against their own expected fire time
+# instead — see _task_freshness.
 DEFAULT_STALENESS_HOURS = {
     "ingest-events-daily": 25,
     "scrape-sources-daily": 25,
     "weekly-digest-sunday": 24 * 8,  # ~8 days
-    # Runs `0 */6 * * *`; one interval plus an hour of grace, matching the
-    # +1h pattern the daily windows use.
     "broadcast-orphan-recovery": 7,
 }
+
+# Fallback bound (seconds) on how long beat's DatabaseScheduler may leave a
+# fresh last_run_at unpersisted, used only if CELERY_BEAT_MAX_LOOP_INTERVAL is
+# unset — matches the value that setting currently carries in
+# backend/settings/base.py, so an unset value degrades to today's known prod
+# behavior rather than to an arbitrary guess.
+_DEFAULT_BEAT_LOOP_INTERVAL_SECONDS = 6 * 60 * 60
+
+# Extra buffer (seconds) on top of the loop-interval bound, covering scheduler
+# jitter and task execution time so we don't FAIL on the tail end of a sync
+# that lands a few minutes late. Deliberately small relative to the loop
+# interval — this is slack for noise, not a second staleness window. Used
+# only in the *wide* (CELERY_BEAT_SYNC_EVERY unset/0) branch below.
+CRONTAB_GRACE_BUFFER_SECONDS = 60 * 60
+
+# Buffer (seconds) used in the *tight* branch, when CELERY_BEAT_SYNC_EVERY
+# forces a DB flush after every task send. The only slack left to absorb is
+# ordinary scheduler wake-up jitter plus the time a task itself takes to run
+# before the post-send sync fires — not a multi-hour polling interval. 5
+# minutes comfortably covers that for these tasks (digest/ingestion/orphan
+# recovery all complete in seconds-to-low-minutes) without reopening a
+# window wide enough to swallow a genuine miss.
+CRONTAB_GRACE_TIGHT_BUFFER_SECONDS = 5 * 60
+
+
+def crontab_grace_seconds() -> int:
+    """Grace (seconds) allowed between an expected crontab fire time and when
+    we declare a task MISSED, absorbing beat's last_run_at persistence lag.
+
+    Evaluated at call time (not a module-level constant) so tests can vary it
+    via @override_settings. When CELERY_BEAT_SYNC_EVERY is a positive int,
+    beat flushes last_run_at after every task send (see module docstring), so
+    the lag collapses to roughly one task execution and only the small jitter
+    buffer is needed. If someone later unsets/disables that setting, the lag
+    bound reverts to CELERY_BEAT_MAX_LOOP_INTERVAL and the grace automatically
+    re-widens to match — that self-protection is the point of deriving this
+    from the setting instead of hardcoding a small number.
+    """
+    sync_every = getattr(settings, "CELERY_BEAT_SYNC_EVERY", 0) or 0
+    if isinstance(sync_every, int) and sync_every > 0:
+        return CRONTAB_GRACE_TIGHT_BUFFER_SECONDS
+    loop_interval = getattr(
+        settings, "CELERY_BEAT_MAX_LOOP_INTERVAL", _DEFAULT_BEAT_LOOP_INTERVAL_SECONDS
+    )
+    return loop_interval + CRONTAB_GRACE_BUFFER_SECONDS
+
+
+def _format_timedelta(delta) -> str:
+    """Render a positive timedelta as e.g. '3d13h07m' for detail strings."""
+    total_minutes = int(delta.total_seconds() // 60)
+    days, rem_minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(rem_minutes, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if days or hours:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes:02d}m")
+    return "".join(parts)
 
 
 class Command(BaseCommand):
@@ -182,6 +266,76 @@ class Command(BaseCommand):
         return out
 
     def _task_freshness(self, task, label: str, now) -> tuple[str, str, str]:
+        if task.last_run_at is None:
+            return (FAIL, label, "enabled, never run yet")
+
+        crontab = getattr(task, "crontab", None)
+        if crontab is not None:
+            return self._crontab_freshness(task, label, now, crontab)
+        return self._window_freshness(task, label, now)
+
+    def _crontab_freshness(self, task, label: str, now, crontab) -> tuple[str, str, str]:
+        # Derive the *expected* next fire after last_run_at from the crontab
+        # itself, instead of a hand-tuned window — a window always exceeds the
+        # task's own period, so it has a blind spot at least one period wide
+        # (a missed weekly send would ride along for ~8 days). Asking the
+        # schedule directly means a missed occurrence surfaces within hours.
+        schedule = crontab.schedule
+        # TzAwareCrontab.remaining_estimate() (inherited unmodified from
+        # celery.schedules.crontab) compares last_run_at.hour/.minute/
+        # .isoweekday() directly against the crontab's fields — it never
+        # converts its inputs into schedule.tz first. In real beat operation
+        # that's masked: TzAwareCrontab.is_due() explicitly does
+        # `last_run_at.astimezone(self.tz)` before delegating, and its
+        # nowfunc() already returns `datetime.now(self.tz)`, so both operands
+        # land in local time. Here we call remaining_estimate() directly and
+        # pin nowfun to a UTC `now` (from timezone.now()), so without an
+        # explicit conversion both operands would be read in UTC — silently
+        # treating e.g. "0 4 * * *"/America/New_York as "04:00 UTC" and
+        # putting expected_fire ~4-5h off (the zone offset itself, not just
+        # DST drift) for every America/New_York crontab, every day. Convert
+        # both operands into the schedule's own tz to match what is_due()
+        # does, so remaining_estimate() sees the same local wall-clock fields
+        # a real beat process would.
+        tzinfo = schedule.tz
+        local_now = now.astimezone(tzinfo)
+        local_last_run_at = task.last_run_at.astimezone(tzinfo)
+        schedule.nowfun = lambda: local_now
+        remaining = schedule.remaining_estimate(local_last_run_at)
+        expected_fire = now + remaining
+
+        if remaining.total_seconds() < 0:
+            overdue = -remaining
+            # last_run_at can lag real fire time by up to
+            # crontab_grace_seconds() (beat's DatabaseScheduler defers the
+            # Postgres write — see module docstring), so a task that is
+            # merely "overdue" is not yet distinguishable from one that fired
+            # on time and just hasn't persisted. Only escalate to FAIL once
+            # overdue exceeds that plausible lag; a schedule that stopped
+            # firing is an outage (see docstring), so once past grace this
+            # must not be softened.
+            grace_seconds = crontab_grace_seconds()
+            if overdue.total_seconds() <= grace_seconds:
+                grace = _format_timedelta(timedelta(seconds=grace_seconds))
+                return (
+                    WARN,
+                    label,
+                    f"overdue by {_format_timedelta(overdue)} (expected fire at "
+                    f"{expected_fire.isoformat()}) — within {grace} grace for beat's "
+                    "last_run_at persistence lag; cannot yet distinguish from a "
+                    "genuine miss",
+                )
+            return (
+                FAIL,
+                label,
+                f"MISSED — expected fire at {expected_fire.isoformat()}, "
+                f"overdue by {_format_timedelta(overdue)}",
+            )
+        return (OK, label, f"next expected fire {expected_fire.isoformat()}")
+
+    def _window_freshness(self, task, label: str, now) -> tuple[str, str, str]:
+        # No crontab to derive an expected fire time from (interval schedule,
+        # or no schedule at all) — fall back to the hand-tuned window.
         window = DEFAULT_STALENESS_HOURS.get(task.name)
         if window is None:
             # No configured window means we can't judge freshness — that is a
@@ -189,8 +343,6 @@ class Command(BaseCommand):
             # it so a newly-seeded task never rides along as a silent OK/WARN
             # until someone remembers to add it above (see scrape-sources-daily).
             return (WARN, label, "no staleness window configured — add to DEFAULT_STALENESS_HOURS")
-        if task.last_run_at is None:
-            return (FAIL, label, "enabled, never run yet")
         age_h = (now - task.last_run_at).total_seconds() / 3600
         stamp = f"last run {age_h:.1f}h ago"
         if age_h > window:

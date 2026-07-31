@@ -1,12 +1,11 @@
 import logging
 import os
-from datetime import timedelta
 
 from celery import shared_task
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-from events.email_service import send_email
+from events.email_service import _build_recipients, digest_window, manage_url_for, send_email
 
 logger = logging.getLogger(__name__)
 
@@ -17,63 +16,49 @@ def ping():
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
-def send_one_digest(self, profile_id):
-    """Render and send the personalized weekly digest to one UserProfile.
+def send_one_digest(self, email, tags, manage_token, frequency):
+    """Render and send the personalized digest to one resolved recipient.
 
-    Mirrors the per-profile body of the send_weekly_digest command: resolve the
-    user's town, pull upcoming events for it, tag-filter against their interests,
-    and email it. send_email swallows Brevo errors and returns False, so a falsy
-    return triggers a retry (3x, 5-min backoff) without affecting other recipients.
+    Takes an already-resolved recipient (email/tags/manage_token/frequency)
+    rather than a UserProfile id, so it serves both authenticated and
+    anonymous NewsletterSubscriber rows alike — the fan-out tasks are the only
+    callers, and both go through email_service._build_recipients first. `tags`
+    arrives as a list (Celery JSON-serializes task args) and is treated as a
+    set of interest-tag names to filter events by; an empty list sends
+    everything. send_email swallows Brevo errors and returns False, so a
+    falsy return triggers a retry (3x, 5-min backoff) without affecting other
+    recipients.
     """
-    from events.models import Event, Town, UserProfile
+    from events.models import Event
 
-    profile = (
-        UserProfile.objects.select_related("user")
-        .prefetch_related("tags")
-        .filter(id=profile_id)
-        .first()
-    )
-    if profile is None:
-        logger.info("send_one_digest: profile %s no longer exists — skipping.", profile_id)
-        return
-
-    email = profile.user.email
-    site_url = os.environ.get("SITE_URL", "https://www.thecommons.town")
-    subject = "The Commons — Your Weekly Digest"
+    tag_filter = set(tags)
     now = timezone.now()
-    cutoff = now + timedelta(days=7)
-
-    town = Town.objects.filter(slug=profile.primary_city).first()
-    if town is None:
-        logger.info(
-            "send_one_digest: %s primary_city %r matches no Town — skipping.",
-            email,
-            profile.primary_city,
-        )
-        return
+    cutoff, subject = digest_window(frequency)
 
     events = (
-        Event.objects.filter(date__gte=now, date__lte=cutoff, town=town)
+        Event.objects.filter(date__gte=now, date__lte=cutoff)
+        .select_related("town")
         .prefetch_related("tags")
         .order_by("date")
     )
-
-    user_tags = set(profile.tags.values_list("name", flat=True))
-    if user_tags:
-        events = [e for e in events if user_tags.intersection({t.name for t in e.tags.all()})]
+    if tag_filter:
+        events = [e for e in events if tag_filter.intersection({t.name for t in e.tags.all()})]
     else:
         events = list(events)
 
     if not events:
-        logger.info("send_one_digest: %s has no matching events this week — skipping.", email)
+        logger.info("send_one_digest: %s has no matching events — skipping.", email)
         return
 
+    site_url = os.environ.get("SITE_URL", "https://www.thecommons.town")
     html = render_to_string(
-        "email/weekly_digest.html",
+        "email/digest.html",
         {
             "events": events,
-            "site_url": site_url,
+            "frequency": frequency,
             "subject": subject,
+            "site_url": site_url,
+            "manage_url": manage_url_for(manage_token),
         },
     )
 
@@ -85,16 +70,26 @@ def send_one_digest(self, profile_id):
     raise self.retry()
 
 
+def _queue_digest_fan_out(frequency):
+    recipients = _build_recipients(frequency)
+    for recipient in recipients:
+        send_one_digest.delay(
+            recipient["email"],
+            list(recipient["tags"]),
+            str(recipient["manage_token"]),
+            frequency,
+        )
+    logger.info("fan_out_%s_digest: queued %d digest subtasks.", frequency.lower(), len(recipients))
+    return len(recipients)
+
+
 @shared_task
 def fan_out_weekly_digest():
     """Queue one send_one_digest subtask per WEEKLY subscriber. Returns the count."""
-    from events.models import UserProfile
+    return _queue_digest_fan_out("WEEKLY")
 
-    profile_ids = list(
-        UserProfile.objects.filter(email_preference="WEEKLY").values_list("id", flat=True)
-    )
-    for profile_id in profile_ids:
-        send_one_digest.delay(profile_id)
 
-    logger.info("fan_out_weekly_digest: queued %d digest subtasks.", len(profile_ids))
-    return len(profile_ids)
+@shared_task
+def fan_out_monthly_digest():
+    """Queue one send_one_digest subtask per MONTHLY subscriber. Returns the count."""
+    return _queue_digest_fan_out("MONTHLY")

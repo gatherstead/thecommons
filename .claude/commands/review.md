@@ -40,7 +40,6 @@ touching the auth bridge — a subtle bug here is a security issue:
 - `backendServer/backend/jwt_auth.py`
 - `backendServer/backend/permissions.py`
 - `theCommonsWeb/src/lib/auth.ts`
-- `theCommonsWeb/src/lib/lazy-auth-plugin.ts`
 
 For these, reason explicitly about token verification, the `BearerTokenAuthentication`
 path, permission classes, and the `neon_auth` (`BetterAuthUser`) mirror.

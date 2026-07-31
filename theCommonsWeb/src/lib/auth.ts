@@ -5,7 +5,6 @@ import { jwt } from 'better-auth/plugins';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import * as schema from './auth-schema';
-import { lazyAuth } from './lazy-auth-plugin';
 
 const BASE_TRUSTED_ORIGINS = [
     'https://thecommons.town',
@@ -74,7 +73,7 @@ export const auth = betterAuth({
             },
         },
     },
-    plugins: [jwt(), lazyAuth(), nextCookies()],
+    plugins: [jwt(), nextCookies()],
     databaseHooks: {
         user: {
             create: {

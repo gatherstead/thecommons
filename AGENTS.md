@@ -71,7 +71,7 @@ Run backend + theCommonsWeb together for end-to-end auth (Django validates JWTs 
 
 | Concern | Key files | Deep dive |
 |---------|-----------|-----------|
-| Auth bridge | `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts` | [ARCHITECTURE.md §Authentication](ARCHITECTURE.md#authentication) |
+| Auth bridge | `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts` | [ARCHITECTURE.md §Authentication](ARCHITECTURE.md#authentication) |
 | Data models | `events/models.py`, `ingestion/models.py`, `broadcast/models.py` | [ARCHITECTURE.md §Data Models](ARCHITECTURE.md#data-models) |
 | API endpoints | `backend/urls.py`, `events/urls.py`, `broadcast/urls.py` | [ARCHITECTURE.md §API Endpoints](ARCHITECTURE.md#api-endpoints) |
 | Ingestion pipeline | `ingestion/services.py`, `ingestion/standardizer.py`, `ingestion/importers/`, `ingestion/safety_scorer.py` | [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) |

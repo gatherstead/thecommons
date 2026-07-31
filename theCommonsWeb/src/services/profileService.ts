@@ -11,7 +11,6 @@ export interface UserProfileData {
     address: string;
     email_preference: EmailPreference;
     tags: string[];
-    has_password: boolean;
 }
 
 // Retries transient failures (network errors / 5xx) — Neon serverless can

@@ -6,16 +6,6 @@ import { useAuth } from '../../hooks/useAuth';
 import { useMessageStack } from '../../hooks/useMessageStack';
 import { getProfile, type EmailPreference } from '../../services/profileService';
 
-const AUTH_ORIGIN = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
-
-// Digest intent lands the user back on their profile's digest section once
-// they finish joining, via an absolute apex `redirect_to`.
-export function digestSignupHref(): string {
-    const apexOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-    const redirectTo = encodeURIComponent(`${apexOrigin}/profile#digest`);
-    return `${AUTH_ORIGIN}/join?redirect_to=${redirectTo}`;
-}
-
 interface DigestCTAPusherProps {
     delaySeconds?: number;
 }
@@ -54,7 +44,7 @@ export function DigestCTAPusher({ delaySeconds = 15 }: DigestCTAPusherProps) {
                 content: (
                     <p className="text-xs sm:text-sm text-[var(--color-text-muted)] text-center">
                         Never miss a local event &mdash;{' '}
-                        <a href={digestSignupHref()} className="font-bold underline hover:no-underline">
+                        <a href="#newsletter-signup" className="font-bold underline hover:no-underline">
                             get the weekly digest &rarr;
                         </a>
                     </p>

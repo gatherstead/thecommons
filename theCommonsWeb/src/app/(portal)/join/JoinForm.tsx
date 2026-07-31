@@ -15,16 +15,18 @@ const USER_TYPE_OPTIONS: { value: UserType; label: string }[] = [
     { value: 'VENUE', label: 'Venue' },
 ];
 
+const MIN_PASSWORD_LENGTH = 8;
+
 export function JoinForm() {
     const searchParams = useSearchParams();
-    const { enter, login, isAuthenticated, isInitializing } = useAuth();
+    const { signup, isAuthenticated, isInitializing } = useAuth();
 
     const redirectTo = searchParams.get('redirect_to');
 
-    const [step, setStep] = useState<'email' | 'password'>('email');
     const [userType, setUserType] = useState<UserType>('LOCAL');
     const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    const [password, updatePassword] = useState('');
+    const [confirm, setConfirm] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
@@ -36,33 +38,23 @@ export function JoinForm() {
         }
     }, [isAuthenticated, isInitializing, redirectTo]);
 
-    async function submitEmail(e: React.FormEvent) {
+    async function submit(e: React.FormEvent) {
         e.preventDefault();
         setError(null);
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+            return;
+        }
+        if (password !== confirm) {
+            setError('Passwords do not match.');
+            return;
+        }
         setIsLoading(true);
         try {
-            const result = await enter({ email: email.trim(), user_type: userType });
-            if (result.requiresPassword) {
-                setStep('password');
-                return;
-            }
+            await signup({ email: email.trim(), password, user_type: userType });
             window.location.href = resolveRedirect(redirectTo);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Something went wrong.');
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    async function submitPassword(e: React.FormEvent) {
-        e.preventDefault();
-        setError(null);
-        setIsLoading(true);
-        try {
-            await login({ email: email.trim(), password });
-            window.location.href = resolveRedirect(redirectTo);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Incorrect password.');
         } finally {
             setIsLoading(false);
         }
@@ -72,7 +64,7 @@ export function JoinForm() {
         <PortalShell
             activeTab="join"
             heading="Create Account"
-            subheading="No password required — just your email to start."
+            subheading="Set your email and password to get started."
         >
             {error && (
                 <div
@@ -83,76 +75,62 @@ export function JoinForm() {
                 </div>
             )}
 
-            {step === 'email' && (
-                <form onSubmit={submitEmail} className="space-y-6">
-                    <div>
-                        <span className="block text-xs uppercase tracking-wider font-bold mb-1">
-                            I am a…
-                        </span>
-                        <div className="flex gap-2">
-                            {USER_TYPE_OPTIONS.map(opt => (
-                                <button
-                                    key={opt.value}
-                                    type="button"
-                                    onClick={() => setUserType(opt.value)}
-                                    aria-pressed={userType === opt.value}
-                                    className={`flex-1 text-center border py-2 px-2 text-xs uppercase tracking-wider font-bold cursor-pointer ${
-                                        userType === opt.value
-                                            ? 'bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-bg)]'
-                                            : 'bg-transparent border-[var(--color-border)] hover:bg-[var(--color-bg-alt)]'
-                                    }`}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                        </div>
+            <form onSubmit={submit} className="space-y-6">
+                <div>
+                    <span className="block text-xs uppercase tracking-wider font-bold mb-1">
+                        I am a…
+                    </span>
+                    <div className="flex gap-2">
+                        {USER_TYPE_OPTIONS.map(opt => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setUserType(opt.value)}
+                                aria-pressed={userType === opt.value}
+                                className={`flex-1 text-center border py-2 px-2 text-xs uppercase tracking-wider font-bold cursor-pointer ${
+                                    userType === opt.value
+                                        ? 'bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-bg)]'
+                                        : 'bg-transparent border-[var(--color-border)] hover:bg-[var(--color-bg-alt)]'
+                                }`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
                     </div>
-                    <Input
-                        label="Email"
-                        type="email"
-                        autoComplete="email"
-                        required
-                        autoFocus
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                    />
-                    <div className="flex justify-end items-center pt-2">
-                        <Button type="submit" variant="primary" disabled={isLoading}>
-                            {isLoading ? 'Please wait…' : 'Continue'}
-                        </Button>
-                    </div>
-                </form>
-            )}
-
-            {step === 'password' && (
-                <form onSubmit={submitPassword} className="space-y-6">
-                    <p className="text-sm text-[var(--color-text-muted)]">
-                        This account is secured with a password. Enter it to sign in as{' '}
-                        <span className="font-bold">{email.trim()}</span>.
-                    </p>
-                    <Input
-                        label="Password"
-                        type="password"
-                        autoComplete="current-password"
-                        required
-                        autoFocus
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                    />
-                    <div className="flex justify-between items-center pt-2">
-                        <button
-                            type="button"
-                            onClick={() => { setPassword(''); setError(null); setStep('email'); }}
-                            className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-accent)] underline bg-transparent border-none cursor-pointer p-0"
-                        >
-                            &larr; Use a different email
-                        </button>
-                        <Button type="submit" variant="primary" disabled={isLoading}>
-                            {isLoading ? 'Please wait…' : 'Sign In'}
-                        </Button>
-                    </div>
-                </form>
-            )}
+                </div>
+                <Input
+                    label="Email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    autoFocus
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                />
+                <Input
+                    label="Password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={MIN_PASSWORD_LENGTH}
+                    value={password}
+                    onChange={e => updatePassword(e.target.value)}
+                />
+                <Input
+                    label="Confirm Password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={MIN_PASSWORD_LENGTH}
+                    value={confirm}
+                    onChange={e => setConfirm(e.target.value)}
+                />
+                <div className="flex justify-end items-center pt-2">
+                    <Button type="submit" variant="primary" disabled={isLoading}>
+                        {isLoading ? 'Please wait…' : 'Create Account'}
+                    </Button>
+                </div>
+            </form>
         </PortalShell>
     );
 }

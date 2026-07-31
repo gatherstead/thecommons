@@ -12,9 +12,8 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
     AuthUser,
-    EnterPayload,
-    EnterResult,
     LoginPayload,
+    SignupPayload,
     UserType,
 } from '../models/authModels';
 import { authClient } from '../lib/auth-client';
@@ -24,15 +23,13 @@ interface AuthContextValue {
     token: string | null;
     isAuthenticated: boolean;
     isInitializing: boolean;
-    /** Lazy login/signup by email. Sets a session unless the account requires a password. */
-    enter: (payload: EnterPayload) => Promise<EnterResult>;
-    /** Password sign-in for accounts that have set one (the `requiresPassword` path). */
+    /** Password sign-in for existing accounts. */
     login: (payload: LoginPayload) => Promise<AuthUser>;
-    /** Secure a passwordless account by setting a password. */
-    setPassword: (password: string) => Promise<void>;
+    /** Creates a new passworded account and signs the user in. */
+    signup: (payload: SignupPayload) => Promise<AuthUser>;
     logout: () => Promise<void>;
     /** Re-validates the Better Auth session and refreshes user + token state.
-     *  Called after Google popup OAuth and the email `enter` flow complete. */
+     *  Called after Google popup OAuth completes. */
     refreshSession: () => Promise<void>;
 }
 
@@ -45,7 +42,6 @@ interface ProfileResponse {
     email: string;
     business_name: string;
     user_type: UserType;
-    has_password?: boolean;
 }
 
 async function fetchJwt(): Promise<string | null> {
@@ -91,7 +87,6 @@ function buildAuthUser(
             profile?.user_type ??
             (sessionUser.user_type as UserType | undefined) ??
             fallbackUserType,
-        hasPassword: profile?.has_password ?? false,
     };
 }
 
@@ -159,25 +154,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, [queryClient]);
 
-    const enter = useCallback(async (payload: EnterPayload): Promise<EnterResult> => {
-        const res = await fetch('/api/auth/enter', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error(data.message || data.error || 'Could not continue.');
-        }
-        const result = (await res.json()) as EnterResult;
-        // A session cookie was set unless the account needs a password first.
-        if (!result.requiresPassword) {
-            await refreshSession();
-        }
-        return result;
-    }, [refreshSession]);
-
     const login = useCallback(async (payload: LoginPayload) => {
         const { data, error } = await authClient.signIn.email({
             email: payload.email,
@@ -200,22 +176,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return buildAuthUser(nextSessionUser, profile);
     }, [queryClient]);
 
-    const setPassword = useCallback(async (password: string) => {
-        const res = await fetch('/api/auth/set-password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ password }),
+    const signup = useCallback(async (payload: SignupPayload) => {
+        const { data, error } = await authClient.signUp.email({
+            email: payload.email,
+            password: payload.password,
+            name: '',
+            user_type: payload.user_type ?? 'LOCAL',
         });
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error(data.error || 'Could not set password.');
-        }
-        queryClient.setQueryData<ProfileResponse | null>(
-            ['profile', token],
-            old => (old ? { ...old, has_password: true } : old),
-        );
-    }, [queryClient, token]);
+        if (error) throw new Error(error.message || 'Could not create account.');
+        const nextSessionUser = data?.user as BaSessionUser | undefined;
+        if (!nextSessionUser) throw new Error('Sign-up returned no user');
+        const jwt = await fetchJwt();
+        setSessionUser(nextSessionUser);
+        setToken(jwt);
+        // Seeds the ['profile', jwt] cache and preserves the "signup resolves
+        // with the built AuthUser" contract.
+        const profile = jwt
+            ? await queryClient.fetchQuery({
+                  queryKey: ['profile', jwt],
+                  queryFn: () => fetchProfileFromDjango(jwt),
+              })
+            : null;
+        return buildAuthUser(nextSessionUser, profile, payload.user_type ?? 'LOCAL');
+    }, [queryClient]);
 
     const logout = useCallback(async () => {
         try { await authClient.signOut(); } catch { /* best-effort */ }
@@ -230,13 +213,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             token,
             isAuthenticated: !!user && !!token,
             isInitializing,
-            enter,
             login,
-            setPassword,
+            signup,
             logout,
             refreshSession,
         }),
-        [user, token, isInitializing, enter, login, setPassword, logout, refreshSession],
+        [user, token, isInitializing, login, signup, logout, refreshSession],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

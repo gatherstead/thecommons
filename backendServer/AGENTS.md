@@ -20,7 +20,7 @@ backendServer/
 │   ├── views.py / serializers.py / urls.py
 │   ├── cache.py                   #   Version-keyed Redis cache for hot read endpoints
 │   ├── signals.py                 #   Cache invalidation on Event/Town/Category writes
-│   ├── tasks.py                   #   Celery: ping, send_one_digest, fan_out_weekly_digest
+│   ├── tasks.py                   #   Celery: ping, send_one_digest, fan_out_weekly_digest, fan_out_monthly_digest
 │   ├── email_service.py           #   Brevo transactional email + digest builder
 │   └── management/commands/       #   devserver, seed_dev, healthcheck, delete_user, send_*digest
 ├── ingestion/                     # Pipeline app
@@ -61,7 +61,8 @@ Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `
 | GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
 | POST | `/events/create` | user or key | Submit event → StagedEvent |
 | GET/PATCH | `/auth/me` | user | Read / update profile |
-| POST | `/auth/subscribe` | — | Newsletter signup |
+| POST | `/newsletter/subscribe` | — | Newsletter signup (welcome email + manage link) |
+| GET/PATCH | `/newsletter/manage` | — (token) | View / change a subscription via `?token=<manage_token>` |
 | GET/POST | `/businesses` · `/businesses/me` · `/businesses/<uuid>` | user | Business listing CRUD |
 | GET | `/api/cron/ingest` | CRON_SECRET | Queue ingestion pipeline |
 | POST | `/api/events/publish-approved` | key | Queue bulk publish |

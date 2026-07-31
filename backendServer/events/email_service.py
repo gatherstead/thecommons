@@ -50,36 +50,64 @@ def send_email(to: str, subject: str, html: str, text: str | None = None) -> boo
         return False
 
 
-def _build_recipients(frequency: str) -> list[dict]:
-    """Return [{email, tags: set[str]}] for all subscribers of this frequency.
+def send_newsletter_welcome(email: str, manage_token) -> bool:
+    """Send the welcome email for a new (or re-)subscription.
 
-    UserProfile entries (authenticated users) take priority over
-    NewsletterSubscriber rows when both share an email address. UserProfile
-    subscribers get tag-filtered content; anonymous subscribers get everything.
+    Includes the login-free manage link keyed by the subscriber's manage_token.
+    Best-effort — a Brevo failure here should never block the subscribe response.
+    """
+    manage_url = manage_url_for(manage_token)
+    subject = "You're subscribed to The Commons"
+    html = (
+        "<p>Thanks for subscribing to The Commons newsletter.</p>"
+        "<p>You can change your frequency or unsubscribe anytime, no login required, "
+        f'at <a href="{manage_url}">{manage_url}</a>.</p>'
+    )
+    return send_email(email, subject, html)
+
+
+def digest_window(frequency: str) -> tuple:
+    """Return (cutoff, subject) for a digest frequency. Shared by send_digest
+    and the per-recipient Celery task so the two paths can't drift apart.
+    """
+    if frequency == "WEEKLY":
+        return timezone.now() + timedelta(days=7), "This Week in The Commons"
+    return timezone.now() + timedelta(days=31), "This Month in The Commons"
+
+
+def manage_url_for(manage_token) -> str:
+    site_url = os.environ.get("SITE_URL", "https://www.thecommons.town")
+    return f"{site_url}/newsletter/manage?token={manage_token}"
+
+
+def _build_recipients(frequency: str) -> list[dict]:
+    """Return [{email, tags: set[str], manage_token}] for all active subscribers.
+
+    NewsletterSubscriber is the single source of truth for digest recipients —
+    every row (anonymous or account-holding) carries a manage_token, so this is
+    the only resolver that can produce a working manage/unsubscribe link. When
+    a subscriber's email also has a UserProfile, its tags narrow the digest to
+    matching events; otherwise (anonymous) the empty set sends everything.
+    Both the Celery fan-out and the send_digest command call this — no
+    divergent recipient logic anywhere else.
     """
     from .models import NewsletterSubscriber, UserProfile
 
-    pref_map = {"WEEKLY": "WEEKLY", "MONTHLY": "MONTHLY"}
-    db_pref = pref_map[frequency]
+    profile_tags_by_email = {
+        profile.user.email.lower(): {t.name for t in profile.tags.all()}
+        for profile in UserProfile.objects.select_related("user").prefetch_related("tags")
+    }
 
-    # Authenticated users with a profile
-    profiles = (
-        UserProfile.objects.filter(email_preference=db_pref)
-        .select_related("user")
-        .prefetch_related("tags")
-    )
-    seen = {}
-    for profile in profiles:
-        email = profile.user.email.lower()
-        seen[email] = {t.name for t in profile.tags.all()}
-
-    # Anonymous newsletter subscribers — skip if already covered by a profile
+    recipients = []
     for sub in NewsletterSubscriber.objects.filter(frequency=frequency, is_active=True):
-        email = sub.email.lower()
-        if email not in seen:
-            seen[email] = set()  # empty = no tag filter → send all events
-
-    return [{"email": email, "tags": tags} for email, tags in seen.items()]
+        recipients.append(
+            {
+                "email": sub.email,
+                "tags": profile_tags_by_email.get(sub.email.lower(), set()),
+                "manage_token": sub.manage_token,
+            }
+        )
+    return recipients
 
 
 def send_digest(frequency: str) -> dict:
@@ -89,12 +117,7 @@ def send_digest(frequency: str) -> dict:
     """
     from .models import Event
 
-    if frequency == "WEEKLY":
-        cutoff = timezone.now() + timedelta(days=7)
-        subject = "This Week in The Commons"
-    else:
-        cutoff = timezone.now() + timedelta(days=31)
-        subject = "This Month in The Commons"
+    cutoff, subject = digest_window(frequency)
 
     all_events = list(
         Event.objects.filter(date__gte=timezone.now(), date__lte=cutoff)
@@ -127,6 +150,7 @@ def send_digest(frequency: str) -> dict:
                 "frequency": frequency,
                 "subject": subject,
                 "site_url": site_url,
+                "manage_url": manage_url_for(recipient["manage_token"]),
             },
         )
 

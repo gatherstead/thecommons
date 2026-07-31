@@ -158,7 +158,11 @@
   <div class="footer">
     <a href="{{ site_url }}">thecommons.town</a><br>
     You're receiving this because you subscribed to the weekly digest.<br>
-    To unsubscribe, reply to this email with &ldquo;unsubscribe&rdquo; in the subject.
+    {% if manage_url %}
+      <a href="{{ manage_url }}">Manage preferences / Unsubscribe</a>
+    {% else %}
+      To unsubscribe, reply to this email with &ldquo;unsubscribe&rdquo; in the subject.
+    {% endif %}
   </div>
 
 </div>

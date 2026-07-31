@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -14,8 +15,8 @@ from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUse
 from ingestion.models import StagedEvent
 
 from . import cache as events_cache
+from .email_service import send_newsletter_welcome
 from .models import (
-    BetterAuthAccount,
     BusinessProfile,
     Category,
     Event,
@@ -26,17 +27,6 @@ from .models import (
 from .serializers import BusinessProfileSerializer, EventSerializer
 
 PAGE_SIZE = 30
-
-
-def user_has_password(user_id):
-    """True when the user has a Better Auth credential account with a password set.
-
-    Lazy (passwordless) accounts are created via the internal adapter with no
-    credential row, so this distinguishes secured accounts from unsecured ones.
-    """
-    return BetterAuthAccount.objects.filter(
-        user_id=str(user_id), provider_id="credential", password__isnull=False
-    ).exists()
 
 
 class EventsPagination(PageNumberPagination):
@@ -395,9 +385,49 @@ def subscribe(request):
         defaults={"frequency": frequency, "is_active": True},
     )
 
+    send_newsletter_welcome(subscriber.email, subscriber.manage_token)
+
     return Response(
         {"email": subscriber.email, "frequency": subscriber.frequency},
         status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET", "PATCH"])
+def newsletter_manage(request):
+    token = request.query_params.get("token")
+
+    subscriber = None
+    if token:
+        try:
+            subscriber = NewsletterSubscriber.objects.filter(manage_token=token).first()
+        except ValidationError:
+            subscriber = None
+
+    if subscriber is None:
+        return Response({"error": "Unknown or invalid token."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "PATCH":
+        frequency = (request.data.get("frequency") or "").upper()
+        if frequency not in ("WEEKLY", "MONTHLY", "NEVER"):
+            return Response(
+                {"error": "frequency must be WEEKLY, MONTHLY, or NEVER"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if frequency == "NEVER":
+            subscriber.is_active = False
+        else:
+            subscriber.frequency = frequency
+            subscriber.is_active = True
+        subscriber.save()
+
+    return Response(
+        {
+            "email": subscriber.email,
+            "frequency": subscriber.frequency,
+            "is_active": subscriber.is_active,
+        }
     )
 
 
@@ -417,7 +447,6 @@ def getMyProfile(request):
             "primary_city": profile.primary_city,
             "address": profile.address,
             "email_preference": profile.email_preference,
-            "has_password": user_has_password(profile.user.id),
         }
     )
 
@@ -487,7 +516,7 @@ def me(request):  # noqa: C901  # multi-field profile PATCH; complexity is inher
                     defaults={"frequency": profile.email_preference, "is_active": True},
                 )
             else:
-                NewsletterSubscriber.objects.filter(email=email).delete()
+                NewsletterSubscriber.objects.filter(email=email).update(is_active=False)
 
     return Response(
         {
@@ -499,6 +528,5 @@ def me(request):  # noqa: C901  # multi-field profile PATCH; complexity is inher
             "address": profile.address,
             "email_preference": profile.email_preference,
             "tags": [t.name for t in profile.tags.all()],
-            "has_password": user_has_password(profile.user.id),
         }
     )

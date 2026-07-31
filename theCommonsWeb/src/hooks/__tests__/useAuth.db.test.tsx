@@ -57,7 +57,6 @@ describe('useAuth', () => {
                         email: 'profile@x.com',
                         business_name: 'Biz Co',
                         user_type: 'BUSINESS',
-                        has_password: true,
                     }),
                 } as Response;
             }
@@ -74,7 +73,6 @@ describe('useAuth', () => {
             email: 'profile@x.com',
             business_name: 'Biz Co',
             user_type: 'BUSINESS',
-            hasPassword: true,
         });
     });
 

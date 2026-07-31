@@ -9,7 +9,14 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from events.views import business_detail, businesses, me, my_business, subscribe
+from events.views import (
+    business_detail,
+    businesses,
+    me,
+    my_business,
+    newsletter_manage,
+    subscribe,
+)
 from ingestion.views import (
     admin_docs,
     cron_ingest,
@@ -29,7 +36,8 @@ urlpatterns = [
     path("api/cron/ingest", cron_ingest, name="cron-ingest"),
     path("api/events/publish-approved", publish_approved_events, name="publish-approved-events"),
     path("api/events/direct-submit", direct_submit, name="direct-submit"),
-    path("auth/subscribe", subscribe, name="subscribe"),
+    path("newsletter/subscribe", subscribe, name="subscribe"),
+    path("newsletter/manage", newsletter_manage, name="newsletter-manage"),
     path("auth/me", me, name="auth-me"),
     path("businesses", businesses, name="businesses"),
     path("businesses/me", my_business, name="my-business"),

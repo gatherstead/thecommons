@@ -4,10 +4,9 @@ import { usePathname } from 'next/navigation';
 import { Header } from './Header';
 import { Footer } from './Footer';
 import { MessageStackBanner } from './MessageStackBanner';
-import { AccountBannerPusher } from './AccountBannerPusher';
 import { DigestCTAPusher } from './DigestCTAPusher';
 
-const PORTAL_PATHS = ['/signin', '/join', '/set-password', '/forgot-password'];
+const PORTAL_PATHS = ['/signin', '/join', '/forgot-password'];
 
 export function SiteChrome({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
@@ -28,7 +27,6 @@ export function SiteChrome({ children }: { children: React.ReactNode }) {
                 Skip to content
             </a>
             <MessageStackBanner />
-            <AccountBannerPusher />
             <DigestCTAPusher delaySeconds={15} />
             <Header />
             {children}

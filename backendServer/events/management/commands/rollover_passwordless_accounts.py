@@ -50,7 +50,7 @@ def _email_html(name: str) -> str:
     return (
         f"<p>Hi {name},</p>"
         "<p>We've changed how sign-in works on The Commons. Your account was created "
-        "before we required a password, so the old \"just enter your email\" sign-in "
+        'before we required a password, so the old "just enter your email" sign-in '
         "no longer works for you.</p>"
         f'<p><a href="{reset_url}">Set your password</a> to keep using your account — '
         "it only takes a minute.</p>"
@@ -64,7 +64,7 @@ def _email_text(name: str) -> str:
     return (
         f"Hi {name},\n\n"
         "We've changed how sign-in works on The Commons. Your account was created "
-        "before we required a password, so the old \"just enter your email\" sign-in "
+        'before we required a password, so the old "just enter your email" sign-in '
         "no longer works for you.\n\n"
         f"Set your password here: {reset_url}\n\n"
         "If you don't recognize this account, you can safely ignore this email.\n\n"

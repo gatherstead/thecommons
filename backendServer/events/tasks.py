@@ -79,9 +79,7 @@ def _queue_digest_fan_out(frequency):
             str(recipient["manage_token"]),
             frequency,
         )
-    logger.info(
-        "fan_out_%s_digest: queued %d digest subtasks.", frequency.lower(), len(recipients)
-    )
+    logger.info("fan_out_%s_digest: queued %d digest subtasks.", frequency.lower(), len(recipients))
     return len(recipients)
 
 

@@ -54,7 +54,52 @@ export const auth = betterAuth({
               }
             : {}),
     },
-    emailAndPassword: { enabled: true, autoSignIn: true },
+    emailAndPassword: {
+        enabled: true,
+        autoSignIn: true,
+        // Suite 39: Suite 38 made accounts password-required and removed
+        // passwordless sign-in, stranding pre-existing passwordless accounts.
+        // This is the rollover path back to a usable account. Sent directly
+        // via Brevo's transactional API (the same provider events/email_service.py
+        // uses on the backend) — there's no frontend email-send helper to reuse.
+        // Best-effort: a Brevo failure here must not surface as a request error,
+        // since Better Auth already responds with a neutral "check your email"
+        // message regardless of whether the account exists.
+        sendResetPassword: async ({ user, url }) => {
+            const apiKey = process.env.BREVO_API_KEY;
+            if (!apiKey) {
+                console.error('[auth] sendResetPassword: BREVO_API_KEY is not set — cannot send email');
+                return;
+            }
+            try {
+                const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+                    method: 'POST',
+                    headers: {
+                        'api-key': apiKey,
+                        'content-type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sender: {
+                            name: 'The Commons',
+                            email: process.env.DIGEST_FROM_EMAIL ?? 'digest@thecommons.town',
+                        },
+                        to: [{ email: user.email }],
+                        subject: 'Reset your Commons password',
+                        htmlContent:
+                            '<p>Someone requested a password reset for your Commons account.</p>' +
+                            `<p><a href="${url}">${url}</a></p>` +
+                            '<p>If you did not request this, you can safely ignore this email — ' +
+                            'your password will not change.</p>',
+                    }),
+                });
+                if (!res.ok) {
+                    console.error('[auth] sendResetPassword: Brevo send failed', res.status, await res.text());
+                }
+            } catch (err) {
+                console.error('[auth] sendResetPassword: Brevo send threw', err);
+            }
+        },
+    },
     // Google sign-in temporarily disabled — revisit later. It returned
     // `invalid_code` and bypassed user-type selection during signup.
     // socialProviders: {

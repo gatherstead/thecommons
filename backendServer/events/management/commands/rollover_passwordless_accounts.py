@@ -75,12 +75,10 @@ def _email_text(name: str) -> str:
 def find_affected_users() -> list[dict]:
     """Return neon_auth users with no usable credential-provider password.
 
-    Raw SQL, not the ORM, and for a more concrete reason than "it's a mirror
-    table": BetterAuthAccount.user_id (events/models.py) is declared as a
-    Django TextField, but the live `neon_auth.account."userId"` column is
-    actually `uuid` (confirmed via information_schema.columns against the
-    test DB — the model's type annotation has drifted from the schema it
-    mirrors). An ORM anti-join such as
+    Raw SQL, not the ORM. This originally sidestepped a real drift bug:
+    BetterAuthAccount.user_id (events/models.py) was declared as a Django
+    TextField while the live `neon_auth.account."userId"` column is actually
+    `uuid`, so an ORM anti-join such as
 
         BetterAuthUser.objects.exclude(
             id__in=BetterAuthAccount.objects.filter(
@@ -88,14 +86,14 @@ def find_affected_users() -> list[dict]:
             ).values("user_id")
         )
 
-    asks Django to bind the subquery's "userId" values as text (per the
-    model field) against `u.id` (uuid), and Postgres has no `uuid = text`
-    operator for a subquery comparison — it raises
-    `operator does not exist: uuid = text` at query time (reproduced while
-    building this command). Raw SQL sidesteps the model's stale type
-    entirely: both columns really are `uuid`, so a plain LEFT JOIN with no
-    cast is correct. Both mirror tables are managed=False; this is a
-    read-only SELECT, never a migration.
+    raised `operator does not exist: uuid = text` at query time (reproduced
+    while building this command). That's fixed now (39.2) — user_id is a
+    UUIDField — so the ORM anti-join above would work today. This function
+    still uses raw SQL rather than switching to it, because `neon_auth` mirror
+    tables are excluded from the test DB (backend/settings/test.py), so there
+    is no way to exercise an ORM version of this query in this environment.
+    Both mirror tables are managed=False; this is a read-only SELECT, never
+    a migration.
     """
     query = """
         SELECT u.id, u.email, u.name

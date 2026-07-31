@@ -380,3 +380,46 @@ If something is badly wrong and you need to revert the auth origin change:
 # Set a user's broadcast access tier directly (0 = none, 1 = trial, 2 = full)
 /snap/bin/uv run python manage.py set_broadcast_access <email> <0|1|2>
 ```
+
+---
+
+## Execution record — 2026-07-30 (ticket 37.9)
+
+Cutover executed on prod (Oracle VM `129.80.229.41`). Phases 1–8 run in order.
+
+| Phase | Action | Result |
+|-------|--------|--------|
+| 1 | Cloudflare A record `auth` → `129.80.229.41` (proxied) | done |
+| 2 | Origin cert wildcard `*.thecommons.town` | confirmed/covered |
+| 3 | nginx `auth.thecommons.town` server block → `127.0.0.1:3000`; `nginx -t` + reload | done; `curl auth.thecommons.town/api/auth/jwks` → 200 |
+| 4 | env already pointed at `auth.thecommons.town` in all three files; only edit was deleting the dead `BROADCAST_ACCESS_CODES` line from `backendServer/.env` (backup `.env.bak-precutover-37.9`). `DJANGO_ENV=prod` confirmed present. | done |
+| 5 | `git pull` (already at `58332f4`); `uv sync`; `migrate` (no-op, broadcast 0001–0010 all `[X]`); `collectstatic`; `pnpm build` both frontends (exit 0) | done |
+| 6 | `systemctl restart nextjs gunicorn`; all 7 services + 3 workers active | done |
+| 7 | minted tier-1/tier-2/trial verification codes, then **revoked** them (ids 30–32) after testing | done |
+| 8 | smoke tests (below) | all pass |
+
+**Phase-8 verification results:**
+
+- **JWKS (criterion 1):** `https://auth.thecommons.town/api/auth/jwks` → 200, valid JSON, EdDSA key `kid=8746d8a9…`.
+- **Live JWT verifies Django-side (criteria 2–3):** portal login mints a JWT with
+  `iss=aud=https://auth.thecommons.town`; `/api/auth/token` mints the **new** issuer.
+  From `broadcast.thecommons.town` (CORS-allowed origin), a live Bearer call to
+  `GET /broadcast/access` → **200 `{tier:2, is_trial:false}`** (not 401/403). Redeeming an
+  UPGRADE code (`RequiresBroadcastLogin`) succeeded — both require Django to verify the JWT.
+  > Note: `inspect_broadcast_jwt` was **not** run — the browser-automation harness blocks
+  > raw-token exfiltration. The live authenticated API calls are a stronger equivalent proof.
+- **Cross-subdomain session (criterion 3):** after a single portal login, `broadcast.thecommons.town`
+  showed "✓ signed in" via the shared `.thecommons.town` cookie.
+- **Tier gate:** tier-0 and tier-1 → AI-autofill UI locked / endpoint denied; tier-2 →
+  `POST /broadcast/ai-autofill` **200** with live Gemini extraction.
+- **Healthcheck (criterion 4):** `deploy/healthcheck.sh` → all checks passed.
+
+### Gotcha found during verification — stale cached 301 (browser-local, NOT a prod defect)
+
+A browser used during the mid-July 2026 touchup window had a **permanently-cached
+`301 Moved Permanently`** for `auth.thecommons.town/api/auth/*` → `thecommons.town/api/auth/*`
+(cached `Date: Tue, 14 Jul 2026`). After the cutover, that stale 301 redirected the
+same-origin auth calls cross-origin, which then CORS-failed (`Failed to fetch`) and blocked
+account creation / `get-session` in **that browser only**. Server-side there is no redirect
+(`curl` → 200). Fix for an affected browser: hard-clear cache / "Disable cache" in DevTools,
+or a `cache:'reload'` fetch to evict the entry. New visitors with a clean cache are unaffected.

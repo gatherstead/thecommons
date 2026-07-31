@@ -35,6 +35,7 @@ class DirectIngestTests(TestCase):
             raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # avoids fetch_page_text network call
             source_uid="direct-uid-1",
+            raw_organizer="The MAKRS Society",
         )
         self.town = make_town(slug="carrboro")
         self.user = make_user(user_type="BUSINESS")
@@ -68,7 +69,7 @@ class DirectIngestTests(TestCase):
 
         self.assertIsNotNone(event)
         self.assertEqual(Event.objects.count(), 1)
-        self.assertEqual(event.source_name, "Direct submission by host")
+        self.assertEqual(event.source_name, "Direct submission by The MAKRS Society")
         self.assertEqual(event.created_by, self.user)
         self.assertTrue(event.is_verified)
         # Staged row must survive (chain preserved for future edits).
@@ -104,6 +105,15 @@ class DirectIngestTests(TestCase):
         self.assertEqual(Event.objects.count(), 0)
         staged = StagedEvent.objects.get()
         self.assertEqual(staged.status, "pending")
+
+    def test_blank_organizer_falls_back_to_host(self):
+        """No organizer name on the raw row → generic 'by host' attribution."""
+        self.raw.raw_organizer = ""
+        self.raw.save(update_fields=["raw_organizer"])
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            event = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertEqual(event.source_name, "Direct submission by host")
 
     def test_anonymous_submission_no_user_id(self):
         """user_id=None → submitted_by=None, is_verified=False, Event created."""

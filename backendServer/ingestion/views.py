@@ -92,6 +92,7 @@ def direct_submit(request):
             "raw_start": data["start_datetime"],
             "raw_end": data.get("end_datetime"),
             "source_url": data.get("event_url", "")[:500],
+            "raw_organizer": data["organizer_name"][:200],
             "processed": False,
         },
     )

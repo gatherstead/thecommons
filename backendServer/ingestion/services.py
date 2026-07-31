@@ -216,7 +216,10 @@ def ingest_direct_submission(raw_event_id, user_id):
             return None
 
         is_verified = user is not None and user.user_type == "BUSINESS"
-        source_name = "Direct submission by host"
+        organizer = raw_event.raw_organizer.strip()
+        source_name = (
+            f"Direct submission by {organizer}" if organizer else "Direct submission by host"
+        )
 
         tags = []
         for t in staged.tags:

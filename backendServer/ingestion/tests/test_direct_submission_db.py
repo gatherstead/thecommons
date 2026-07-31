@@ -39,6 +39,7 @@ EVENT = {
     "locality": ["carrboro"],
     "categories": ["music"],
     "event_url": "",
+    "organizer_name": "The MAKRS Society",
 }
 
 # What the mocked Gemini standardizer returns for EVENT.
@@ -134,7 +135,7 @@ class DirectSubmissionTest(TestCase):
         resp = self._post_jwt(DRAFT_ID, EVENT)
         self.assertEqual(resp.status_code, 202)
         event = Event.objects.get()
-        self.assertEqual(event.source_name, "Direct submission by host")
+        self.assertEqual(event.source_name, "Direct submission by The MAKRS Society")
         self.assertEqual(event.created_by, self.user)
 
     # 3. Invalid Bearer token → 401, no Event persisted.
@@ -169,6 +170,13 @@ class DirectSubmissionTest(TestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, 400)
+
+    # 5b. Missing organizer_name → 400 (required for attribution).
+    def test_missing_organizer_name_returns_400(self):
+        event = {k: v for k, v in EVENT.items() if k != "organizer_name"}
+        resp = self._post_anon(DRAFT_ID, event)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Event.objects.count(), 0)
 
     # 6. Safety score above threshold → StagedEvent(status='pending') held for
     #    review; no live Event created.

@@ -82,6 +82,10 @@ class RawEvent(models.Model):
     source_url = models.URLField(max_length=500, blank=True)
     source_uid = models.CharField(max_length=500, blank=True)
 
+    # Organizer name as submitted (direct host submissions only); drives the
+    # "Direct submission by {name}" attribution on the published Event.
+    raw_organizer = models.CharField(max_length=200, blank=True)
+
     processed = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)

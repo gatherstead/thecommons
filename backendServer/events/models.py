@@ -79,7 +79,7 @@ class BetterAuthAccount(models.Model):
     id = models.TextField(primary_key=True)
     account_id = models.TextField(db_column="accountId")
     provider_id = models.TextField(db_column="providerId")
-    user_id = models.TextField(db_column="userId")
+    user_id = models.UUIDField(db_column="userId")
     access_token = models.TextField(db_column="accessToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
     refresh_token = models.TextField(db_column="refreshToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
     id_token = models.TextField(db_column="idToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema

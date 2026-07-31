@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { authClient } from '../../../lib/auth-client';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { PortalShell } from '../PortalShell';
@@ -17,30 +18,31 @@ export function ForgotPasswordForm() {
 
     const [email, setEmail] = useState('');
     const [submitted, setSubmitted] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
 
-    function handleSubmit(e: React.FormEvent) {
+    async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        setSubmitted(true);
+        setIsLoading(true);
+        try {
+            await authClient.requestPasswordReset({
+                email: email.trim(),
+                redirectTo: '/reset-password',
+            });
+        } catch {
+            // Swallow — the confirmation message stays neutral either way so
+            // we never reveal whether an account exists for this email.
+        } finally {
+            setIsLoading(false);
+            setSubmitted(true);
+        }
     }
 
     return (
         <PortalShell heading="Forgot Password?">
             <div className="space-y-6">
                 <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-                    The Commons doesn&rsquo;t send password reset emails. In most cases you
-                    don&rsquo;t need one — just enter your email on the Sign In page and
-                    continue without a password.
-                </p>
-
-                <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-                    If your account has a password you can&rsquo;t recover, contact{' '}
-                    <a
-                        href="mailto:aryav@unc.edu"
-                        className="underline hover:text-[var(--color-accent)]"
-                    >
-                        The Commons
-                    </a>{' '}
-                    for help.
+                    Enter your account email and we&rsquo;ll send you a link to set a new
+                    password.
                 </p>
 
                 <form onSubmit={handleSubmit} className="space-y-4 pt-2 border-t border-[var(--color-border)]">
@@ -48,6 +50,8 @@ export function ForgotPasswordForm() {
                         label="Email"
                         type="email"
                         autoComplete="email"
+                        required
+                        autoFocus
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         placeholder="you@example.com"
@@ -58,14 +62,13 @@ export function ForgotPasswordForm() {
                             className="p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
                             role="status"
                         >
-                            There&rsquo;s no password to reset — head to Sign In and enter
-                            this email to continue without one.
+                            If that email exists in our system, we&rsquo;ve sent a reset link.
                         </div>
                     )}
 
                     <div className="flex justify-between items-center pt-2">
-                        <Button type="submit" variant="secondary" size="sm">
-                            Check My Options
+                        <Button type="submit" variant="secondary" size="sm" disabled={isLoading}>
+                            {isLoading ? 'Sending…' : 'Send Reset Link'}
                         </Button>
                         <Link
                             href={signInHref}

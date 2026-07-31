@@ -14,6 +14,7 @@ from django.test import SimpleTestCase, override_settings, tag
 
 from backend.settings import select_settings_env
 from events.management.commands.healthcheck import FAIL, OK, Command
+from events.models import BetterAuthAccount
 
 
 @tag("fast")
@@ -69,3 +70,20 @@ class HealthcheckConfigProbeTests(SimpleTestCase):
     def test_dev_run_never_fails(self):
         status, name, _ = self._probe(require_prod=False)
         self.assertEqual((status, name), (OK, "config"))
+
+
+@tag("fast")
+class BetterAuthAccountUserIdFieldTests(unittest.TestCase):
+    """Guardrail for 39.2: neon_auth.account."userId" is `uuid`, not `text`.
+
+    An ORM anti-join against a stale TextField mirror raises
+    `operator does not exist: uuid = text` at query time. This asserts the
+    field declaration matches the real schema without touching the DB —
+    `neon_auth` mirrors aren't built in the test DB (see
+    backend/settings/test.py), so this can't be a `_db` query test.
+    """
+
+    def test_user_id_is_uuid_field_with_matching_db_column(self):
+        field = BetterAuthAccount._meta.get_field("user_id")
+        self.assertEqual(field.get_internal_type(), "UUIDField")
+        self.assertEqual(field.db_column, "userId")

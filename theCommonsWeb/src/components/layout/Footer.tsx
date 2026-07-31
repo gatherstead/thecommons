@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { NewsletterSignup } from '../newsletter/NewsletterSignup';
 
 const FOOTER_LINKS = {
     About: [
@@ -16,7 +17,6 @@ const FOOTER_LINKS = {
     Connect: [
         { label: 'Instagram', href: 'https://instagram.com' },
         { label: 'Contact Us', href: '#' },
-        { label: 'Newsletter', href: '#' },
         { label: 'Feedback', href: '#' },
     ],
 };
@@ -105,6 +105,14 @@ export function Footer() {
                                     </li>
                                 ))}
                             </ul>
+                            {section === 'Connect' && (
+                                <div className="mt-4 pt-4 border-t border-(--color-border-light)">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-(--color-accent) mb-2">
+                                        Newsletter
+                                    </p>
+                                    <NewsletterSignup id="newsletter-signup" />
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>

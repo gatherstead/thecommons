@@ -30,7 +30,7 @@ Data lives in Postgres on Neon (`public` schema owned by Django, `neon_auth` sch
 | `Category` | `slug` (unique), `display_name` | M2M with `Event` |
 | `UserProfile` | `uuid`, `user_type` (LOCAL/BUSINESS/VENUE), `primary_city`, `address`, `email_preference` (WEEKLY/MONTHLY/NEVER) | OneToOne→`BetterAuthUser` (`db_constraint=False`); M2M→`Tag` |
 | `BusinessProfile` | `uuid`, `business_name`, `description`, `contact_email/phone`, `is_published`, timestamps | OneToOne→`BetterAuthUser`; M2M→`Tag`; M2M→`Town` (`service_area`) |
-| `NewsletterSubscriber` | `email` (unique), `frequency`, `is_active`, `subscribed_at` | — |
+| `NewsletterSubscriber` | `email` (unique), `frequency`, `is_active`, `manage_token` (UUID, unique — unguessable credential for the manage link), `subscribed_at` | — |
 | `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`, `Category`; FK→`BetterAuthUser` (`created_by`) |
 
 ### Better Auth mirrors — `neon_auth` schema (`managed = False`)
@@ -85,7 +85,8 @@ Notes that apply throughout:
 | POST | `/api/events/publish-approved` | API key | Queue bulk publish of approved staged events |
 | POST | `/api/events/direct-submit` | JWT optional (anonymous allowed) | Direct host event submission — fire-and-forget from broadcast SPA; 10/m by IP; invalid token → 401 |
 | GET/PATCH | `/auth/me` | user | Read / update own profile |
-| POST | `/auth/subscribe` | — | Newsletter signup |
+| POST | `/newsletter/subscribe` | — | Newsletter signup (`{email, frequency}`); sends a welcome email with a manage link |
+| GET/PATCH | `/newsletter/manage` | — (token) | Manage a subscription via `?token=<manage_token>` — GET returns `{email, frequency, is_active}`; PATCH body `{frequency: WEEKLY\|MONTHLY\|NEVER}` (`NEVER` sets `is_active=false`) |
 | GET/POST | `/businesses` | user | Browse published businesses / create a listing |
 | GET | `/businesses/me` | user | Own business listing |
 | GET/PATCH/DELETE | `/businesses/<uuid>` | user | Business listing CRUD |
@@ -99,7 +100,7 @@ Notes that apply throughout:
 | GET | `/events/` | — | Paginated published events (window/after/before/category filters, Redis-cached) |
 | GET | `/events/towns/` | — | Town list (cached) |
 | GET | `/events/categories/` | — | Category list (cached) |
-| GET | `/events/me/profile` | user | Own profile summary (includes derived `has_password`) |
+| GET | `/events/me/profile` | user | Own profile summary |
 | GET | `/events/me/events` | user | Own staged + published events |
 | GET/PATCH/DELETE | `/events/staged/<int>` | user | Manage own staged submission |
 | GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
@@ -124,13 +125,13 @@ Auth via Bearer JWT or `X-Broadcast-Access-Code` header, resolved to a tier by `
 | GET | `/broadcast/jobs/<uuid>/manual/<site_key>` | tier ≥ 1 | Recipe JSON for a `needs_manual` target |
 | GET | `/broadcast/mock-form` | — (`DEBUG` only) | Dev-only mock submission form |
 
-> Login/signup/logout are handled by Better Auth in **Next.js** at `/api/auth/*` (including lazy `POST /api/auth/enter` and `POST /api/auth/set-password`).
+> Login/signup/logout are handled by Better Auth in **Next.js** at `/api/auth/*` (standard `emailAndPassword` sign-up/sign-in, fronted by the portal).
 
 ---
 
 ## Authentication
 
-**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/lazy-auth-plugin.ts`, `src/lib/redirect-allowlist.ts`, `src/hooks/useAuth.tsx`, `src/app/(portal)/`, `src/components/layout/SiteChrome.tsx`, `src/app/api/auth/set-password/route.ts`
+**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/redirect-allowlist.ts`, `src/hooks/useAuth.tsx`, `src/app/(portal)/`, `src/components/layout/SiteChrome.tsx`
 
 Auth is owned by **Better Auth running inside Next.js**, fronted by a standalone **portal** — there are no Django login/signup endpoints, and no app renders its own embedded auth form anymore. Django only *verifies* tokens.
 
@@ -140,7 +141,7 @@ Better Auth — and the portal UI in front of it — is served at **`https://aut
 
 ### The portal
 
-The portal is a route group, `src/app/(portal)/`, inside the same Next.js app — not a separate service. Routes: `/signin`, `/join` (passwordless lazy-auth create-account), `/set-password`, `/forgot-password`. `PortalShell` (`src/app/(portal)/PortalShell.tsx`) renders standalone split-panel chrome with a SIGN IN / CREATE ACCOUNT tab switcher; a client gate, `src/components/layout/SiteChrome.tsx` (checks `usePathname()` against the portal paths), hides the apex `Header`/`Footer`/banners on those routes so the portal has its own chrome, while every other route is unchanged.
+The portal is a route group, `src/app/(portal)/`, inside the same Next.js app — not a separate service. Routes: `/signin`, `/join` (create account: email + password + confirm, one step), `/forgot-password`. `PortalShell` (`src/app/(portal)/PortalShell.tsx`) renders standalone split-panel chrome with a SIGN IN / CREATE ACCOUNT tab switcher; a client gate, `src/components/layout/SiteChrome.tsx` (checks `usePathname()` against the portal paths), hides the apex `Header`/`Footer`/banners on those routes so the portal has its own chrome, while every other route is unchanged.
 
 Every service that needs a user to authenticate redirects into the portal with `?redirect_to=<absolute URL>`. `src/lib/redirect-allowlist.ts` exports `resolveRedirect(raw, fallback='/')`, which validates the destination against an allowlist (`thecommons.town`, `*.thecommons.town`, `localhost`/`127.0.0.1` in dev) as an open-redirect guard; the portal completes sign-in with `window.location.href = resolveRedirect(...)` — a full cross-subdomain navigation, not a client-side route change. The apex app's own former embedded flow (`src/app/auth/AuthFlow.tsx`, `src/app/auth/google-popup/`) was removed; `/auth`, `/auth/login`, `/auth/signup` are now thin server-redirect shims that map the old `?redirect=`/`?intent=` params to an absolute `redirect_to` and bounce into the portal. In-app "Sign in"/"Sign up" entry points (Header, sidebar, post gate, digest CTA) navigate straight to the portal. `broadcastWeb` does the same: its former inline `AuthModal` was removed, and its "Sign in / Create account" button does a full navigation to `${VITE_BETTER_AUTH_URL}/signin?redirect_to=<current broadcast URL>` — the shared session brings the user back.
 
@@ -155,16 +156,8 @@ Every service that needs a user to authenticate redirects into the portal with `
 ### User-creation side effect
 `src/lib/auth.ts` defines `databaseHooks.user.create.after`, which inserts a matching `public.events_userprofile` row whenever Better Auth creates a user — so every account has a Django profile.
 
-### Lazy (passwordless) accounts
-Signup is email-first, password-optional. The custom plugin `src/lib/lazy-auth-plugin.ts` exposes `POST /api/auth/enter`:
-- New email → creates a Better Auth user (no credential) + session; the `databaseHook` fires.
-- Existing passwordless email → fresh session.
-- Existing email with a password → returns `requiresPassword: true` (no session); frontend collects the password and uses normal `signIn.email`.
-
-Users secure the account later via `POST /api/auth/set-password` (links a `credential` account). **No email verification for MVP.**
-
-### `has_password` is derived
-Django computes it from the `BetterAuthAccount` mirror (`provider_id='credential'` with a non-null password) and returns it on `/auth/me` and `/events/me/profile`. No column, no migration.
+### Account creation is password-required
+Signup collects **email + password + confirm** in one step on `/join`, via Better Auth's standard `emailAndPassword` flow (`autoSignIn: true` in `src/lib/auth.ts`) — `signUp.email` creates the Better Auth user + `credential` account and signs the user in immediately; the `databaseHook` fires as usual. There is no passwordless/email-only path and no separate set-password step. **No email verification for MVP.**
 
 ### Google sign-in — DISABLED
 Commented out in `src/lib/auth.ts`. The client popup flow that used to live at `src/app/auth/google-popup/` was removed along with the rest of the pre-portal embedded auth UI; re-enabling Google sign-in needs a new post-OAuth account-type step built into the portal. Revisit later.
@@ -211,14 +204,15 @@ Flow: tier-based auth (Bearer JWT or access code, resolved by `broadcast/access.
 - **Celery** app is built in `backend/celery.py`, loaded eagerly via `backend/__init__.py`, and autodiscovers tasks. `CELERY_TIMEZONE = UTC` (beat entries carry their own tz).
 - **Beat** uses `django_celery_beat`'s `DatabaseScheduler` — schedules live in Postgres and are editable in admin. Seeded by migrations:
   - `weekly-digest-sunday` → `events.tasks.fan_out_weekly_digest`, Sun 18:00 America/New_York (`events/migrations/0015_seed_digest_beat.py`).
+  - `monthly-digest` → `events.tasks.fan_out_monthly_digest`, 1st of month 18:00 America/New_York (`events/migrations/0020_seed_monthly_digest_beat.py`).
   - `ingest-events-daily` → `ingestion.tasks.run_ingestion_pipeline`, 04:00 America/New_York (`ingestion/migrations/0007_seed_ingest_beat.py`).
-- **Tasks:** `events.tasks` (`ping`, `send_one_digest`, `fan_out_weekly_digest`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
+- **Tasks:** `events.tasks` (`ping`, `send_one_digest`, `fan_out_weekly_digest`, `fan_out_monthly_digest`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
 - **Read-endpoint cache:** `events/cache.py` is a version-keyed Redis cache for the hot list endpoints; `events/signals.py` bumps the version on `Event`/`Town`/`Category` writes to invalidate.
 
 See [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md).
 
 ### Email digests
-`events/email_service.py` wraps **Brevo** transactional email and builds digest HTML from `templates/email/`. `fan_out_weekly_digest` queues one `send_one_digest` per WEEKLY `UserProfile`. Management commands (`send_digest`, `send_test_digest`, `send_weekly_digest`) cover synchronous/test sends.
+`events/email_service.py` wraps **Brevo** transactional email and builds digest HTML from `templates/email/`. `NewsletterSubscriber` is the single source of truth for both weekly and monthly digests: `_build_recipients(frequency)` resolves the recipient list (deduped by email) from active subscriber rows — anonymous newsletter subscribers get all events, account holders (`UserProfile.email_preference`) are tag-filtered — and returns `{email, tags, manage_token}` per recipient. This one resolver backs both the Celery path (`fan_out_weekly_digest` / `fan_out_monthly_digest` queue one `send_one_digest` per recipient) and the synchronous `send_digest`/`send_weekly_digest` management commands (`send_test_digest` sends a one-off test). Every digest email carries a "Manage preferences / Unsubscribe" link built from the recipient's `manage_token` (`/newsletter/manage?token=`).
 
 ---
 
@@ -239,12 +233,10 @@ The main site is **Next.js 16 App Router**. Root layout (`src/app/layout.tsx`) w
 | `/dashboard` | `app/dashboard/page.tsx` | client | Manage submitted events + business listing |
 | `/auth`, `/auth/login`, `/auth/signup` | `app/auth/{page,login/page,signup/page}.tsx` | server redirect shim | Legacy entry points — map old `?redirect=`/`?intent=` to `redirect_to` and bounce into the portal (`/join` or `/signin`) |
 | `/signin` | `app/(portal)/signin/page.tsx` | client (`PortalShell` + `SignInForm`) | Portal sign-in |
-| `/join` | `app/(portal)/join/page.tsx` | client (`PortalShell` + `JoinForm`) | Portal passwordless create-account |
-| `/set-password` | `app/(portal)/set-password/page.tsx` | client | Set a password on a passwordless account |
+| `/join` | `app/(portal)/join/page.tsx` | client (`PortalShell` + `JoinForm`) | Portal create-account (email + password + confirm) |
 | `/forgot-password` | `app/(portal)/forgot-password/page.tsx` | client | Password reset request |
 | `/events/[uuid]` | `app/events/[uuid]/page.tsx` | server (async) | Event detail (`generateMetadata` + OpenGraph) |
 | `/api/auth/[...all]` | `app/api/auth/[...all]/route.ts` | route | Better Auth handler |
-| `/api/auth/set-password` | `app/api/auth/set-password/route.ts` | route | Set password on a passwordless account |
 
 `/auth/google-popup/` (the disabled Google OAuth popup) was removed along with the rest of the pre-portal embedded auth UI — see [§Authentication](#authentication).
 

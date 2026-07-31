@@ -200,6 +200,7 @@ class NewsletterSubscriber(models.Model):
     frequency = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.WEEKLY)
     is_active = models.BooleanField(default=True)
     subscribed_at = models.DateTimeField(auto_now_add=True)
+    manage_token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
 
     def __str__(self):
         return f"{self.email} ({self.frequency})"

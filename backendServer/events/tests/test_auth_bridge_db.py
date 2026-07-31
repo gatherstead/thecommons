@@ -18,7 +18,7 @@ from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
 import backend.jwt_auth as jwt_auth
-from events.models import BetterAuthAccount
+from events.models import NewsletterSubscriber
 
 from .factories import make_user
 
@@ -61,39 +61,12 @@ class AuthBridgeTests(TestCase):
             rget.return_value.raise_for_status.return_value = None
             yield
 
-    def _add_credential(self, user):
-        now = datetime.now(UTC)
-        BetterAuthAccount.objects.create(
-            id=uuid.uuid4().hex,
-            account_id=uuid.uuid4().hex,
-            provider_id="credential",
-            user_id=str(user.id),
-            password="hashed-secret",
-            created_at=now,
-            updated_at=now,
-        )
-
     def test_valid_jwt_authenticates_and_returns_profile(self):
         token = self._token_for(self.user.id)
         with self._stub_jwks():
             resp = self.client.get(reverse("auth-me"), HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], self.user.email)
-
-    def test_has_password_true_with_credential_account(self):
-        self._add_credential(self.user)
-        token = self._token_for(self.user.id)
-        with self._stub_jwks():
-            resp = self.client.get(reverse("auth-me"), HTTP_AUTHORIZATION=f"Bearer {token}")
-        self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.json()["has_password"])
-
-    def test_has_password_false_without_credential_account(self):
-        token = self._token_for(self.user.id)
-        with self._stub_jwks():
-            resp = self.client.get(reverse("auth-me"), HTTP_AUTHORIZATION=f"Bearer {token}")
-        self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.json()["has_password"])
 
     def test_patch_me_updates_through_bridge(self):
         token = self._token_for(self.user.id)
@@ -106,6 +79,25 @@ class AuthBridgeTests(TestCase):
             )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["primary_city"], "carrboro")
+
+    def test_patch_me_never_deactivates_subscriber_without_deleting_row(self):
+        # A logged-in user and their anonymous-subscribe row share one manage_token,
+        # so turning off email must flip is_active rather than delete the row.
+        subscriber = NewsletterSubscriber.objects.create(
+            email=self.user.email, frequency="WEEKLY", is_active=True
+        )
+        token = self._token_for(self.user.id)
+        with self._stub_jwks():
+            resp = self.client.patch(
+                reverse("auth-me"),
+                data={"email_preference": "NEVER"},
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+            )
+        self.assertEqual(resp.status_code, 200)
+        subscriber.refresh_from_db()
+        self.assertFalse(subscriber.is_active)
+        self.assertEqual(NewsletterSubscriber.objects.count(), 1)
 
     def test_unknown_subject_is_rejected(self):
         token = self._token_for(uuid.uuid4())

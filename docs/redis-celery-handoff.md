@@ -61,6 +61,7 @@ the code and reproduces on a fresh DB. Current entries:
 |------|------|----------------------|
 | Ingestion pipeline | `ingestion.tasks.run_ingestion_pipeline` | 04:00 daily, `America/New_York` (`ingestion/migrations/0007_seed_ingest_beat.py`) |
 | Weekly digest fan-out | `events.tasks.fan_out_weekly_digest` | Sundays 18:00, `America/New_York` (`events/migrations/0015_seed_digest_beat.py`) |
+| Monthly digest fan-out | `events.tasks.fan_out_monthly_digest` | 1st of month 18:00, `America/New_York` (`events/migrations/0020_seed_monthly_digest_beat.py`, task name `monthly-digest-first`) |
 
 The `CrontabSchedule.timezone` is set to `America/New_York` (not UTC) so beat tracks
 US-Eastern DST exactly like the OS cron these replaced.

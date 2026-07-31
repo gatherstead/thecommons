@@ -4,7 +4,6 @@ import { MiniCalendar } from './MiniCalendar';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
 import type { FrontendEvent } from '../../models/eventsModels';
 import type { AuthUser } from '../../models/authModels';
-import { digestSignupHref } from '../layout/DigestCTAPusher';
 
 type ViewMode = 'feed' | 'calendar';
 
@@ -223,7 +222,7 @@ export function Sidebar({
                         if (currentUser) {
                             router.push('/profile');
                         } else {
-                            window.location.href = digestSignupHref();
+                            window.location.href = '#newsletter-signup';
                         }
                     }}
                     className="w-full text-xs uppercase tracking-[0.15em] font-black border border-[var(--color-accent)] text-[var(--color-accent)] bg-transparent py-2.5 cursor-pointer hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors"

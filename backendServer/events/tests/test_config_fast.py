@@ -13,8 +13,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, override_settings, tag
 
 from backend.settings import select_settings_env
+from accounts.models import BetterAuthAccount
 from events.management.commands.healthcheck import FAIL, OK, Command
-from events.models import BetterAuthAccount
 
 
 @tag("fast")

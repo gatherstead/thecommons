@@ -1,28 +1,45 @@
 # backendServer — Agent Map
 
-Django 6 + DRF backend. Python 3.13, managed by `uv`. Four apps: `events` (public API + digests), `ingestion` (LLM pipeline), `broadcast` (event syndication), `backend` (config + auth bridge + Celery). Database is Postgres on Neon. Async on Redis + Celery; broadcast dispatch is on-demand Celery too, routed to its own single-concurrency `broadcast` queue (mirrors the `scrape` queue) rather than a polling worker. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for cross-cutting detail.
+Django 6 + DRF backend. Python 3.13, managed by `uv`. Six apps: `accounts` (identity/auth-bridge), `events` (public event API), `newsletter` (subscriptions + digest engine), `ingestion` (LLM pipeline), `broadcast` (event syndication), `backend` (config + Celery, no domain logic). `devtools` is a seventh, dev/test-only app (see below). Database is Postgres on Neon. Async on Redis + Celery; broadcast dispatch is on-demand Celery too, routed to its own single-concurrency `broadcast` queue (mirrors the `scrape` queue) rather than a polling worker. See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for cross-cutting detail.
+
+**Isolation contract:** no app imports from `ingestion`/`broadcast`. `accounts`, `newsletter`, and `events` may read each other where the domain genuinely overlaps — e.g. `accounts.me` writes a `NewsletterSubscriber` row (email-preference sync), and `newsletter._build_recipients` reads `accounts.UserProfile` (tag-filtered digests). Both directions are deliberate. Enforced by `accounts/tests/test_isolation_fast.py` and `newsletter/tests/test_isolation_fast.py`.
 
 ## Directory Map
 
 ```
 backendServer/
 ├── manage.py
-├── backend/                       # Project config
+├── backend/                       # Project config — no domain logic, include()-only urlconf
 │   ├── settings/                  #   base / dev / prod / test
-│   ├── urls.py                    #   Root URLconf (cron, publish, auth/me, businesses, admin)
+│   ├── urls.py                    #   Root URLconf — include()s accounts/events/newsletter/ingestion/broadcast.urls
+│   │                              #     (+ admin, + DEBUG-gated devtools.urls); no `from <app>.views import ...`
 │   ├── celery.py                  #   Celery app factory + autodiscover
 │   ├── jwt_auth.py                #   BearerTokenAuthentication — Better Auth JWKS (TTL + stale-grace)
-│   ├── permissions.py             #   DRF auth/permission classes (JWT, API key)
+│   ├── permissions.py             #   DRF auth/permission classes (JWT, API key) — imports BetterAuthUser from accounts.models
 │   └── test_runner.py             #   NeonAuthTestRunner — builds neon_auth schema for tests
-├── events/                        # Public app
-│   ├── models.py                  #   Event/Town/Tag/Category/UserProfile/BusinessProfile/Newsletter
-│   │                              #     + 5 BetterAuth* mirrors (managed=False)
-│   ├── views.py / serializers.py / urls.py
+├── accounts/                      # Identity/auth-bridge app
+│   ├── models.py                  #   5 BetterAuth* mirrors (managed=False, neon_auth.*) + UserProfile/BusinessProfile
+│   │                              #     (both OneToOne→BetterAuthUser; a "business" is a kind of user profile)
+│   ├── views.py / serializers.py / urls.py  #   me (/auth/me), businesses, my_business, business_detail (/businesses...)
+│   ├── permissions.py             #   Isolation-contract docstring (no permission classes yet)
+│   └── tests/test_isolation_fast.py
+├── events/                        # Public event app (slimmed)
+│   ├── models.py                  #   Tag, Town, Category, Event
+│   ├── views.py / serializers.py / urls.py  #   get_all, get_one, get_towns, get_categories, create_event,
+│   │                              #     manage_staged_event, get_my_events, get_my_profile
 │   ├── cache.py                   #   Version-keyed Redis cache for hot read endpoints
 │   ├── signals.py                 #   Cache invalidation on Event/Town/Category writes
-│   ├── tasks.py                   #   Celery: ping, send_one_digest, fan_out_weekly_digest, fan_out_monthly_digest
-│   ├── email_service.py           #   Brevo transactional email + digest builder
-│   └── management/commands/       #   devserver, seed_dev, healthcheck, delete_user, send_*digest
+│   ├── tasks.py                   #   Celery: ping (digest tasks moved to newsletter/tasks.py)
+│   ├── email_service.py           #   Generic Brevo transport (send_email) — used by non-digest commands
+│   └── management/commands/       #   devserver, seed_dev, healthcheck, delete_user
+├── newsletter/                    # Subscriptions + digest engine
+│   ├── models.py                  #   NewsletterSubscriber
+│   ├── views.py / urls.py         #   subscribe (/newsletter/subscribe), newsletter_manage (/newsletter/manage)
+│   ├── email_service.py           #   _build_recipients, send_digest, digest_window, manage_url_for, send_newsletter_welcome
+│   ├── tasks.py                   #   Celery: send_one_digest, fan_out_weekly_digest, fan_out_monthly_digest
+│   ├── templates/email/           #   Digest + welcome email templates
+│   ├── management/commands/       #   send_digest, send_weekly_digest, send_test_digest
+│   └── tests/test_isolation_fast.py
 ├── ingestion/                     # Pipeline app
 │   ├── models.py                  #   EventSource, RawEvent, StagedEvent
 │   ├── importers/ics_importer.py  #   ICS feed → RawEvent (shardable)
@@ -31,7 +48,8 @@ backendServer/
 │   ├── safety_scorer.py           #   Gemini content-safety scoring
 │   ├── services.py                #   publish_all_approved, auto_publish_safe_events
 │   ├── tasks.py                   #   Celery: run_ingestion_pipeline, publish_all_approved_task
-│   ├── views.py                   #   cron_ingest, publish, admin doc pages
+│   ├── views.py / urls.py         #   cron_ingest, publish_approved_events, direct_submit, pipeline/admin doc pages
+│   │                              #     (own urlconf: admin/docs/*, api/cron/ingest, api/events/publish-approved, direct-submit)
 │   └── management/commands/       #   ingest_events, cleanup_old_events
 ├── broadcast/                     # Event syndication (see ../docs/broadcast.md)
 │   ├── models.py                  #   BroadcastSubmission, BroadcastTarget, BroadcastAccess, AccessCode, AccessCodeUse
@@ -44,13 +62,25 @@ backendServer/
 │   └── management/commands/       #   run_broadcast_worker (--once debug helper), broadcast_dry_run, capture_broadcast_form,
 │                                  #     check_recipes, scaffold_adapter, set_broadcast_access,
 │                                  #     generate_access_code, list_access_codes, revoke_access_code
-├── templates/                     # admin docs pages (docs/) + email digests (email/)
+├── devtools/                      # Dev-only app (INSTALLED_APPS only under dev/test settings; DEBUG-gated in urls)
+│   ├── views/                     #   Package: playground.py, probe.py, monitor.py, _shared.py, __init__.py (re-exports)
+│   └── urls.py
+├── templates/                     # admin docs pages (docs/) — email digest templates now live in newsletter/templates/email/
 └── pyproject.toml / uv.lock
 ```
 
 ## API Endpoints
 
-Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `tier≥N` broadcast tier (Bearer JWT or `X-Broadcast-Access-Code`, resolved by `broadcast/access.py`). `APPEND_SLASH=False` — slashes are exact. No global DRF config; auth/permissions are per-view.
+Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `tier≥N` broadcast tier (Bearer JWT or `X-Broadcast-Access-Code`, resolved by `broadcast/access.py`). `APPEND_SLASH=False` — slashes are exact. No global DRF config; auth/permissions are per-view. `backend/urls.py` is `include()`-only — every route below is owned by the app it's grouped under.
+
+### accounts (`accounts/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET/PATCH | `/auth/me` | user | Read / update own profile |
+| GET/POST | `/businesses` · `/businesses/me` · `/businesses/<uuid>` | user | Business listing CRUD |
+
+### events (`events/urls.py`)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -60,23 +90,44 @@ Auth: `—` public · `user` Better Auth JWT · `key` `THE_COMMONS_API_KEY` · `
 | GET/PATCH/DELETE | `/events/staged/<int>` | user | Manage own staged submission |
 | GET/DELETE | `/events/<uuid>` | user (delete) | Event detail / owner delete |
 | POST | `/events/create` | user or key | Submit event → StagedEvent |
-| GET/PATCH | `/auth/me` | user | Read / update profile |
+
+### newsletter (`newsletter/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
 | POST | `/newsletter/subscribe` | — | Newsletter signup (welcome email + manage link) |
 | GET/PATCH | `/newsletter/manage` | — (token) | View / change a subscription via `?token=<manage_token>` |
-| GET/POST | `/businesses` · `/businesses/me` · `/businesses/<uuid>` | user | Business listing CRUD |
+
+### ingestion (`ingestion/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
 | GET | `/api/cron/ingest` | CRON_SECRET | Queue ingestion pipeline |
 | POST | `/api/events/publish-approved` | key | Queue bulk publish |
+| POST | `/api/events/direct-submit` | JWT optional | Direct host event submission (broadcast SPA) |
+| GET/POST | `/admin/docs/pipeline-docs/` · `/admin/docs/admin-docs/` · `/admin/docs/publish-approved/` | staff | Pipeline/admin docs pages + publish-approved button |
+
+### broadcast (`broadcast/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
 | GET | `/broadcast/access` | — | Caller's tier + trial metadata (403 for invalid creds) |
 | POST | `/broadcast/preview` · `/submit` | tier≥1 | Preview eligible sites / enqueue submission |
 | POST | `/broadcast/ai-autofill` | tier≥2 | LLM field extraction from free text |
 | POST | `/broadcast/direct-recipe` | tier≥1 | Recipe JSON for a site (no job) |
 | GET/POST | `/broadcast/jobs/<uuid>[/retry\|/submit-real\|/cancel]` | tier≥1 | Job status + lifecycle ops |
 | GET | `/broadcast/jobs/<uuid>/screenshots/<key>` · `/manual/<key>` | tier≥1 | Screenshot / manual-review recipe |
-| GET/POST | `/admin/docs/...` · `/admin/` | staff | Docs pages + django-unfold admin |
+
+### admin
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET/POST | `/admin/` | staff | django-unfold admin |
 
 ## Management Commands
 
-- **events:** `devserver` (auto-port runserver), `seed_dev`, `healthcheck [--json]`, `delete_user --email`, `send_digest`, `send_test_digest --email`, `send_weekly_digest`.
+- **events:** `devserver` (auto-port runserver), `seed_dev`, `healthcheck [--json]`, `delete_user --email`.
+- **newsletter:** `send_digest`, `send_weekly_digest`, `send_test_digest --email`.
 - **ingestion:** `ingest_events` (full pipeline; `--skip-*`, `--shard N/M`), `cleanup_old_events`.
 - **broadcast:** `run_broadcast_worker [--once]` (debug helper — drains one submission without Celery, not a service entrypoint), `broadcast_dry_run --site --fixture`, `capture_broadcast_form <site>`, `check_recipes [--live]`, `scaffold_adapter --url --key`, `set_broadcast_access <email> <0|1|2>`, `generate_access_code [--tier] [--label] [--expires] [--uses|--unlimited]`, `list_access_codes`, `revoke_access_code <label|id>`.
 
@@ -111,8 +162,11 @@ DJANGO_SETTINGS_MODULE=backend.settings.test uv run python manage.py test --tag=
 
 ## Devtools
 
-`devtools/` (dev-only, `DEBUG`-gated — 404s in prod) hosts the ingestion playground and
-the `/devtools/monitor` funnel dashboard + dry-run probe. See
+`devtools/` (registered in `INSTALLED_APPS` only under dev/test settings; still `DEBUG`-gated
+in urls — 404s in prod either way) hosts the ingestion playground and the `/devtools/monitor`
+funnel dashboard + dry-run probe. `devtools/views.py` is a package (`devtools/views/`) split
+by concern: `playground.py`, `probe.py`, `monitor.py`, `_shared.py`, with `__init__.py`
+re-exporting the view functions `devtools/urls.py` routes to. See
 [`../docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) for funnel/health
 semantics, `SourceRun` statuses, the probe's SSE contract, and the prod read-only setup
 (`PROD_DATABASE_URL`).

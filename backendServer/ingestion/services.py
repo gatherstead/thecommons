@@ -2,7 +2,8 @@ import logging
 
 from django.db import transaction
 
-from events.models import BetterAuthUser, Category, Event, Tag, Town
+from accounts.models import BetterAuthUser
+from events.models import Category, Event, Tag, Town
 from ingestion.deduplicator import (
     BROADCAST_LOCATION_SIMILARITY_THRESHOLD,
     BROADCAST_TIME_WINDOW_HOURS,

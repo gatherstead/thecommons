@@ -174,7 +174,7 @@ class MonitorViewTests(TestCase):
         databases_with_prod = {**settings.DATABASES, "prod_readonly": settings.DATABASES["default"]}
         with (
             override_settings(DATABASES=databases_with_prod),
-            patch("devtools.views.resolve_source_runs_state", return_value=RUNS_UNREACHABLE),
+            patch("devtools.views.monitor.resolve_source_runs_state", return_value=RUNS_UNREACHABLE),
         ):
             content = monitor(
                 self._get("/devtools/monitor", {"db": "prod_readonly"})
@@ -186,7 +186,7 @@ class MonitorViewTests(TestCase):
     # ── Degradation banners ─────────────────────────────────────────────────
 
     def _render_with_state(self, state):
-        with patch("devtools.views.resolve_source_runs_state", return_value=state):
+        with patch("devtools.views.monitor.resolve_source_runs_state", return_value=state):
             resp = monitor(self._get("/devtools/monitor"))
         self.assertEqual(resp.status_code, 200)
         return resp.content.decode()
@@ -216,7 +216,7 @@ class MonitorViewTests(TestCase):
         # The probe succeeds, then the connection drops while the summaries
         # run. Previously a raw Django traceback.
         with patch(
-            "devtools.views.collector_summary",
+            "devtools.views.monitor.collector_summary",
             side_effect=OperationalError("connection closed"),
         ):
             resp = monitor(self._get("/devtools/monitor"))
@@ -234,7 +234,7 @@ class MonitorViewTests(TestCase):
         # would let a re-resolution through the other go uncounted.
         with (
             patch(
-                "devtools.views.resolve_source_runs_state",
+                "devtools.views.monitor.resolve_source_runs_state",
                 wraps=resolve_source_runs_state,
             ) as probe,
             patch("devtools.monitoring.resolve_source_runs_state", new=probe),

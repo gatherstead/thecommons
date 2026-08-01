@@ -2,9 +2,9 @@ from django.test import TestCase, tag
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from events.models import BusinessProfile, Tag
-
-from .factories import make_town, make_user
+from accounts.models import BusinessProfile
+from events.models import Tag
+from events.tests.factories import make_town, make_user
 
 
 @tag("db")

@@ -5,10 +5,10 @@ from django.test import TestCase, tag
 from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 
-from events.email_service import _build_recipients, send_digest
-from events.models import Event, NewsletterSubscriber, Tag
-
-from .factories import make_town, make_user
+from events.models import Event, Tag
+from events.tests.factories import make_town, make_user
+from newsletter.email_service import _build_recipients, send_digest
+from newsletter.models import NewsletterSubscriber
 
 
 @tag("db")
@@ -19,7 +19,7 @@ class MonthlyBeatScheduleSeedTests(TestCase):
 
     def test_monthly_digest_schedule_seeded(self):
         pt = PeriodicTask.objects.get(name="monthly-digest-first")
-        self.assertEqual(pt.task, "events.tasks.fan_out_monthly_digest")
+        self.assertEqual(pt.task, "newsletter.tasks.fan_out_monthly_digest")
         self.assertTrue(pt.enabled)
         self.assertEqual(pt.crontab.minute, "0")
         self.assertEqual(pt.crontab.hour, "18")
@@ -105,7 +105,7 @@ class SendDigestManageLinkTests(TestCase):
             captured["html"] = html
             return True
 
-        with mock.patch("events.email_service.send_email", side_effect=fake_send_email):
+        with mock.patch("newsletter.email_service.send_email", side_effect=fake_send_email):
             result = send_digest("WEEKLY")
 
         self.assertEqual(result, {"sent": 1, "failed": 0})

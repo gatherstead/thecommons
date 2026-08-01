@@ -5,10 +5,10 @@ from celery.exceptions import Retry
 from django.test import TestCase, tag
 from django.utils import timezone
 
-from events.models import Event, NewsletterSubscriber
-from events.tasks import fan_out_monthly_digest, fan_out_weekly_digest, send_one_digest
-
-from .factories import make_town
+from events.models import Event
+from events.tests.factories import make_town
+from newsletter.models import NewsletterSubscriber
+from newsletter.tasks import fan_out_monthly_digest, fan_out_weekly_digest, send_one_digest
 
 
 @tag("db")
@@ -44,7 +44,7 @@ class DigestTaskTests(TestCase):
         self._make_subscriber("MONTHLY", email="c@example.com")  # excluded
         self._make_subscriber("WEEKLY", is_active=False, email="d@example.com")  # excluded
 
-        with mock.patch("events.tasks.send_one_digest.delay") as delay:
+        with mock.patch("newsletter.tasks.send_one_digest.delay") as delay:
             count = fan_out_weekly_digest.delay().get()
 
         self.assertEqual(count, 2)
@@ -54,26 +54,26 @@ class DigestTaskTests(TestCase):
         self._make_subscriber("MONTHLY", email="a@example.com")
         self._make_subscriber("WEEKLY", email="b@example.com")  # excluded
 
-        with mock.patch("events.tasks.send_one_digest.delay") as delay:
+        with mock.patch("newsletter.tasks.send_one_digest.delay") as delay:
             count = fan_out_monthly_digest.delay().get()
 
         self.assertEqual(count, 1)
         delay.assert_called_once_with("a@example.com", [], mock.ANY, "MONTHLY")
 
     def test_send_one_digest_sends_for_matching_events(self):
-        with mock.patch("events.tasks.send_email", return_value=True) as send:
+        with mock.patch("newsletter.tasks.send_email", return_value=True) as send:
             send_one_digest.delay("reader@example.com", [], "some-token", "WEEKLY")
         send.assert_called_once()
         self.assertEqual(send.call_args.args[0], "reader@example.com")
 
     def test_send_one_digest_skips_when_no_events_match_tags(self):
         # The one seeded event has no tags, so a tag-filtered recipient gets nothing.
-        with mock.patch("events.tasks.send_email") as send:
+        with mock.patch("newsletter.tasks.send_email") as send:
             send_one_digest.delay("reader@example.com", ["music"], "some-token", "WEEKLY")
         send.assert_not_called()
 
     def test_send_one_digest_retries_on_brevo_failure(self):
-        with mock.patch("events.tasks.send_email", return_value=False) as send:
+        with mock.patch("newsletter.tasks.send_email", return_value=False) as send:
             # In eager mode self.retry() raises Retry; confirms a Brevo failure
             # requests a retry of this one subtask.
             with self.assertRaises(Retry):

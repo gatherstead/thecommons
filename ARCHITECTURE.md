@@ -19,27 +19,59 @@ Data lives in Postgres on Neon (`public` schema owned by Django, `neon_auth` sch
 
 ## Data Models
 
-**Key files:** `events/models.py`, `ingestion/models.py`, `broadcast/models.py`
+**Key files:** `accounts/models.py`, `events/models.py`, `newsletter/models.py`, `ingestion/models.py`, `broadcast/models.py`
 
-### `events` app — `public` schema (managed)
+### `accounts` app — identity / auth-bridge
+
+`accounts` owns the Better Auth mirrors and every profile that hangs off a user — a
+"business" is modeled as a kind of user profile, not a separate app.
+
+| Model | Key fields | Relationships |
+|-------|-----------|---------------|
+| `UserProfile` | `uuid`, `user_type` (LOCAL/BUSINESS/VENUE), `primary_city`, `address`, `email_preference` (WEEKLY/MONTHLY/NEVER) | OneToOne→`BetterAuthUser` (`db_constraint=False`); M2M→`events.Tag`. `db_table="events_userprofile"` (unchanged — model moved app, table didn't) |
+| `BusinessProfile` | `uuid`, `business_name`, `description`, `contact_email/phone`, `is_published`, timestamps | OneToOne→`BetterAuthUser`; M2M→`events.Tag`; M2M→`events.Town` (`service_area`). `db_table="events_businessprofile"` |
+
+#### Better Auth mirrors — `neon_auth` schema (`managed = False`)
+
+Better Auth (Next.js) owns these tables; Django maps them **read-only** for joins. **Never create migrations for them.** Models: `BetterAuthUser`, `BetterAuthSession`, `BetterAuthAccount`, `BetterAuthVerification`, `BetterAuthJwks` — all in `accounts.models`.
+
+- The `db_table` values use a double-quote trick (e.g. `'neon_auth"."user'`) so Django emits a valid cross-schema reference `FROM "neon_auth"."user"`.
+- `BetterAuthUser` hardcodes `is_authenticated=True` / `is_anonymous=False` so DRF permission classes treat it as a real user.
+- FKs into these mirrors use `db_constraint=False` (no DB-level FK against unmanaged tables).
+
+### `events` app — `public` schema (managed, slimmed)
+
+`events` now owns only the genuine event/taxonomy models; profile and newsletter models
+moved to `accounts`/`newsletter` respectively (state-only migrations — see below).
 
 | Model | Key fields | Relationships |
 |-------|-----------|---------------|
 | `Tag` | `name` (unique) | M2M from users/businesses/events |
 | `Town` | `slug` (unique), `name` | FK target of `Event.town` |
 | `Category` | `slug` (unique), `display_name` | M2M with `Event` |
-| `UserProfile` | `uuid`, `user_type` (LOCAL/BUSINESS/VENUE), `primary_city`, `address`, `email_preference` (WEEKLY/MONTHLY/NEVER) | OneToOne→`BetterAuthUser` (`db_constraint=False`); M2M→`Tag` |
-| `BusinessProfile` | `uuid`, `business_name`, `description`, `contact_email/phone`, `is_published`, timestamps | OneToOne→`BetterAuthUser`; M2M→`Tag`; M2M→`Town` (`service_area`) |
-| `NewsletterSubscriber` | `email` (unique), `frequency`, `is_active`, `manage_token` (UUID, unique — unguessable credential for the manage link), `subscribed_at` | — |
-| `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`, `Category`; FK→`BetterAuthUser` (`created_by`) |
+| `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`, `Category`; FK→`accounts.BetterAuthUser` (`created_by`) |
 
-### Better Auth mirrors — `neon_auth` schema (`managed = False`)
+### `newsletter` app — `public` schema (managed)
 
-Better Auth (Next.js) owns these tables; Django maps them **read-only** for joins. **Never create migrations for them.** Models: `BetterAuthUser`, `BetterAuthSession`, `BetterAuthAccount`, `BetterAuthVerification`, `BetterAuthJwks`.
+| Model | Key fields | Relationships |
+|-------|-----------|---------------|
+| `NewsletterSubscriber` | `email` (unique), `frequency`, `is_active`, `manage_token` (UUID, unique — unguessable credential for the manage link), `subscribed_at` | — . `db_table="events_newslettersubscriber"` (unchanged) |
 
-- The `db_table` values use a double-quote trick (e.g. `'neon_auth"."user'`) so Django emits a valid cross-schema reference `FROM "neon_auth"."user"`.
-- `BetterAuthUser` hardcodes `is_authenticated=True` / `is_anonymous=False` so DRF permission classes treat it as a real user.
-- FKs into these mirrors use `db_constraint=False` (no DB-level FK against unmanaged tables).
+There is a deliberate `accounts ↔ newsletter` coupling, not a boundary bug: `accounts.me`
+writes a `NewsletterSubscriber` row (email-preference sync) and
+`newsletter._build_recipients` reads `accounts.UserProfile` (tag-filtered digests). Both
+directions are intentional and covered by each app's `test_isolation_fast.py` (which forbid
+reaching into `ingestion`/`broadcast`, not into each other or `events`).
+
+### Migration mechanics for the model moves
+
+All three moves (`UserProfile`/`BusinessProfile` → `accounts`, `NewsletterSubscriber` →
+`newsletter`) used `migrations.SeparateDatabaseAndState` with `db_table` preserved
+(`events_userprofile`, `events_businessprofile`, `events_newslettersubscriber`) — state-only,
+zero physical DDL. The `neon_auth.*` mirrors were never migrated (still `managed=False`).
+A companion data migration (`newsletter/migrations/0002_repoint_digest_beat.py`) repoints the
+existing `django_celery_beat` `PeriodicTask` rows from `events.tasks.fan_out_*_digest` to
+`newsletter.tasks.fan_out_*_digest`.
 
 ### `ingestion` app — `public` schema (managed)
 
@@ -47,7 +79,7 @@ Better Auth (Next.js) owns these tables; Django maps them **read-only** for join
 |-------|-----------|---------------|
 | `EventSource` | `name`, `source_type` (ics/scraper/email/**direct**), `url`, `active`, `last_polled`, `poll_interval_hours` | reverse `raw_events` |
 | `RawEvent` | raw title/description/location, raw start/end, `source_url`, `source_uid`, `processed` | FK→`EventSource`; `unique_together=(source, source_uid)` |
-| `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, category, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`BetterAuthUser` (`submitted_by`) |
+| `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, category, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`accounts.BetterAuthUser` (`submitted_by`) |
 
 ### `broadcast` app — `public` schema (managed)
 
@@ -70,27 +102,43 @@ Better Auth (Next.js) owns these tables; Django maps them **read-only** for join
 
 ## API Endpoints
 
-**Key files:** `backend/urls.py`, `events/urls.py`, `broadcast/urls.py`
+**Key files:** `backend/urls.py`, `accounts/urls.py`, `events/urls.py`, `newsletter/urls.py`, `ingestion/urls.py`, `broadcast/urls.py`
 
 Notes that apply throughout:
 - **`APPEND_SLASH=False`** — trailing slashes are matched exactly as written below.
 - **No global DRF config.** Each view sets its own `@authentication_classes` / `@permission_classes` (house pattern).
 - Auth column: `—` = public, `user` = Better Auth JWT, `API key` = `THE_COMMONS_API_KEY`, `tier≥N` = broadcast tier (Bearer JWT or `X-Broadcast-Access-Code`, resolved by `broadcast/access.py`).
+- **`backend/urls.py` is `include()`-only** — it delegates to each app's own urlconf (`accounts.urls`, `events.urls`, `newsletter.urls`, `ingestion.urls`, `broadcast.urls`, plus `admin.site.urls` and, when `DEBUG`, `devtools.urls`). There is no `from <app>.views import ...` in the kernel; the tables below are grouped by the app that actually owns the route.
 
-### Root (`backend/urls.py`)
+### accounts (`accounts/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET/PATCH | `/auth/me` | user | Read / update own profile |
+| GET/POST | `/businesses` | user | Browse published businesses / create a listing |
+| GET | `/businesses/me` | user | Own business listing |
+| GET/PATCH/DELETE | `/businesses/<uuid>` | user | Business listing CRUD |
+
+### newsletter (`newsletter/urls.py`)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/newsletter/subscribe` | — | Newsletter signup (`{email, frequency}`); sends a welcome email with a manage link |
+| GET/PATCH | `/newsletter/manage` | — (token) | Manage a subscription via `?token=<manage_token>` — GET returns `{email, frequency, is_active}`; PATCH body `{frequency: WEEKLY\|MONTHLY\|NEVER}` (`NEVER` sets `is_active=false`) |
+
+### ingestion (`ingestion/urls.py`)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/api/cron/ingest` | `CRON_SECRET` | Queue the ingestion pipeline (Celery) |
 | POST | `/api/events/publish-approved` | API key | Queue bulk publish of approved staged events |
 | POST | `/api/events/direct-submit` | JWT optional (anonymous allowed) | Direct host event submission — fire-and-forget from broadcast SPA; 10/m by IP; invalid token → 401 |
-| GET/PATCH | `/auth/me` | user | Read / update own profile |
-| POST | `/newsletter/subscribe` | — | Newsletter signup (`{email, frequency}`); sends a welcome email with a manage link |
-| GET/PATCH | `/newsletter/manage` | — (token) | Manage a subscription via `?token=<manage_token>` — GET returns `{email, frequency, is_active}`; PATCH body `{frequency: WEEKLY\|MONTHLY\|NEVER}` (`NEVER` sets `is_active=false`) |
-| GET/POST | `/businesses` | user | Browse published businesses / create a listing |
-| GET | `/businesses/me` | user | Own business listing |
-| GET/PATCH/DELETE | `/businesses/<uuid>` | user | Business listing CRUD |
 | GET/POST | `/admin/docs/...` | staff | Pipeline/admin docs pages + publish-approved button |
+
+### admin
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
 | — | `/admin/` | staff | Django admin (django-unfold) |
 
 ### Events (`/events/`)
@@ -131,7 +179,7 @@ Auth via Bearer JWT or `X-Broadcast-Access-Code` header, resolved to a tier by `
 
 ## Authentication
 
-**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts`, `src/lib/redirect-allowlist.ts`, `src/hooks/useAuth.tsx`, `src/app/(portal)/`, `src/components/layout/SiteChrome.tsx`
+**Key files:** `backend/jwt_auth.py`, `backend/permissions.py`, `accounts/models.py`, `src/lib/auth.ts`, `src/lib/redirect-allowlist.ts`, `src/hooks/useAuth.tsx`, `src/app/(portal)/`, `src/components/layout/SiteChrome.tsx`
 
 Auth is owned by **Better Auth running inside Next.js**, fronted by a standalone **portal** — there are no Django login/signup endpoints, and no app renders its own embedded auth form anymore. Django only *verifies* tokens.
 
@@ -149,12 +197,12 @@ Every service that needs a user to authenticate redirects into the portal with `
 - Browser authenticates with Better Auth and holds a session cookie.
 - To call Django, the frontend fetches a short-lived **JWT** from `/api/auth/token` (Better Auth `jwt()` plugin) and sends it as `Authorization: Bearer <jwt>`. JWT payload carries the `email` claim by default (`sub` = user id).
 - `BearerTokenAuthentication` accepts either:
-  1. a **Better Auth JWT** verified statelessly against the JWKS endpoint (`BETTER_AUTH_JWKS_URL`); `sub` resolves to a `BetterAuthUser`. The JWKS client is cached in-process with a TTL and **stale-grace** fallback so brief Next.js outages don't cascade. In `broadcast/`, `verify_better_auth_jwt` is called directly — no `BetterAuthUser` ORM lookup (isolation preserved).
+  1. a **Better Auth JWT** verified statelessly against the JWKS endpoint (`BETTER_AUTH_JWKS_URL`); `sub` resolves to a `BetterAuthUser` (now in `accounts.models` — `backend/permissions.py` imports it from there, not `events.models`). The JWKS client is cached in-process with a TTL and **stale-grace** fallback so brief Next.js outages don't cascade. In `broadcast/`, `verify_better_auth_jwt` is called directly — no `BetterAuthUser` ORM lookup (isolation preserved).
   2. the shared **`THE_COMMONS_API_KEY`** (no user attached) — for app-level calls like event creation.
 - Permission classes live in `backend/permissions.py` and are applied per-view alongside DRF's `IsAuthenticated`.
 
 ### User-creation side effect
-`src/lib/auth.ts` defines `databaseHooks.user.create.after`, which inserts a matching `public.events_userprofile` row whenever Better Auth creates a user — so every account has a Django profile.
+`src/lib/auth.ts` defines `databaseHooks.user.create.after`, which inserts a matching `public.events_userprofile` row whenever Better Auth creates a user — so every account has a Django profile. The table name is a historical artifact: the `UserProfile` model now lives in `accounts/models.py`, but its `db_table` was pinned to `events_userprofile` by a state-only migration, so the physical table (and this INSERT) is unchanged.
 
 ### Account creation is password-required
 Signup collects **email + password + confirm** in one step on `/join`, via Better Auth's standard `emailAndPassword` flow (`autoSignIn: true` in `src/lib/auth.ts`) — `signUp.email` creates the Better Auth user + `credential` account and signs the user in immediately; the `databaseHook` fires as usual. There is no passwordless/email-only path and no separate set-password step. **No email verification for MVP.**
@@ -198,21 +246,21 @@ Flow: tier-based auth (Bearer JWT or access code, resolved by `broadcast/access.
 
 ## Async: Redis + Celery
 
-**Key files:** `backend/celery.py`, `backend/__init__.py`, `events/tasks.py`, `ingestion/tasks.py`, `events/cache.py`, `events/signals.py`
+**Key files:** `backend/celery.py`, `backend/__init__.py`, `newsletter/tasks.py`, `events/tasks.py`, `ingestion/tasks.py`, `events/cache.py`, `events/signals.py`
 
 - **One Redis instance, two logical DBs:** DB 0 = Celery broker **and** result backend (`REDIS_URL`); DB 1 = Django cache (`RedisCache`, `REDIS_CACHE_URL`).
 - **Celery** app is built in `backend/celery.py`, loaded eagerly via `backend/__init__.py`, and autodiscovers tasks. `CELERY_TIMEZONE = UTC` (beat entries carry their own tz).
-- **Beat** uses `django_celery_beat`'s `DatabaseScheduler` — schedules live in Postgres and are editable in admin. Seeded by migrations:
-  - `weekly-digest-sunday` → `events.tasks.fan_out_weekly_digest`, Sun 18:00 America/New_York (`events/migrations/0015_seed_digest_beat.py`).
-  - `monthly-digest` → `events.tasks.fan_out_monthly_digest`, 1st of month 18:00 America/New_York (`events/migrations/0020_seed_monthly_digest_beat.py`).
+- **Beat** uses `django_celery_beat`'s `DatabaseScheduler` — schedules live in Postgres and are editable in admin. Seeded by migrations, then repointed by a data migration when the digest engine moved apps:
+  - `weekly-digest-sunday` → `newsletter.tasks.fan_out_weekly_digest`, Sun 18:00 America/New_York (seeded by `events/migrations/0015_seed_digest_beat.py`; repointed from `events.tasks.fan_out_weekly_digest` by `newsletter/migrations/0002_repoint_digest_beat.py`).
+  - `monthly-digest` → `newsletter.tasks.fan_out_monthly_digest`, 1st of month 18:00 America/New_York (seeded by `events/migrations/0020_seed_monthly_digest_beat.py`; repointed by the same `0002_repoint_digest_beat.py`).
   - `ingest-events-daily` → `ingestion.tasks.run_ingestion_pipeline`, 04:00 America/New_York (`ingestion/migrations/0007_seed_ingest_beat.py`).
-- **Tasks:** `events.tasks` (`ping`, `send_one_digest`, `fan_out_weekly_digest`, `fan_out_monthly_digest`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
+- **Tasks:** `newsletter.tasks` (`send_one_digest`, `fan_out_weekly_digest`, `fan_out_monthly_digest`), `events.tasks` (`ping`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
 - **Read-endpoint cache:** `events/cache.py` is a version-keyed Redis cache for the hot list endpoints; `events/signals.py` bumps the version on `Event`/`Town`/`Category` writes to invalidate.
 
 See [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md).
 
 ### Email digests
-`events/email_service.py` wraps **Brevo** transactional email and builds digest HTML from `templates/email/`. `NewsletterSubscriber` is the single source of truth for both weekly and monthly digests: `_build_recipients(frequency)` resolves the recipient list (deduped by email) from active subscriber rows — anonymous newsletter subscribers get all events, account holders (`UserProfile.email_preference`) are tag-filtered — and returns `{email, tags, manage_token}` per recipient. This one resolver backs both the Celery path (`fan_out_weekly_digest` / `fan_out_monthly_digest` queue one `send_one_digest` per recipient) and the synchronous `send_digest`/`send_weekly_digest` management commands (`send_test_digest` sends a one-off test). Every digest email carries a "Manage preferences / Unsubscribe" link built from the recipient's `manage_token` (`/newsletter/manage?token=`).
+`newsletter/email_service.py` wraps **Brevo** (via the generic transport, `events/email_service.py::send_email`) and builds digest HTML from `newsletter/templates/email/`. `NewsletterSubscriber` (`newsletter` app) is the single source of truth for both weekly and monthly digests: `_build_recipients(frequency)` resolves the recipient list (deduped by email) from active subscriber rows — anonymous newsletter subscribers get all events, account holders (`accounts.UserProfile.email_preference`) are tag-filtered — and returns `{email, tags, manage_token}` per recipient. This one resolver backs both the Celery path (`newsletter.tasks.fan_out_weekly_digest` / `fan_out_monthly_digest` queue one `send_one_digest` per recipient) and the synchronous `send_digest`/`send_weekly_digest` management commands in `newsletter/management/commands/` (`send_test_digest` sends a one-off test). Every digest email carries a "Manage preferences / Unsubscribe" link built from the recipient's `manage_token` (`/newsletter/manage?token=`). `events/email_service.py::send_email` remains the generic Brevo wrapper used by non-digest commands — it did not move.
 
 ---
 
@@ -262,7 +310,7 @@ A separate Vite + React 19 SPA (`broadcastWeb/`) for the broadcast operator cons
 **Key files:** `backend/settings/{base,dev,prod,test}.py`
 
 Settings are split by `DJANGO_SETTINGS_MODULE`:
-- `base.py` — shared: installed apps (unfold, corsheaders, DRF, the 3 local apps, `django_celery_beat`), CORS allowlist (+ custom `x-broadcast-access-code` header), `APPEND_SLASH=False`, Celery/Redis config, unfold admin.
+- `base.py` — shared: installed apps (unfold, corsheaders, DRF, the 5 local apps — `accounts`, `events`, `newsletter`, `ingestion`, `broadcast`; `devtools` is added by `dev.py` only — `django_celery_beat`), CORS allowlist (+ custom `x-broadcast-access-code` header), `APPEND_SLASH=False`, Celery/Redis config, unfold admin.
 - `dev.py` — `DEBUG=True`, parses `DATABASE_URL` (Neon dev branch), console email, `BROADCAST_AUTOSPAWN_WORKER=true` by default.
 - `prod.py` — `DEBUG=False`; requires `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DATABASE_URL`.
 - `test.py` — inherits dev; strips `-pooler` from the DB host (Neon direct endpoint so the test DB can be created/dropped), eager Celery, locmem cache, stubbed external creds. See [§Testing](#testing--ci).

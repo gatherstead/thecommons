@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `41`
+**Next suite number:** `42`
 
 ## Suite ledger
 
@@ -36,6 +36,7 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 38 | Password-required accounts + decoupled newsletter | Open | 38.A1–38.A4, 38.B1–38.B4, 38.D1 (planned, not built) | _(pending)_ |
 | 39 | Password-reset flow wiring (unblock passwordless rollover) + auth model drift | Open | 39.1–39.2 (planned, not built) | _(pending)_ |
 | 40 | Monitor dashboard rebuild + direct-submission attribution | Needs QA | 40.1–40.6 all built (40.3 = read-only prod audit, no code; confirmed 4/4 live direct Events orphaned → 40.4 shipped) | _(pending)_ |
+| 41 | Backend domain-boundary refactor (accounts/newsletter extraction, include()-only urls, devtools split) | Needs QA | 41.1–41.10 BUILT 2026-08-01 (business folded into accounts; digest-engine move 41.8 done; 41.9 envelope=document-only, no code change). Full suite green (fast 253, db 446). Follow-ups: accounts↔newsletter import cycle; stale docs/admin-backend.md + docs/redis-celery-handoff.md → Phase 3 | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

@@ -31,7 +31,7 @@ class AddSourceViewTests(TestCase):
         return req
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views._validate_url")
+    @mock.patch("devtools.views.playground._validate_url")
     def test_create_registers_source_no_pipeline(self, mock_validate):
         """Posting a new URL creates exactly one EventSource and zero pipeline rows."""
         resp = add_source(
@@ -54,7 +54,7 @@ class AddSourceViewTests(TestCase):
         self.assertEqual(Event.objects.count(), 0)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views._validate_url")
+    @mock.patch("devtools.views.playground._validate_url")
     def test_idempotent_same_url_no_duplicate(self, mock_validate):
         """Same URL posted twice: created=False on second call and leaves one row."""
         url = "https://example.com/events.ics"
@@ -69,7 +69,7 @@ class AddSourceViewTests(TestCase):
         self.assertEqual(EventSource.objects.count(), 1)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views._validate_url")
+    @mock.patch("devtools.views.playground._validate_url")
     def test_update_fields_on_repost(self, mock_validate):
         """Re-posting the same URL with a different prompt_suffix/source_name updates the row."""
         url = "https://example.com/events.ics"
@@ -90,7 +90,7 @@ class AddSourceViewTests(TestCase):
         self.assertEqual(source.prompt_suffix, "new suffix")
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views._validate_url")
+    @mock.patch("devtools.views.playground._validate_url")
     def test_source_name_falls_back_to_hostname(self, mock_validate):
         """When source_name is omitted, the hostname is used as the name."""
         resp = add_source(

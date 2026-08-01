@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from events.email_service import send_digest
+from newsletter.email_service import send_digest
 
 
 class Command(BaseCommand):

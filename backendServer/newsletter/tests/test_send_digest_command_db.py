@@ -10,7 +10,7 @@ class SendWeeklyDigestCommandTests(TestCase):
         # The command was changed to enqueue the fan-out task rather than send
         # inline — assert it calls .delay(), not the old inline path.
         with mock.patch(
-            "events.management.commands.send_weekly_digest.fan_out_weekly_digest.delay"
+            "newsletter.management.commands.send_weekly_digest.fan_out_weekly_digest.delay"
         ) as delay:
             delay.return_value = mock.Mock(id="task-xyz")
             call_command("send_weekly_digest")

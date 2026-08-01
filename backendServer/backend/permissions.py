@@ -24,8 +24,8 @@ class BearerTokenAuthentication(BaseAuthentication):
         if settings.THE_COMMONS_API_KEY and token_value == settings.THE_COMMONS_API_KEY:
             return None
 
+        from accounts.models import BetterAuthUser
         from backend.jwt_auth import verify_better_auth_jwt
-        from events.models import BetterAuthUser
 
         claims = verify_better_auth_jwt(token_value)
         if claims is None:

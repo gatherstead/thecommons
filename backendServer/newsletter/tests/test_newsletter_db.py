@@ -3,14 +3,14 @@ from unittest import mock
 from django.test import TestCase, tag
 from django.urls import reverse
 
-from events.models import NewsletterSubscriber
+from newsletter.models import NewsletterSubscriber
 
 
 @tag("db")
 class NewsletterSubscribeTests(TestCase):
     def setUp(self):
         # subscribe() now sends a welcome email; keep these tests off the network.
-        patcher = mock.patch("events.views.send_newsletter_welcome", return_value=True)
+        patcher = mock.patch("newsletter.views.send_newsletter_welcome", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -54,7 +54,7 @@ class NewsletterSubscribeTests(TestCase):
         self.assertEqual(resp.json()["error"], "email is required")
 
     def test_subscribe_attempts_welcome_email_with_manage_link(self):
-        with mock.patch("events.views.send_newsletter_welcome") as welcome:
+        with mock.patch("newsletter.views.send_newsletter_welcome") as welcome:
             resp = self.client.post(
                 reverse("subscribe"),
                 {"email": "reader@example.com", "frequency": "WEEKLY"},
@@ -65,7 +65,7 @@ class NewsletterSubscribeTests(TestCase):
         welcome.assert_called_once_with(subscriber.email, subscriber.manage_token)
 
     def test_subscribe_survives_welcome_send_failure(self):
-        with mock.patch("events.views.send_newsletter_welcome", return_value=False):
+        with mock.patch("newsletter.views.send_newsletter_welcome", return_value=False):
             resp = self.client.post(
                 reverse("subscribe"),
                 {"email": "reader@example.com", "frequency": "WEEKLY"},

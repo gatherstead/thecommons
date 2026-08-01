@@ -9,7 +9,7 @@ from django_celery_beat.models import PeriodicTask
 class BeatScheduleSeedTests(TestCase):
     def test_weekly_digest_schedule_seeded(self):
         pt = PeriodicTask.objects.get(name="weekly-digest-sunday")
-        self.assertEqual(pt.task, "events.tasks.fan_out_weekly_digest")
+        self.assertEqual(pt.task, "newsletter.tasks.fan_out_weekly_digest")
         self.assertTrue(pt.enabled)
         self.assertEqual(pt.crontab.minute, "0")
         self.assertEqual(pt.crontab.hour, "18")

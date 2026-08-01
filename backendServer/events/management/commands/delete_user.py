@@ -13,7 +13,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from events.models import BetterAuthUser, BusinessProfile, NewsletterSubscriber, UserProfile
+        from accounts.models import BetterAuthUser, BusinessProfile, UserProfile
+        from newsletter.models import NewsletterSubscriber
 
         email = options["email"].strip().lower()
 

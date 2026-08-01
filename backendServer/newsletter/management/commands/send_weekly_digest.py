@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from events.tasks import fan_out_weekly_digest
+from newsletter.tasks import fan_out_weekly_digest
 
 
 class Command(BaseCommand):

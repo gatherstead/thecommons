@@ -8,6 +8,7 @@
   .monitor { max-width: 1100px; }
   .monitor h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; }
   .monitor h2 { font-size: 1.15rem; font-weight: 700; margin: 2rem 0 0.75rem; }
+  .monitor h3 { font-size: 0.95rem; font-weight: 700; margin: 1.25rem 0 0.5rem; }
   .monitor .description { color: #6b7280; margin: 0.5rem 0 1.5rem; line-height: 1.65; }
 
   .monitor .controls {
@@ -45,8 +46,6 @@
   .monitor table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 0.5rem; }
   .monitor th, .monitor td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; text-align: left; }
   .monitor th { background: #f3f4f6; font-weight: 700; }
-  .monitor tr.source-row { cursor: pointer; }
-  .monitor tr.source-row:hover { background: #f9fafb; }
   .monitor tr.source-row.inactive { color: #9ca3af; }
   .monitor td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .monitor td.num.zero { color: #b6bcc6; }
@@ -57,6 +56,7 @@
      cell, ticket 36.6) — same convention, different funnel columns. */
   .monitor .zero-note { font-weight: 400; font-size: 0.78rem; color: #92400e; white-space: nowrap; }
   .monitor .empty-note { color: #6b7280; font-size: 0.85rem; margin: 0.5rem 0 1rem; }
+  .monitor .loading { color: #6b7280; font-size: 0.8rem; }
   .monitor .notice {
     background: #fef3c7;
     border: 1px solid #fcd34d;
@@ -69,14 +69,33 @@
   }
   .monitor .notice code { background: rgba(146, 64, 14, 0.1); padding: 0.05rem 0.25rem; border-radius: 3px; }
 
-  .monitor .summary-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .monitor .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.5rem 0.9rem; font-size: 0.85rem; }
-  .monitor .stat strong { display: block; font-size: 1.15rem; }
+  /* Ticket 40.6: KPI tiles — everything on this page used to require a row
+     click and a tab click to see; these four groups are the "at a glance"
+     answer, computed server-side by `summarize_sources` with zero queries
+     of its own (see monitoring.py). */
+  .monitor .tiles { display: flex; flex-direction: column; gap: 1.1rem; margin-bottom: 2rem; }
+  .monitor .tile-group h3 {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    margin: 0 0 0.5rem;
+  }
+  .monitor .tile-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+  .monitor .tile {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 0.5rem 0.9rem;
+    min-width: 5.5rem;
+  }
+  .monitor .tile .tile-value { display: block; font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .monitor .tile .tile-value.zero { color: #b6bcc6; }
+  .monitor .tile .tile-label { font-size: 0.72rem; color: #6b7280; }
+  .monitor .tile.health-tile { display: flex; align-items: center; padding: 0.55rem 0.9rem; }
+  .monitor .tile.health-tile .badge { font-size: 0.85rem; padding: 0.15rem 0.5rem; margin-right: 0.4rem; }
 
-  .monitor .drilldown-row td { background: #fafafa; padding: 0; }
-  .monitor .drilldown-wrap { padding: 0.75rem 1rem; }
-  .monitor .drilldown-wrap .loading { color: #6b7280; font-size: 0.8rem; }
-  .monitor .drilldown-wrap table { margin-bottom: 0; }
   .monitor .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; background: #e5e7eb; }
   .monitor .badge.published, .monitor .badge.succeeded, .monitor .badge.done, .monitor .badge.approved, .monitor .badge.ok { background: #dcfce7; color: #166534; }
   .monitor .badge.rejected, .monitor .badge.failed, .monitor .badge.canceled, .monitor .badge.refused { background: #fee2e2; color: #991b1b; }
@@ -90,8 +109,90 @@
      badge of the four, so it never competes with error/warn for attention. */
   .monitor .badge.health-unknown { background: #f3f4f6; color: #6b7280; }
   .monitor .badge.health-inactive { background: #e5e7eb; color: #6b7280; }
+  /* `push` (ticket 40.2): direct/inbound sources are pushed to, never
+     polled — same muted treatment as `inactive` so neither reads as broken. */
+  .monitor .badge.health-push { background: #e5e7eb; color: #6b7280; }
 
-  .monitor .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem; }
+  /* Ticket 40.6: persistent, paginated "Recent events" panel per section —
+     replaces the old click-a-row-to-expand drilldown as the primary path to
+     seeing events. */
+  .monitor .events-panel { margin: 0.5rem 0 1.75rem; }
+  .monitor .events-panel table { margin-bottom: 0; }
+  .monitor .events-panel .pager {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #6b7280;
+  }
+  .monitor .events-panel .pager button {
+    padding: 0.25rem 0.7rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #374151;
+  }
+  .monitor .events-panel .pager button:hover:not(:disabled) { background: #f9fafb; border-color: #9ca3af; }
+  .monitor .events-panel .pager button:disabled { color: #9ca3af; cursor: not-allowed; background: #f9fafb; }
+
+  .monitor .btn-probe {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+  }
+  .monitor .btn-probe:hover { background: #f9fafb; border-color: #9ca3af; }
+  .monitor .btn-probe:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
+
+  /* Probe modal: the probe is a real diagnostic (streams SSE from
+     /devtools/probe) kept reachable but out of the default page path — a
+     per-source button opens it here instead of an inline click-to-expand
+     row. */
+  .monitor .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.5);
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1.5rem;
+  }
+  .monitor .modal-overlay.open { display: flex; }
+  .monitor .modal {
+    background: #fff;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 85vh;
+    overflow-y: auto;
+    padding: 1rem 1.25rem 1.25rem;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  }
+  .monitor .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .monitor .modal-header h3 { margin: 0; font-size: 1rem; }
+  .monitor .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #6b7280;
+    padding: 0 0.25rem;
+  }
+  .monitor .modal-close:hover { color: #111827; }
+
+  /* Tabs inside the Probe modal (Probe | Runs). Scoped to the modal on
+     purpose: the dashboard itself is deliberately tab-free after the 40.6
+     rebuild, and these styles should not invite tabs back onto the page. */
+  .monitor .modal-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem; }
   .monitor .tab-button {
     padding: 0.35rem 0.75rem;
     font-size: 0.8rem;
@@ -107,19 +208,6 @@
   .monitor .tab-button.active { color: #111827; background: #fff; border-color: #e5e7eb; }
   .monitor .tab-panel { display: none; }
   .monitor .tab-panel.active { display: block; }
-
-  .monitor .btn-probe {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.15rem 0.55rem;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    background: #fff;
-    color: #374151;
-    cursor: pointer;
-  }
-  .monitor .btn-probe:hover { background: #f9fafb; border-color: #9ca3af; }
-  .monitor .btn-probe:disabled { background: #f9fafb; color: #9ca3af; cursor: not-allowed; }
 
   .monitor .probe-caveat {
     font-size: 0.75rem;
@@ -182,8 +270,9 @@
     </span>
   </p>
   <p class="description">
-    Per-collector and per-broadcast event counts for the selected window. Click a row to see the
-    underlying raw events (or broadcast submissions).
+    Summary tiles, then per-collector and per-broadcast event counts, for the selected window —
+    everything below loads with zero clicks. Use a source's Probe button to dry-run its
+    fetch/parse/write path.
   </p>
 
   <div class="controls">
@@ -215,7 +304,8 @@
   <p class="notice">
     <strong>Run history unavailable: <code>ingestion_sourcerun</code> doesn&rsquo;t exist here.</strong>
     This database is behind on migrations &mdash; it hasn&rsquo;t had
-    <code>0014_sourcerun</code> applied. The Runs tab is empty and health levels fall back to
+    <code>0014_sourcerun</code> applied. The Runs tab (in a source&rsquo;s Probe dialog) is
+    empty and health levels fall back to
     last-polled staleness only. Everything else on this page is accurate, and the probe still
     works &mdash; it never reads <code>SourceRun</code>.
   </p>
@@ -225,11 +315,63 @@
     The table exists, but this connection&rsquo;s role can&rsquo;t read it &mdash;
     <code>ALTER DEFAULT PRIVILEGES</code> doesn&rsquo;t follow tables created by a different
     role, so a newly migrated table needs its grant re-run:
-    <code>GRANT SELECT ON ingestion_sourcerun TO monitor_readonly;</code>. The Runs tab is
-    empty and health levels fall back to last-polled staleness only. Everything else on this
-    page is accurate.
+    <code>GRANT SELECT ON ingestion_sourcerun TO monitor_readonly;</code>. The Runs tab (in a
+    source&rsquo;s Probe dialog) is empty and health levels fall back to last-polled staleness
+    only. Everything else on this page is accurate.
   </p>
   {% endif %}
+
+  <div class="tiles">
+    <div class="tile-group">
+      <h3>Funnel (window)</h3>
+      <div class="tile-row">
+        <div class="tile"><span class="tile-value{% if not summary.funnel.raw %} zero{% endif %}">{{ summary.funnel.raw }}</span><span class="tile-label">Raw</span></div>
+        <div class="tile"><span class="tile-value{% if not summary.funnel.published %} zero{% endif %}">{{ summary.funnel.published }}</span><span class="tile-label">Published</span></div>
+        <div class="tile"><span class="tile-value{% if not summary.funnel.held_for_review %} zero{% endif %}">{{ summary.funnel.held_for_review }}</span><span class="tile-label">Held for review</span></div>
+        <div class="tile"><span class="tile-value{% if not summary.funnel.duplicate %} zero{% endif %}">{{ summary.funnel.duplicate }}</span><span class="tile-label">Duplicate</span></div>
+        <div class="tile"><span class="tile-value{% if not summary.funnel.no_town %} zero{% endif %}">{{ summary.funnel.no_town }}</span><span class="tile-label">No town</span></div>
+      </div>
+    </div>
+
+    <div class="tile-group">
+      <h3>Health rollup</h3>
+      <div class="tile-row">
+        <div class="tile health-tile"><span class="badge health-error">{{ summary.health.error }}</span>error</div>
+        <div class="tile health-tile"><span class="badge health-warn">{{ summary.health.warn }}</span>warn</div>
+        <div class="tile health-tile"><span class="badge health-unknown">{{ summary.health.unknown }}</span>unknown</div>
+        <div class="tile health-tile"><span class="badge health-ok">{{ summary.health.ok }}</span>ok</div>
+        <div class="tile health-tile"><span class="badge health-inactive">{{ summary.health.inactive }}</span>inactive</div>
+        <div class="tile health-tile"><span class="badge health-push">{{ summary.health.push }}</span>push</div>
+      </div>
+    </div>
+
+    <div class="tile-group">
+      <h3>Outbound broadcast</h3>
+      <div class="tile-row">
+        <div class="tile"><span class="tile-value{% if not outbound.total %} zero{% endif %}">{{ outbound.total|default:0 }}</span><span class="tile-label">Submissions</span></div>
+        {% for status, count in outbound.by_status.items %}
+        <div class="tile"><span class="tile-value{% if not count %} zero{% endif %}">{{ count }}</span><span class="tile-label">{{ status }}</span></div>
+        {% endfor %}
+        {% for status, count in outbound.targets_by_status.items %}
+        <div class="tile"><span class="tile-value{% if not count %} zero{% endif %}">{{ count }}</span><span class="tile-label">targets: {{ status }}</span></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="tile-group">
+      <h3>Freshness</h3>
+      <div class="tile-row">
+        <div class="tile"><span class="tile-value">{{ summary.freshness.newest_raw_created_at|default:"—" }}</span><span class="tile-label">Newest raw event</span></div>
+        <div class="tile"><span class="tile-value{% if not summary.freshness.polled_last_24h %} zero{% endif %}">{{ summary.freshness.polled_last_24h }}</span><span class="tile-label">Sources polled (24h)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="description">
+    Sources below are sorted worst-first by health (error &rarr; warn &rarr; unknown &rarr; ok
+    &rarr; inactive/push) &mdash; <code>_source_rows</code> already sorts them that way, so this
+    page doesn't re-sort client-side. Recent events for each section paginate beneath its table.
+  </p>
 
   <h2>Collectors</h2>
   {% if collectors %}
@@ -256,7 +398,7 @@
     </thead>
     <tbody>
       {% for c in collectors %}
-      <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="collector" data-key="{{ c.id }}">
+      <tr class="source-row {% if not c.active %}inactive{% endif %}">
         <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.source_type }}</td>
@@ -279,15 +421,24 @@
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}"{% if c.published_note %} title="{{ c.published_note }}"{% endif %}>{{ c.funnel.published }}{% if c.published_note %}<span class="zero-note"> &mdash; {{ c.published_note }}</span>{% endif %}</td>
-        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}" data-source-name="{{ c.name }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="collector:{{ c.id }}" style="display:none;"><td colspan="16"></td></tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
   <p class="empty-note">No collectors found for this window/database.</p>
   {% endif %}
+
+  <div class="events-panel" id="collectors-events-panel">
+    <h3>Recent events</h3>
+    <div class="events-table-wrap"><span class="loading">Loading&hellip;</span></div>
+    <div class="pager">
+      <button type="button" class="pager-prev" disabled>Prev</button>
+      <span class="pager-label">Showing 0&ndash;0 of 0</span>
+      <button type="button" class="pager-next" disabled>Next</button>
+    </div>
+  </div>
 
   <h2>Broadcast — inbound (direct submissions)</h2>
   {% if inbound %}
@@ -313,7 +464,7 @@
     </thead>
     <tbody>
       {% for c in inbound %}
-      <tr class="source-row {% if not c.active %}inactive{% endif %}" data-kind="inbound" data-key="{{ c.id }}">
+      <tr class="source-row {% if not c.active %}inactive{% endif %}">
         <td title="{{ c.health.reasons|join:'; ' }}"><span class="badge health-{{ c.health.level }}">{{ c.health.level }}</span></td>
         <td>{{ c.name }}</td>
         <td>{{ c.active|yesno:"yes,no" }}</td>
@@ -332,9 +483,8 @@
         <td class="num funnel-cell{% if not c.funnel.approved %} zero{% endif %}">{{ c.funnel.approved }}</td>
         <td class="num funnel-cell{% if not c.funnel.no_town %} zero{% endif %}"{% if c.no_town_note %} title="{{ c.no_town_note }}"{% endif %}>{{ c.funnel.no_town }}{% if c.no_town_note %}<span class="zero-note"> &mdash; {{ c.no_town_note }}</span>{% endif %}</td>
         <td class="num funnel-cell{% if not c.funnel.published %} zero{% endif %}"{% if c.published_note %} title="{{ c.published_note }}"{% endif %}>{{ c.funnel.published }}{% if c.published_note %}<span class="zero-note"> &mdash; {{ c.published_note }}</span>{% endif %}</td>
-        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}">Probe</button></td>
+        <td><button type="button" class="btn-probe" data-probe-source-id="{{ c.id }}" data-source-name="{{ c.name }}">Probe</button></td>
       </tr>
-      <tr class="drilldown-row" data-for="inbound:{{ c.id }}" style="display:none;"><td colspan="15"></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -342,26 +492,36 @@
   <p class="empty-note">No direct/inbound submissions for this window/database.</p>
   {% endif %}
 
+  <div class="events-panel" id="inbound-events-panel">
+    <h3>Recent events</h3>
+    <div class="events-table-wrap"><span class="loading">Loading&hellip;</span></div>
+    <div class="pager">
+      <button type="button" class="pager-prev" disabled>Prev</button>
+      <span class="pager-label">Showing 0&ndash;0 of 0</span>
+      <button type="button" class="pager-next" disabled>Next</button>
+    </div>
+  </div>
+
   <h2>Broadcast — outbound (syndication)</h2>
-  <div class="summary-stats">
-    <div class="stat"><strong>{{ outbound.total|default:0 }}</strong>submissions</div>
-    {% for status, count in outbound.by_status.items %}
-    <div class="stat"><strong>{{ count }}</strong>{{ status }}</div>
-    {% endfor %}
+  <div class="events-panel" id="outbound-events-panel">
+    <h3>Recent submissions</h3>
+    <div class="events-table-wrap"><span class="loading">Loading&hellip;</span></div>
+    <div class="pager">
+      <button type="button" class="pager-prev" disabled>Prev</button>
+      <span class="pager-label">Showing 0&ndash;0 of 0</span>
+      <button type="button" class="pager-next" disabled>Next</button>
+    </div>
   </div>
-  <div class="summary-stats">
-    {% for status, count in outbound.targets_by_status.items %}
-    <div class="stat"><strong>{{ count }}</strong>targets: {{ status }}</div>
-    {% endfor %}
+</div>
+
+<div class="monitor modal-overlay" id="probe-modal-overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="probe-modal-title">
+    <div class="modal-header">
+      <h3 id="probe-modal-title">Probe</h3>
+      <button type="button" class="modal-close" id="probe-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="probe-modal-body"></div>
   </div>
-  <table id="outbound-table">
-    <tbody>
-      <tr class="source-row" data-kind="outbound" data-key="">
-        <td>All outbound submissions in window</td>
-      </tr>
-      <tr class="drilldown-row" data-for="outbound:" style="display:none;"><td colspan="1"></td></tr>
-    </tbody>
-  </table>
 </div>
 
 <script>
@@ -391,53 +551,6 @@
     dbToggleLabel.classList.add("prod-active");
   }
 
-  function badge(status) {
-    if (!status) return "—";
-    return '<span class="badge ' + status + '">' + status + "</span>";
-  }
-
-  function renderSourceDrilldown(rows) {
-    if (!rows.length) return '<p class="empty-note">No raw events in this window.</p>';
-    var html = "<table><thead><tr><th>Title</th><th>Created</th><th>Processed</th><th>Staged status</th><th>Published</th></tr></thead><tbody>";
-    rows.forEach(function (r) {
-      html += "<tr><td>" + (r.raw_title || "") + "</td><td>" + (r.raw_created_at || "") + "</td>" +
-        "<td>" + (r.processed ? "yes" : "no") + "</td><td>" + badge(r.staged_status) + "</td>" +
-        "<td>" + (r.published ? badge("published") : "no") + "</td></tr>";
-    });
-    html += "</tbody></table>";
-    return html;
-  }
-
-  function renderOutboundDrilldown(rows) {
-    if (!rows.length) return '<p class="empty-note">No submissions in this window.</p>';
-    var html = "<table><thead><tr><th>Title</th><th>Client</th><th>Status</th><th>Created</th><th>Targets</th></tr></thead><tbody>";
-    rows.forEach(function (r) {
-      var targets = (r.targets || []).map(function (t) {
-        return t.site_key + " " + badge(t.status);
-      }).join("<br>");
-      html += "<tr><td>" + (r.title || "") + "</td><td>" + (r.client_label || "") + "</td>" +
-        "<td>" + badge(r.status) + "</td><td>" + (r.created_at || "") + "</td><td>" + targets + "</td></tr>";
-    });
-    html += "</tbody></table>";
-    return html;
-  }
-
-  function renderRunsDrilldown(rows) {
-    if (!rows.length) return '<p class="empty-note">No runs recorded for this source.</p>';
-    var html = "<table><thead><tr><th>Started</th><th>Finished</th><th>Status</th><th>Trigger</th>" +
-      "<th class=\"num\">Fetched</th><th class=\"num\">New</th><th class=\"num\">Duplicate</th><th>Error</th></tr></thead><tbody>";
-    rows.forEach(function (r) {
-      var showError = r.status === "failed" || r.status === "refused";
-      html += "<tr><td>" + (r.started_at || "") + "</td><td>" + (r.finished_at || "") + "</td>" +
-        "<td>" + badge(r.status) + "</td><td>" + (r.trigger || "") + "</td>" +
-        "<td class=\"num\">" + r.items_fetched + "</td><td class=\"num\">" + r.items_new + "</td>" +
-        "<td class=\"num\">" + r.items_duplicate + "</td>" +
-        "<td>" + (showError ? (r.error_message || "(no error message recorded)") : "") + "</td></tr>";
-    });
-    html += "</tbody></table>";
-    return html;
-  }
-
   function escHtml(s) {
     if (s == null) return "";
     return String(s)
@@ -447,7 +560,146 @@
       .replace(/"/g, "&quot;");
   }
 
-  // Probe tab: streams GET /devtools/probe?source_id=<id>&db=<db> (SSE) into a
+  function badge(status) {
+    if (!status) return "—";
+    var safe = escHtml(status);
+    return '<span class="badge ' + safe + '">' + safe + "</span>";
+  }
+
+  // Ticket 40.6: these two render the persistent "Recent events" panels
+  // (all sources of a kind, kind=collector/inbound/outbound with key="").
+  // Every interpolated row value is escaped — the pre-40.6 template
+  // interpolated `raw_title` unescaped here, a latent XSS on a dev-only page.
+  function renderCollectorEventsTable(rows) {
+    var html = "<table><thead><tr><th>Source</th><th>Title</th><th>Created</th>" +
+      "<th>Processed</th><th>Staged status</th><th>Published</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      html += "<tr><td>" + escHtml(r.source_name) + "</td><td>" + escHtml(r.raw_title) + "</td>" +
+        "<td>" + escHtml(r.raw_created_at) + "</td><td>" + (r.processed ? "yes" : "no") + "</td>" +
+        "<td>" + badge(r.staged_status) + "</td><td>" + (r.published ? badge("published") : "no") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function renderOutboundEventsTable(rows) {
+    var html = "<table><thead><tr><th>Title</th><th>Client</th><th>Status</th><th>Created</th><th>Targets</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var targets = (r.targets || []).map(function (t) {
+        return escHtml(t.site_key) + " " + badge(t.status);
+      }).join("<br>");
+      html += "<tr><td>" + escHtml(r.title) + "</td><td>" + escHtml(r.client_label) + "</td>" +
+        "<td>" + badge(r.status) + "</td><td>" + escHtml(r.created_at) + "</td><td>" + targets + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  // Restored after the 40.6 rebuild dropped it: SourceRun history is the only
+  // place the fetched/new/duplicate counts and a failing run's error_message
+  // are visible (suite 32's observability work). It lives behind the Probe
+  // modal rather than on the dashboard so it stays off the at-a-glance path.
+  // `error_message` is only rendered for failed/refused runs — an ok run's
+  // stale message would read as a live failure.
+  function renderRunsDrilldown(rows) {
+    if (!rows.length) return '<p class="empty-note">No runs recorded for this source.</p>';
+    var html = "<table><thead><tr><th>Started</th><th>Finished</th><th>Status</th><th>Trigger</th>" +
+      "<th class=\"num\">Fetched</th><th class=\"num\">New</th><th class=\"num\">Duplicate</th><th>Error</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var showError = r.status === "failed" || r.status === "refused";
+      html += "<tr><td>" + escHtml(r.started_at) + "</td><td>" + escHtml(r.finished_at) + "</td>" +
+        "<td>" + badge(r.status) + "</td><td>" + escHtml(r.trigger) + "</td>" +
+        "<td class=\"num\">" + escHtml(r.items_fetched) + "</td>" +
+        "<td class=\"num\">" + escHtml(r.items_new) + "</td>" +
+        "<td class=\"num\">" + escHtml(r.items_duplicate) + "</td>" +
+        "<td>" + (showError ? escHtml(r.error_message || "(no error message recorded)") : "") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function fetchDrilldown(kind, key, extraParams) {
+    var params = new URLSearchParams();
+    params.set("db", currentDb());
+    params.set("window", windowSelect.value);
+    params.set("kind", kind);
+    params.set("key", key);
+    if (extraParams) {
+      Object.keys(extraParams).forEach(function (k) { params.set(k, extraParams[k]); });
+    }
+    return fetch("/devtools/monitor/data?" + params.toString()).then(function (r) { return r.json(); });
+  }
+
+  // Ticket 40.5 made `kind=collector`/`kind=inbound`/`kind=outbound` with an
+  // empty `key` mean "every source of that kind" — this drives one
+  // always-visible, paginated panel per section instead of a click-to-expand
+  // drilldown per source row. limit=20 per the ticket; prev/next walk
+  // offset by that page size, driven entirely by the server's
+  // offset/limit/total in the response (never re-derived client-side).
+  function initEventsPanel(panelId, kind, renderRows, emptyMessage) {
+    var panel = document.getElementById(panelId);
+    if (!panel) return;
+    var tableWrap = panel.querySelector(".events-table-wrap");
+    var prevBtn = panel.querySelector(".pager-prev");
+    var nextBtn = panel.querySelector(".pager-next");
+    var label = panel.querySelector(".pager-label");
+    var limit = 20;
+    var offset = 0;
+
+    function render(data) {
+      offset = data.offset;
+      var total = data.total;
+      tableWrap.innerHTML = data.rows.length
+        ? renderRows(data.rows)
+        : '<p class="empty-note">' + emptyMessage + "</p>";
+      var shownFrom = total === 0 ? 0 : offset + 1;
+      var shownTo = Math.min(offset + limit, total);
+      label.textContent = "Showing " + shownFrom + "–" + shownTo + " of " + total;
+      prevBtn.disabled = offset <= 0;
+      nextBtn.disabled = offset + limit >= total;
+    }
+
+    function load() {
+      tableWrap.innerHTML = '<span class="loading">Loading&hellip;</span>';
+      fetchDrilldown(kind, "", { limit: limit, offset: offset })
+        .then(render)
+        .catch(function () {
+          tableWrap.innerHTML = '<p class="empty-note">Failed to load.</p>';
+        });
+    }
+
+    prevBtn.addEventListener("click", function () {
+      offset = Math.max(0, offset - limit);
+      load();
+    });
+    nextBtn.addEventListener("click", function () {
+      offset += limit;
+      load();
+    });
+
+    load();
+  }
+
+  initEventsPanel(
+    "collectors-events-panel",
+    "collector",
+    renderCollectorEventsTable,
+    "No raw events for collectors in this window."
+  );
+  initEventsPanel(
+    "inbound-events-panel",
+    "inbound",
+    renderCollectorEventsTable,
+    "No raw events for direct/inbound submissions in this window."
+  );
+  initEventsPanel(
+    "outbound-events-panel",
+    "outbound",
+    renderOutboundEventsTable,
+    "No outbound submissions in this window."
+  );
+
+  // Probe: streams GET /devtools/probe?source_id=<id>&db=<db> (SSE) into a
   // log pane. Dry-runs fetch, parse, AND write (ticket 35.6) — every write the
   // probe issues is rolled back server-side, so a write-path failure now shows
   // up as a failing "write" stage frame instead of a false-green "Done" (the
@@ -456,6 +708,9 @@
   // playground.html:1364-1421) including the `streamDone` guard against the
   // native 'error' event EventSource fires on normal connection close after
   // 'done' — without it, every successful probe would render a spurious error.
+  // Ticket 40.6: ported as-is from the old tabbed drilldown, only the
+  // container changed (a modal instead of a tab panel) — the SSE handling
+  // and the client-IP caveat text are untouched.
   function renderProbeTab(panel, sourceId, triggerBtn) {
     var elapsedTimer = null;
     var startedAt = Date.now();
@@ -591,183 +846,82 @@
     });
   }
 
-  // Generic tab machinery: each entry is {id, label, render(container)}.
-  // `render` is called once, the first time a tab is shown, and is
-  // responsible for fetching its own data and filling `container`. Adding a
-  // future tab (e.g. "Probe") is a one-line addition to the `tabs` list
-  // passed to `renderTabs` — no new branching here.
-  function renderTabs(tabs) {
-    var wrap = document.createElement("div");
+  // Probe modal: a per-source button opens this instead of an inline
+  // click-to-expand row. Closing just hides the modal and clears its body —
+  // an in-flight probe's EventSource is left to finish on its own, same
+  // exposure the old tabbed drilldown had (switching tabs away never closed
+  // it either).
+  var probeOverlay = document.getElementById("probe-modal-overlay");
+  var probeBody = document.getElementById("probe-modal-body");
+  var probeTitle = document.getElementById("probe-modal-title");
+  var probeCloseBtn = document.getElementById("probe-modal-close");
 
-    var tabBar = document.createElement("div");
-    tabBar.className = "tabs";
-    wrap.appendChild(tabBar);
+  function closeProbeModal() {
+    probeOverlay.classList.remove("open");
+    probeBody.innerHTML = "";
+  }
 
-    var panels = {};
-    var buttons = {};
-    var rendered = {};
+  // Two tabs inside the modal: Probe (streams SSE, starts immediately) and
+  // Runs (SourceRun history). Runs is fetched lazily on first activation so
+  // opening the modal to probe doesn't pay for a query nobody asked for.
+  // Deliberately not the generic renderTabs() the 40.6 rebuild removed — two
+  // fixed panels don't need it.
+  function openProbeModal(sourceId, sourceName, triggerBtn) {
+    probeTitle.textContent = sourceName;
+    probeOverlay.classList.add("open");
+    probeBody.innerHTML =
+      '<div class="modal-tabs">' +
+      '<button type="button" class="tab-button active" data-tab="probe">Probe</button>' +
+      '<button type="button" class="tab-button" data-tab="runs">Runs</button>' +
+      "</div>" +
+      '<div class="tab-panel active" data-panel="probe"></div>' +
+      '<div class="tab-panel" data-panel="runs"></div>';
 
-    tabs.forEach(function (tab, index) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "tab-button" + (index === 0 ? " active" : "");
-      button.textContent = tab.label;
-      tabBar.appendChild(button);
-      buttons[tab.id] = button;
+    var probePanel = probeBody.querySelector('[data-panel="probe"]');
+    var runsPanel = probeBody.querySelector('[data-panel="runs"]');
+    var runsLoaded = false;
 
-      var panel = document.createElement("div");
-      panel.className = "tab-panel" + (index === 0 ? " active" : "");
-      wrap.appendChild(panel);
-      panels[tab.id] = panel;
+    probeBody.querySelectorAll(".tab-button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        probeBody.querySelectorAll(".tab-button").forEach(function (b) { b.classList.remove("active"); });
+        probeBody.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+        btn.classList.add("active");
+        var name = btn.getAttribute("data-tab");
+        probeBody.querySelector('[data-panel="' + name + '"]').classList.add("active");
 
-      button.addEventListener("click", function () {
-        tabBar.querySelectorAll(".tab-button").forEach(function (b) { b.classList.remove("active"); });
-        Object.keys(panels).forEach(function (id) { panels[id].classList.remove("active"); });
-        button.classList.add("active");
-        panel.classList.add("active");
-        if (!rendered[tab.id]) {
-          rendered[tab.id] = true;
-          tab.render(panel);
+        if (name === "runs" && !runsLoaded) {
+          runsLoaded = true;
+          runsPanel.innerHTML = '<span class="loading">Loading…</span>';
+          // `kind=runs` requires a numeric key — it is per-source only, and
+          // is not windowed by the page's window selector (a source's run
+          // history matters regardless of the funnel window shown).
+          fetchDrilldown("runs", sourceId).then(function (data) {
+            runsPanel.innerHTML = renderRunsDrilldown(data.rows || []);
+          }).catch(function () {
+            runsPanel.innerHTML = '<span class="empty-note">Failed to load.</span>';
+          });
         }
       });
     });
 
-    // Render the first tab eagerly since it's shown by default.
-    if (tabs.length) {
-      rendered[tabs[0].id] = true;
-      tabs[0].render(panels[tabs[0].id]);
-    }
-
-    // Exposed so a caller (e.g. the Probe button, which wants to jump straight
-    // to the Probe tab instead of the default first tab) can activate a
-    // specific tab from outside without renderTabs knowing about that case.
-    wrap.activateTab = function (id) {
-      if (buttons[id]) buttons[id].click();
-    };
-
-    return wrap;
+    renderProbeTab(probePanel, sourceId, triggerBtn);
   }
 
-  function fetchDrilldown(kind, key, extraParams) {
-    var params = new URLSearchParams();
-    params.set("db", currentDb());
-    params.set("window", windowSelect.value);
-    params.set("kind", kind);
-    params.set("key", key);
-    if (extraParams) {
-      Object.keys(extraParams).forEach(function (k) { params.set(k, extraParams[k]); });
-    }
-    return fetch("/devtools/monitor/data?" + params.toString()).then(function (r) { return r.json(); });
-  }
-
-  // Maps "kind:key" -> the row's Probe <button> (so the Probe tab can
-  // disable/re-enable it) and -> the rendered tabs element for that row's
-  // open drilldown (so the Probe button can jump straight to the Probe tab).
-  var probeButtons = {};
-  var openTabs = {};
-  document.querySelectorAll(".btn-probe").forEach(function (btn) {
-    var sourceId = btn.getAttribute("data-probe-source-id");
-    var row = btn.closest("tr.source-row");
-    if (!row) return;
-    var kind = row.getAttribute("data-kind");
-    probeButtons[kind + ":" + sourceId] = btn;
-  });
-
-  document.querySelectorAll("tr.source-row").forEach(function (row) {
-    row.addEventListener("click", function () {
-      var kind = row.getAttribute("data-kind");
-      var key = row.getAttribute("data-key");
-      var drilldownRow = document.querySelector('tr.drilldown-row[data-for="' + kind + ":" + key + '"]');
-      if (!drilldownRow) return;
-
-      var isOpen = drilldownRow.style.display !== "none";
-      if (isOpen) {
-        drilldownRow.style.display = "none";
-        return;
-      }
-
-      var cell = drilldownRow.querySelector("td");
-      drilldownRow.style.display = "";
-
-      if (kind === "outbound") {
-        cell.innerHTML = '<div class="drilldown-wrap"><span class="loading">Loading…</span></div>';
-        fetchDrilldown(kind, key).then(function (data) {
-          cell.innerHTML = '<div class="drilldown-wrap">' + renderOutboundDrilldown(data.rows || []) + "</div>";
-        }).catch(function () {
-          cell.innerHTML = '<div class="drilldown-wrap"><span class="empty-note">Failed to load.</span></div>';
-        });
-        return;
-      }
-
-      // Collector/inbound rows get a tabbed drilldown: "Recent events" (raw
-      // events in the current window) and "Runs" (SourceRun history, not
-      // windowed). Ticket 32.7 adds a third "Probe" tab here.
-      var wrap = document.createElement("div");
-      wrap.className = "drilldown-wrap";
-      var tabs = renderTabs([
-        {
-          id: "events",
-          label: "Recent events",
-          render: function (panel) {
-            panel.innerHTML = '<span class="loading">Loading…</span>';
-            fetchDrilldown(kind, key).then(function (data) {
-              panel.innerHTML = renderSourceDrilldown(data.rows || []);
-            }).catch(function () {
-              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
-            });
-          },
-        },
-        {
-          id: "runs",
-          label: "Runs",
-          render: function (panel) {
-            panel.innerHTML = '<span class="loading">Loading…</span>';
-            fetchDrilldown("runs", key).then(function (data) {
-              panel.innerHTML = renderRunsDrilldown(data.rows || []);
-            }).catch(function () {
-              panel.innerHTML = '<span class="empty-note">Failed to load.</span>';
-            });
-          },
-        },
-        {
-          id: "probe",
-          label: "Probe",
-          render: function (panel) {
-            renderProbeTab(panel, key, probeButtons[kind + ":" + key]);
-          },
-        },
-      ]);
-      wrap.appendChild(tabs);
-      cell.innerHTML = "";
-      cell.appendChild(wrap);
-      openTabs[kind + ":" + key] = tabs;
+  if (probeCloseBtn) probeCloseBtn.addEventListener("click", closeProbeModal);
+  if (probeOverlay) {
+    probeOverlay.addEventListener("click", function (e) {
+      if (e.target === probeOverlay) closeProbeModal();
     });
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && probeOverlay.classList.contains("open")) closeProbeModal();
   });
 
   document.querySelectorAll(".btn-probe").forEach(function (btn) {
-    btn.addEventListener("click", function (e) {
-      // The row itself is also a click-to-expand target — without this the
-      // Probe click would also toggle the drilldown open/closed.
-      e.stopPropagation();
-
-      var row = btn.closest("tr.source-row");
-      if (!row) return;
-      var kind = row.getAttribute("data-kind");
-      var key = row.getAttribute("data-key");
-      var drilldownRow = document.querySelector('tr.drilldown-row[data-for="' + kind + ":" + key + '"]');
-      if (!drilldownRow) return;
-
-      var mapKey = kind + ":" + key;
-      var isOpen = drilldownRow.style.display !== "none";
-
-      if (!isOpen) {
-        // Open the drilldown the same way the row click does, then jump to
-        // the Probe tab once it's rendered.
-        row.click();
-      }
-
-      var tabs = openTabs[mapKey];
-      if (tabs && tabs.activateTab) tabs.activateTab("probe");
+    btn.addEventListener("click", function () {
+      var sourceId = btn.getAttribute("data-probe-source-id");
+      var sourceName = btn.getAttribute("data-source-name") || "";
+      openProbeModal(sourceId, sourceName, btn);
     });
   });
 })();

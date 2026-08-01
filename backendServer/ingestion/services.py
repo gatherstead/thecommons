@@ -161,6 +161,14 @@ def ingest_direct_submission(raw_event_id, user_id):
     second call on the same raw_event replaces the staged row and updates the
     existing Event in place.  user_id may be None for anonymous submissions.
 
+    40.4: if a prior call already published this RawEvent and a resubmission
+    (edited content) then hits the duplicate/safety/no-town gate, the new
+    content does not go live — but the *previously* published Event must not
+    be orphaned either (Event has no soft-delete/unpublish, so its existence
+    is its publication). Every terminal branch below therefore keeps
+    `published_event` pointed at that prior Event, whether it lands there
+    (happy path) or not (early returns).
+
     Returns the Event if published, None if held (pending / duplicate / no-town).
     """
     raw_event = RawEvent.objects.get(id=raw_event_id)
@@ -194,11 +202,26 @@ def ingest_direct_submission(raw_event_id, user_id):
     if dup is not None:
         staged.status = "duplicate"
         staged.duplicate_of = dup
-        staged.save(update_fields=["status", "duplicate_of"])
+        # 40.4: an edited resubmission that now matches an existing event must
+        # not orphan whatever this RawEvent previously published — the live
+        # Event has no soft-delete/unpublish concept, so it stays up and this
+        # row keeps pointing at it (moderatable, not a dangling live Event).
+        staged.published_event = prior_event
+        staged.save(update_fields=["status", "duplicate_of", "published_event"])
         return None
 
     if score > SAFETY_SCORE_THRESHOLD:
-        staged.save(update_fields=["status"])
+        # 40.4: this used to save `status` without ever assigning it, so the
+        # row silently kept whatever `standardize_event` left it at (the model
+        # default, "pending") instead of an intentional value. "pending" is
+        # actually correct here — it's the same value the automated pipeline
+        # uses for held-for-review rows (see `auto_publish_safe_events`), and
+        # `monitoring.py`'s funnel already buckets status="pending" with a
+        # non-null `safety_score` as `held_for_review` — so make the
+        # assignment explicit rather than inventing a new status.
+        staged.status = "pending"
+        staged.published_event = prior_event
+        staged.save(update_fields=["status", "published_event"])
         return None
 
     with transaction.atomic():
@@ -212,7 +235,8 @@ def ingest_direct_submission(raw_event_id, user_id):
                 staged.town,
             )
             staged.status = "skipped_no_town"
-            staged.save(update_fields=["status"])
+            staged.published_event = prior_event
+            staged.save(update_fields=["status", "published_event"])
             return None
 
         is_verified = user is not None and user.user_type == "BUSINESS"

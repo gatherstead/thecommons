@@ -6,8 +6,10 @@ from django.test import SimpleTestCase, tag
 
 from devtools.monitoring import (
     _CONSECUTIVE_FAILURE_THRESHOLD,
+    _HEALTH_RANK,
     _STALE_POLL_MULTIPLIER,
     source_health,
+    summarize_sources,
 )
 
 NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=UTC)
@@ -16,6 +18,7 @@ NOW = datetime(2026, 7, 26, 12, 0, 0, tzinfo=UTC)
 def make_row(
     *,
     active=True,
+    source_type="ics",
     poll_interval_hours=24,
     last_polled_dt=NOW,
     created_at=NOW,
@@ -24,6 +27,7 @@ def make_row(
 ):
     return {
         "active": active,
+        "source_type": source_type,
         "poll_interval_hours": poll_interval_hours,
         "last_polled_dt": last_polled_dt,
         "created_at": created_at,
@@ -62,6 +66,40 @@ class SourceHealthTests(SimpleTestCase):
         row = make_row(active=False, last_polled_dt=None, raw_count=0, published=0)
         runs = [make_run("failed", "boom"), make_run("failed", "boom")]
         result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "inactive")
+        self.assertEqual(result["reasons"], [])
+
+    def test_direct_source_is_push_not_inactive(self):
+        # 40.2: direct/inbound sources are deliberately active=False (pushed
+        # to, never polled) — that must render as the distinct "push" level,
+        # not "inactive", which reads as "broken".
+        row = make_row(source_type="direct", active=False, last_polled_dt=None, raw_count=0)
+        result = source_health(row, [], NOW)
+        self.assertEqual(result["level"], "push")
+        self.assertIn("direct/push source — not polled", result["reasons"])
+
+    def test_direct_source_is_push_even_when_active_true(self):
+        # The direct source is always created active=False in practice
+        # (ingestion/views.py), but the check is on source_type, not active —
+        # verify it doesn't accidentally depend on active being False.
+        row = make_row(source_type="direct", active=True)
+        result = source_health(row, [], NOW)
+        self.assertEqual(result["level"], "push")
+
+    def test_direct_source_push_outranks_run_failures(self):
+        # The push check short-circuits before any other rule runs — a direct
+        # source's run/staleness history (it has none, since it's never
+        # polled) must never surface as error/warn.
+        row = make_row(source_type="direct", active=False, last_polled_dt=None, raw_count=0)
+        runs = [make_run("failed", "boom"), make_run("failed", "boom")]
+        result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "push")
+
+    def test_collector_source_with_active_false_stays_inactive(self):
+        # Non-direct sources are unaffected by the push check — a collector
+        # source with active=False is still "inactive", not "push".
+        row = make_row(source_type="ics", active=False, last_polled_dt=None, raw_count=0)
+        result = source_health(row, [], NOW)
         self.assertEqual(result["level"], "inactive")
         self.assertEqual(result["reasons"], [])
 
@@ -258,6 +296,15 @@ class SourceHealthTests(SimpleTestCase):
         result = source_health(row, [make_run("failed", "boom")], NOW)
         self.assertEqual(result["level"], "error")
 
+    def test_health_rank_has_an_entry_for_every_level_source_health_returns(self):
+        # `_HEALTH_RANK` is read by `_worse()` and by the results sort in
+        # `_source_rows` — a level missing from it is a KeyError that takes
+        # the whole page down (this is exactly how `push` was almost added:
+        # ticket 40.2). `push` is ranked alongside `inactive`, at the end.
+        for level in ("error", "warn", "unknown", "ok", "inactive", "push"):
+            self.assertIn(level, _HEALTH_RANK)
+        self.assertEqual(_HEALTH_RANK["push"], _HEALTH_RANK["inactive"])
+
 
 @tag("fast")
 class ShardAwareStalenessTests(SimpleTestCase):
@@ -314,3 +361,124 @@ class ShardAwareStalenessTests(SimpleTestCase):
             result = source_health(row, [make_run("ok")], NOW)
         self.assertEqual(result["level"], "error")
         self.assertTrue(any("shard count 3" in r for r in result["reasons"]))
+
+
+def make_source_row(
+    *,
+    funnel=None,
+    health_level="ok",
+    last_polled=None,
+    latest_raw_created_at=None,
+):
+    """A `_source_rows`-shaped row, trimmed to the fields `summarize_sources`
+    actually reads."""
+    base_funnel = {"raw": 0, "published": 0, "held_for_review": 0, "duplicate": 0, "no_town": 0}
+    if funnel:
+        base_funnel.update(funnel)
+    return {
+        "funnel": base_funnel,
+        "health": {"level": health_level, "reasons": []},
+        "last_polled": last_polled,
+        "latest_raw_created_at": latest_raw_created_at,
+    }
+
+
+@tag("fast")
+class SummarizeSourcesTests(SimpleTestCase):
+    """summarize_sources is pure: it reduces already-built collector/inbound
+    rows into the monitor page's KPI tile numbers (ticket 40.6) — no DB, no
+    I/O, no new queries.
+    """
+
+    def test_empty_rows_return_all_zero_and_no_freshness_signal(self):
+        result = summarize_sources([], now=NOW)
+        self.assertEqual(
+            result["funnel"],
+            {"raw": 0, "published": 0, "held_for_review": 0, "duplicate": 0, "no_town": 0},
+        )
+        self.assertEqual(
+            result["health"],
+            {"error": 0, "warn": 0, "unknown": 0, "ok": 0, "inactive": 0, "push": 0},
+        )
+        self.assertIsNone(result["freshness"]["newest_raw_created_at"])
+        self.assertEqual(result["freshness"]["polled_last_24h"], 0)
+
+    def test_funnel_totals_sum_across_rows(self):
+        rows = [
+            make_source_row(
+                funnel={
+                    "raw": 3,
+                    "published": 1,
+                    "held_for_review": 2,
+                    "duplicate": 1,
+                    "no_town": 0,
+                }
+            ),
+            make_source_row(
+                funnel={
+                    "raw": 5,
+                    "published": 0,
+                    "held_for_review": 0,
+                    "duplicate": 2,
+                    "no_town": 1,
+                }
+            ),
+        ]
+        result = summarize_sources(rows, now=NOW)
+        self.assertEqual(
+            result["funnel"],
+            {"raw": 8, "published": 1, "held_for_review": 2, "duplicate": 3, "no_town": 1},
+        )
+
+    def test_health_counts_one_row_per_level(self):
+        rows = [
+            make_source_row(health_level="error"),
+            make_source_row(health_level="error"),
+            make_source_row(health_level="warn"),
+            make_source_row(health_level="ok"),
+            make_source_row(health_level="push"),
+        ]
+        result = summarize_sources(rows, now=NOW)
+        self.assertEqual(
+            result["health"],
+            {"error": 2, "warn": 1, "unknown": 0, "ok": 1, "inactive": 0, "push": 1},
+        )
+
+    def test_newest_raw_event_compares_real_datetimes_not_strings(self):
+        # The whole point of parsing with fromisoformat instead of comparing
+        # strings: these two ISO strings carry different UTC offsets, and
+        # lexicographically the *earlier* one sorts larger ("23" > "19"),
+        # which would silently pick the wrong "newest" under a naive max().
+        earlier_utc_but_lexicographically_larger = "2026-07-26T23:00:00+05:00"  # 18:00 UTC
+        later_utc_but_lexicographically_smaller = "2026-07-26T19:00:00+00:00"  # 19:00 UTC
+        rows = [
+            make_source_row(latest_raw_created_at=earlier_utc_but_lexicographically_larger),
+            make_source_row(latest_raw_created_at=later_utc_but_lexicographically_smaller),
+        ]
+        result = summarize_sources(rows, now=NOW)
+        self.assertEqual(
+            result["freshness"]["newest_raw_created_at"], later_utc_but_lexicographically_smaller
+        )
+
+    def test_newest_raw_event_none_when_no_row_has_one(self):
+        rows = [make_source_row(), make_source_row()]
+        result = summarize_sources(rows, now=NOW)
+        self.assertIsNone(result["freshness"]["newest_raw_created_at"])
+
+    def test_polled_last_24h_counts_only_rows_within_the_window(self):
+        rows = [
+            make_source_row(last_polled=(NOW - timedelta(hours=1)).isoformat()),
+            make_source_row(last_polled=(NOW - timedelta(hours=23, minutes=59)).isoformat()),
+            make_source_row(last_polled=(NOW - timedelta(hours=25)).isoformat()),
+            make_source_row(last_polled=None),
+        ]
+        result = summarize_sources(rows, now=NOW)
+        self.assertEqual(result["freshness"]["polled_last_24h"], 2)
+
+    def test_now_defaults_to_current_time_when_omitted(self):
+        # No `now` kwarg — exercises the `timezone.now()` default path used
+        # by the real `monitor()` view, which never passes `now` explicitly.
+        result = summarize_sources([make_source_row(last_polled=None)])
+        self.assertIn("funnel", result)
+        self.assertIn("health", result)
+        self.assertIn("freshness", result)

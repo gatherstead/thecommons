@@ -42,6 +42,7 @@ from .monitoring import (
     collector_summary,
     drilldown,
     resolve_source_runs_state,
+    summarize_sources,
 )
 from .pipeline_runner import _event_dict, _resolve_source_name, run_pipeline_into_queue
 from .sse import sse_frame
@@ -827,6 +828,13 @@ def monitor(request):
             runs_state = RUNS_UNREACHABLE
             collectors, inbound, outbound = [], [], {}
 
+    # Ticket 40.6: the KPI tiles are a pure reduction over the rows already
+    # fetched above — no new queries. Computed from `collectors + inbound`
+    # regardless of `runs_state`, so an unreachable database still yields the
+    # all-zero/empty shape `summarize_sources([])` returns rather than a
+    # missing context key.
+    summary = summarize_sources(collectors + inbound)
+
     return render(
         request,
         "devtools/monitor.html",
@@ -834,6 +842,7 @@ def monitor(request):
             "collectors": collectors,
             "inbound": inbound,
             "outbound": outbound,
+            "summary": summary,
             "db": db,
             "window": window,
             "prod_readonly_configured": "prod_readonly" in settings.DATABASES,
@@ -855,6 +864,11 @@ def monitor_data(request):
 
     key = request.GET.get("key", "")
     if kind != "outbound":
+        # Empty/absent key used to coerce to `None` and then filter
+        # `source_id=None` in `_drilldown_source`, silently matching nothing.
+        # Ticket 40.5: `None` now means "every source of this kind" for
+        # collector/inbound (see `_drilldown_source`); `runs` still requires a
+        # numeric key and degrades to empty without one (per-source only).
         key = int(key) if key.isdigit() else None
     else:
         key = key or None
@@ -862,5 +876,8 @@ def monitor_data(request):
     limit_raw = request.GET.get("limit", "").strip()
     limit = min(int(limit_raw), 100) if limit_raw.isdigit() else 100
 
-    rows = drilldown(db, kind, key, start, end, limit=limit)
-    return JsonResponse({"rows": rows, "db": db})
+    offset_raw = request.GET.get("offset", "").strip()
+    offset = int(offset_raw) if offset_raw.isdigit() else 0
+
+    rows, total = drilldown(db, kind, key, start, end, limit=limit, offset=offset)
+    return JsonResponse({"rows": rows, "total": total, "offset": offset, "limit": limit, "db": db})

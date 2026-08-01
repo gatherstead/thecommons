@@ -105,6 +105,8 @@ class DirectIngestTests(TestCase):
         self.assertEqual(Event.objects.count(), 0)
         staged = StagedEvent.objects.get()
         self.assertEqual(staged.status, "pending")
+        # No prior Event exists on a first submission — must stay unset.
+        self.assertIsNone(staged.published_event)
 
     def test_blank_organizer_falls_back_to_host(self):
         """No organizer name on the raw row → generic 'by host' attribution."""
@@ -126,3 +128,147 @@ class DirectIngestTests(TestCase):
         self.assertFalse(event.is_verified)
         staged = StagedEvent.objects.get()
         self.assertIsNone(staged.submitted_by)
+
+
+@tag("db")
+class DirectIngestOrphanPreventionTests(TestCase):
+    """Ticket 40.4: a resubmitted-and-edited direct submission that gets
+    gated (duplicate / over-safety-threshold / no-town) must not strand the
+    Event a *prior* call to `ingest_direct_submission` already published.
+    `events.Event` has no soft-delete or published flag — its existence is
+    its publication — so the fix is to keep the terminal `StagedEvent`
+    pointed at that prior Event (`published_event`) rather than touch the
+    Event at all. Production audit (40.3) found 4 of 4 live direct-submission
+    Events orphaned this way.
+    """
+
+    STD_PAYLOAD = {
+        "title": "Test Concert",
+        "description": "A great show at the Cradle.",
+        "location_name": "Cat's Cradle",
+        "town": "Carrboro",
+        "tags": ["live-music"],
+        "price": 10,
+    }
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Direct Feed",
+            source_type="ics",
+            url="https://feed.test/direct.ics",
+        )
+        self.raw = RawEvent.objects.create(
+            source=self.source,
+            raw_title="Raw Concert",
+            raw_description="A show",
+            raw_location="Cat's Cradle, Carrboro, NC",
+            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            source_url="",  # avoids fetch_page_text network call
+            source_uid="direct-uid-orphan",
+            raw_organizer="The MAKRS Society",
+        )
+        self.town = make_town(slug="carrboro")
+        self.user = make_user(user_type="BUSINESS")
+
+    def _gemini_mocks(self, std_payload, score):
+        fake_std = mock.Mock()
+        fake_std.models.generate_content.return_value = mock.Mock(text=json.dumps(std_payload))
+        fake_scorer = mock.Mock()
+        fake_scorer.models.generate_content.return_value = mock.Mock(
+            text=json.dumps({"score": score, "notes": ""})
+        )
+        return mock.patch(
+            "ingestion.standardizer.genai.Client",
+            side_effect=[fake_std, fake_scorer],
+        )
+
+    def test_resubmission_that_becomes_a_duplicate_keeps_prior_event_published(self):
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            first_event = ingest_direct_submission(self.raw.id, self.user.id)
+        self.assertEqual(Event.objects.count(), 1)
+
+        # A genuine duplicate elsewhere in the system. find_duplicate only
+        # matches against a lower pk (see its docstring), and this row is
+        # created before the resubmission below, so it qualifies.
+        other = StagedEvent.objects.create(
+            title=self.STD_PAYLOAD["title"],
+            description="d",
+            location_name=self.STD_PAYLOAD["location_name"],
+            town=self.STD_PAYLOAD["town"],
+            start_datetime=self.raw.raw_start,
+            status="published",
+        )
+
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            result = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(result)
+        # The prior Event stays live and moderatable — not orphaned, not deleted.
+        self.assertEqual(Event.objects.count(), 1)
+        self.assertTrue(Event.objects.filter(pk=first_event.pk).exists())
+
+        staged = StagedEvent.objects.get(raw_event=self.raw)
+        self.assertEqual(staged.status, "duplicate")
+        self.assertEqual(staged.duplicate_of, other)
+        self.assertEqual(staged.published_event_id, first_event.pk)
+
+    def test_resubmission_over_safety_threshold_keeps_prior_event_published(self):
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            first_event = ingest_direct_submission(self.raw.id, self.user.id)
+        self.assertEqual(Event.objects.count(), 1)
+
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.9):
+            result = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(result)
+        self.assertEqual(Event.objects.count(), 1)
+        self.assertTrue(Event.objects.filter(pk=first_event.pk).exists())
+
+        staged = StagedEvent.objects.get(raw_event=self.raw)
+        # Held for review, same terminal value the automated pipeline uses
+        # (see auto_publish_safe_events / monitoring.py's held_for_review
+        # bucket) — not silently left at whatever standardize_event defaulted to.
+        self.assertEqual(staged.status, "pending")
+        self.assertEqual(staged.published_event_id, first_event.pk)
+
+    def test_resubmission_with_no_matching_town_keeps_prior_event_published(self):
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            first_event = ingest_direct_submission(self.raw.id, self.user.id)
+        self.assertEqual(Event.objects.count(), 1)
+
+        out_of_coverage_payload = {**self.STD_PAYLOAD, "town": "Greensboro"}
+        with self._gemini_mocks(out_of_coverage_payload, 0.0):
+            result = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(result)
+        self.assertEqual(Event.objects.count(), 1)
+        staged = StagedEvent.objects.get(raw_event=self.raw)
+        self.assertEqual(staged.status, "skipped_no_town")
+        self.assertEqual(staged.published_event_id, first_event.pk)
+
+        # The gated resubmission's content must never have touched the Event —
+        # only a fully successful re-publish is allowed to mutate it.
+        first_event.refresh_from_db()
+        self.assertEqual(first_event.town.slug, "carrboro")
+
+    def test_first_submission_duplicate_has_no_published_event(self):
+        """No prior_event exists on a first-time duplicate — published_event
+        must stay None, not resurrect a reference to a nonexistent Event."""
+        other = StagedEvent.objects.create(
+            title=self.STD_PAYLOAD["title"],
+            description="d",
+            location_name=self.STD_PAYLOAD["location_name"],
+            town=self.STD_PAYLOAD["town"],
+            start_datetime=self.raw.raw_start,
+            status="published",
+        )
+
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            result = ingest_direct_submission(self.raw.id, self.user.id)
+
+        self.assertIsNone(result)
+        self.assertFalse(Event.objects.exists())
+        staged = StagedEvent.objects.get(raw_event=self.raw)
+        self.assertEqual(staged.status, "duplicate")
+        self.assertEqual(staged.duplicate_of, other)
+        self.assertIsNone(staged.published_event)

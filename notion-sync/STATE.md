@@ -6,7 +6,7 @@ The ledger mirrors what *should* be on the Notion board so the desktop app can r
 
 ---
 
-**Next suite number:** `39`
+**Next suite number:** `41`
 
 ## Suite ledger
 
@@ -34,6 +34,8 @@ per-ticket status lives on each ticket subpage (see OUTBOX preamble).
 | 36 | Ingestion funnel dead-ends (out-of-coverage limbo, town-less events, missed sends, beat bookkeeping) | Needs QA | 36.1–36.4, 36.6–36.7 (36.5 closed won't-fix; 36.8 investigation → benign, no code) | _(pending)_ |
 | 37 | Central auth reintegration — standalone portal + fix the live JWT bridge | Needs QA | 37.1–37.8, 37.10, 37.11 built+Needs QA (dev E2E 6/6); 37.9 Needs QA (prod cutover executed 2026-07-30, live JWT bridge verified); completes 29 + unbuilt half of 30 | _(pending)_ |
 | 38 | Password-required accounts + decoupled newsletter | Open | 38.A1–38.A4, 38.B1–38.B4, 38.D1 (planned, not built) | _(pending)_ |
+| 39 | Password-reset flow wiring (unblock passwordless rollover) + auth model drift | Open | 39.1–39.2 (planned, not built) | _(pending)_ |
+| 40 | Monitor dashboard rebuild + direct-submission attribution | Needs QA | 40.1–40.6 all built (40.3 = read-only prod audit, no code; confirmed 4/4 live direct Events orphaned → 40.4 shipped) | _(pending)_ |
 
 <!--
 Columns (left→right): Idea · Open · In Progress · Needs QA · Staged for Prod · In Prod

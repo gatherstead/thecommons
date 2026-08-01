@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -148,7 +149,7 @@ EVENTS = [
 
 
 class Command(BaseCommand):
-    help = "Seed dev database with Towns, Tags, Categories, and sample Events"
+    help = "Seed dev database with Towns, Tags, Categories, sample Events, and scraper sources"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -218,4 +219,10 @@ class Command(BaseCommand):
             f"{cats_created} categories, {events_created} events "
             f"({events_existing} already existed)"
         )
+
+        # Without these the devtools playground's "load existing source" picker is
+        # empty locally, so scrapers can only be exercised against a real source
+        # row on a deployed environment.
+        call_command("seed_sources", force=options["force"])
+
         self.stdout.write("To create test users, sign up at http://localhost:3000/auth")

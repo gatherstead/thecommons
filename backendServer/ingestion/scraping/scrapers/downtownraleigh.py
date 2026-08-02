@@ -59,14 +59,22 @@ _RANGE_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 _SINGLE_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)", re.IGNORECASE)
+# A small number of recurring listings give a start time with no am/pm at all,
+# e.g. "7:30 until we run out of comics" or "6:30-9:30" -- anchored to the
+# start of the string so this can't grab a stray number elsewhere in the text
+# (e.g. "through 8/23/2026" on an ongoing-exhibit listing).
+_BARE_HOUR_RE = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\b")
 
 
 def _parse_start_time(text: str) -> tuple[int, int] | None:
     """Best-effort (hour, minute) out of a free-text time string.
 
     Handles "8pm-11pm", "1-3pm" (meridiem only on the trailing number, applied
-    to both), "11AM" (single token), and returns None for venue-only text with
-    no time at all (e.g. "Haymaker").
+    to both), "11AM" (single token), a bare leading hour with no am/pm at all
+    (see `_BARE_HOUR_RE` -- Downtown Raleigh never means morning for these, so
+    1-7 is treated as PM), and returns None for venue-only text with no time
+    at all (e.g. "Haymaker") or a bare hour outside that PM-safe range (e.g.
+    "12-6, 11-3" market hours, which are genuinely ambiguous).
     """
     if not text:
         return None
@@ -77,6 +85,9 @@ def _parse_start_time(text: str) -> tuple[int, int] | None:
     match = _SINGLE_TIME_RE.search(text)
     if match:
         return _to_24h(match.group(1), match.group(2), match.group(3))
+    match = _BARE_HOUR_RE.match(text)
+    if match and 1 <= int(match.group(1)) <= 7:
+        return _to_24h(match.group(1), match.group(2), "pm")
     return None
 
 

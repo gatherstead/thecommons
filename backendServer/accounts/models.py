@@ -1,0 +1,173 @@
+import uuid
+
+from django.db import models
+
+from events.models import Tag, Town
+
+
+class BetterAuthUser(models.Model):
+    """Read-only mirror of `neon_auth.user`. Better Auth (Next.js) owns writes.
+
+    The `db_table` value uses deliberate double-quote injection so Django
+    emits `FROM "neon_auth"."user"` — a valid cross-schema reference.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    email = models.EmailField(unique=True)
+    email_verified = models.BooleanField(db_column="emailVerified", default=False)
+    image = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema; column is nullable
+    created_at = models.DateTimeField(db_column="createdAt")
+    updated_at = models.DateTimeField(db_column="updatedAt")
+    user_type = models.CharField(max_length=20, default="LOCAL")
+
+    # DRF permission classes read these attributes.
+    is_authenticated = True
+    is_anonymous = False
+
+    class Meta:
+        managed = False
+        db_table = 'neon_auth"."user'
+
+    def __str__(self):
+        return self.email
+
+
+class BetterAuthSession(models.Model):
+    id = models.TextField(primary_key=True)
+    expires_at = models.DateTimeField(db_column="expiresAt")
+    token = models.TextField(unique=True)
+    created_at = models.DateTimeField(db_column="createdAt")
+    updated_at = models.DateTimeField(db_column="updatedAt")
+    ip_address = models.TextField(db_column="ipAddress", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    user_agent = models.TextField(db_column="userAgent", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    user_id = models.TextField(db_column="userId")
+
+    class Meta:
+        managed = False
+        db_table = 'neon_auth"."session'
+
+    def __str__(self):
+        return f"Session({self.user_id})"
+
+
+class BetterAuthAccount(models.Model):
+    id = models.TextField(primary_key=True)
+    account_id = models.TextField(db_column="accountId")
+    provider_id = models.TextField(db_column="providerId")
+    user_id = models.UUIDField(db_column="userId")
+    access_token = models.TextField(db_column="accessToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    refresh_token = models.TextField(db_column="refreshToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    id_token = models.TextField(db_column="idToken", null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    access_token_expires_at = models.DateTimeField(
+        db_column="accessTokenExpiresAt", null=True, blank=True
+    )
+    refresh_token_expires_at = models.DateTimeField(
+        db_column="refreshTokenExpiresAt", null=True, blank=True
+    )
+    scope = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    password = models.TextField(null=True, blank=True)  # noqa: DJ001  # mirrors neon_auth schema
+    created_at = models.DateTimeField(db_column="createdAt")
+    updated_at = models.DateTimeField(db_column="updatedAt")
+
+    class Meta:
+        managed = False
+        db_table = 'neon_auth"."account'
+
+    def __str__(self):
+        return f"Account({self.provider_id}/{self.user_id})"
+
+
+class BetterAuthVerification(models.Model):
+    id = models.TextField(primary_key=True)
+    identifier = models.TextField()
+    value = models.TextField()
+    expires_at = models.DateTimeField(db_column="expiresAt")
+    created_at = models.DateTimeField(db_column="createdAt", null=True, blank=True)
+    updated_at = models.DateTimeField(db_column="updatedAt", null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'neon_auth"."verification'
+
+    def __str__(self):
+        return f"Verification({self.identifier})"
+
+
+class BetterAuthJwks(models.Model):
+    id = models.TextField(primary_key=True)
+    public_key = models.TextField(db_column="publicKey")
+    private_key = models.TextField(db_column="privateKey")
+    created_at = models.DateTimeField(db_column="createdAt")
+
+    class Meta:
+        managed = False
+        db_table = 'neon_auth"."jwks'
+
+    def __str__(self):
+        return f"Jwks({self.id})"
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(
+        BetterAuthUser,
+        on_delete=models.CASCADE,
+        related_name="profile",
+        db_column="user_id",
+        db_constraint=False,
+    )
+
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+
+    class UserType(models.TextChoices):
+        LOCAL = "LOCAL", "Local"
+        BUSINESS = "BUSINESS", "Business"
+        VENUE = "VENUE", "Venue"
+
+    user_type = models.CharField(max_length=20, choices=UserType.choices, default=UserType.LOCAL)
+
+    primary_city = models.CharField(max_length=100, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+
+    class EmailFrequency(models.TextChoices):
+        WEEKLY = "WEEKLY", "Weekly"
+        MONTHLY = "MONTHLY", "Monthly"
+        NEVER = "NEVER", "Never"
+
+    email_preference = models.CharField(
+        max_length=20, choices=EmailFrequency.choices, default=EmailFrequency.WEEKLY
+    )
+
+    tags = models.ManyToManyField(Tag, related_name="users", blank=True)
+
+    class Meta:
+        db_table = "events_userprofile"
+
+    def __str__(self):
+        return f"{self.user.email}'s Profile"
+
+
+class BusinessProfile(models.Model):
+    user = models.OneToOneField(
+        BetterAuthUser,
+        on_delete=models.CASCADE,
+        related_name="business_profile",
+        db_column="user_id",
+        db_constraint=False,
+    )
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    business_name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    tags = models.ManyToManyField(Tag, related_name="businesses", blank=True)
+    service_area = models.ManyToManyField(Town, related_name="businesses", blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=30, blank=True)
+    is_published = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "events_businessprofile"
+
+    def __str__(self):
+        return self.business_name or f"{self.user.email}'s Business"

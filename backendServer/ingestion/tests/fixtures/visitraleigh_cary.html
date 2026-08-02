@@ -1,0 +1,124 @@
+<!-- Trimmed real sample of the visitraleigh.com Simpleview jsrender events
+     widget (same `.eventItem[data-recid]` template used across the site --
+     see visitraleigh.html), captured via headless Playwright render of
+     https://www.visitraleigh.com/events/ on 2026-07-31. The Cary-filtered
+     page (https://www.visitraleigh.com/plan-a-trip/cities-and-towns/cary/events/)
+     runs a distinct `data-sv-eventLayout` instance of this identical widget
+     but returned zero live results at capture time ("No events were
+     found."), so this fixture reuses real event blocks from the same
+     template/platform to exercise the shared extractor -- see
+     visitraleigh_cary.py's module docstring. -->
+<div class="eventsContainer listing-container shared-list">
+    <div class="blocks-inner">
+
+        <div class="eventItem listing-block item" data-eventid="6a68f8cf00306b0da78ea4d1" data-recid="108510" data-type="event">
+            <div class="block-inner">
+                <div class="block-content">
+                    <div class="content-inner">
+                        <div class="block-info">
+                            <div class="block-title">
+                                <h3 role="heading" aria-level="2"><a href="/event/comedy-show%3a-cyrus-steele-%2b-joe-perrow/108510/">Comedy Show: Cyrus Steele + Joe Perrow</a></h3>
+                            </div>
+                            <div class="block-meta">
+                                <ul class="no-bullet">
+                                    <li class="dateInfo"><strong>July 31, 2026</strong></li>
+                                    <li class="times"><strong>Times:</strong> Fri., 8-9:30pm</li>
+                                    <li class="location">
+                                        <strong>Venue: </strong>
+                                        <a href="/listing/the-cary-theater/68313/" title="The Cary Theater">
+                                        The Cary Theater
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="eventItem listing-block item" data-eventid="6a68f8cf00306b0da78ea4d2" data-recid="107646" data-type="event">
+            <div class="block-inner">
+                <div class="block-content">
+                    <div class="content-inner">
+                        <div class="block-info">
+                            <div class="block-title">
+                                <h3 role="heading" aria-level="2"><a href="/event/country-grass/107646/">Country Grass</a></h3>
+                            </div>
+                            <div class="block-meta">
+                                <ul class="no-bullet">
+                                    <li class="dateInfo"><strong>Dates vary between July 31, 2026 - October 9, 2026</strong></li>
+                                    <li class="times"><strong>Times:</strong> Fri., 7-9pm</li>
+                                    <li class="location">
+                                        <strong>Venue: </strong>
+                                        <a href="/listing/lorraines-coffee-house-and-music/68446/" title="Lorraine's Coffee House and Music">
+                                        Lorraine's Coffee House and Music
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recurring listing with no explicit first-occurrence date -- only
+             the "until" date is parseable, so it becomes `start` with no
+             `end` (see visitraleigh.py's module docstring). -->
+        <div class="eventItem listing-block item" data-eventid="6a68f8cf00306b0da78ea4d3" data-recid="105919" data-type="event">
+            <div class="block-inner">
+                <div class="block-content">
+                    <div class="content-inner">
+                        <div class="block-info">
+                            <div class="block-title">
+                                <h3 role="heading" aria-level="2"><a href="/event/clue-(high-school-edition)/105919/">Clue (High School Edition)</a></h3>
+                            </div>
+                            <div class="block-meta">
+                                <ul class="no-bullet">
+                                    <li class="dateInfo"><strong>Recurring weekly on Sunday, Friday, Saturday until August 9, 2026</strong></li>
+                                    <li class="times"><strong>Times:</strong> Fri.-Sat., 7:30pm; Sun., 3pm</li>
+                                    <li class="location">
+                                        <strong>Venue: </strong>
+                                        <a href="/listing/raleigh-little-theatre/57940/" title="Raleigh Little Theatre">
+                                        Raleigh Little Theatre
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Back-dated for the past-event filter test -- same real block as
+             rec 108510, date swapped to 2020. -->
+        <div class="eventItem listing-block item" data-eventid="6a68f8cf00306b0da78ea4d4" data-recid="108510-past" data-type="event">
+            <div class="block-inner">
+                <div class="block-content">
+                    <div class="content-inner">
+                        <div class="block-info">
+                            <div class="block-title">
+                                <h3 role="heading" aria-level="2"><a href="/event/comedy-show%3a-cyrus-steele-%2b-joe-perrow/108510/">Past Event (back-dated for filter test)</a></h3>
+                            </div>
+                            <div class="block-meta">
+                                <ul class="no-bullet">
+                                    <li class="dateInfo"><strong>January 1, 2020</strong></li>
+                                    <li class="times"><strong>Times:</strong> Fri., 8pm</li>
+                                    <li class="location">
+                                        <strong>Venue: </strong>
+                                        <a href="/listing/the-cary-theater/68313/" title="The Cary Theater">
+                                        The Cary Theater
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>

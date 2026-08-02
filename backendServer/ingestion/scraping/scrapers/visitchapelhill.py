@@ -75,6 +75,7 @@ class VisitchapelhillScraper(Scraper):
     key = "visitchapelhill"
     url = "https://www.visitchapelhill.org/events/"
     name = "Visit Chapel Hill"
+    source_type = "scraper"
     # The list is empty at "domcontentloaded" -- it's filled in by a client-side
     # XHR to a token-gated REST endpoint that fires after initial page load.
     wait_selector = "[data-recid]"

@@ -511,7 +511,7 @@
       <label for="scraper_key">Scraper <span style="font-weight:400;color:#6b7280;">(each targets one site — picking it fills the URL)</span></label>
       <select id="scraper_key">
         {% for s in scrapers %}
-          <option value="{{ s.key }}" data-url="{{ s.url }}" data-name="{{ s.name }}">{{ s.key }}{% if s.url %} — {{ s.url }}{% endif %}</option>
+          <option value="{{ s.key }}" data-url="{{ s.url }}" data-name="{{ s.name }}" data-source_type="{{ s.source_type }}">{{ s.key }}{% if s.url %} — {{ s.url }}{% endif %}</option>
         {% empty %}
           <option value="" disabled>No scrapers registered</option>
         {% endfor %}
@@ -617,6 +617,21 @@
     if (name && !sourceNameEl.value.trim()) sourceNameEl.value = name;
   }
 
+  /* Whether a site needs Playwright ("scraper") or a plain fetch ("http") is a
+     property of the site, not a choice — picking visitchapelhill while the type
+     still says "http" silently yields zero events, since its list is injected by
+     JS. So follow the registry's source_type on every scraper switch. A manual
+     change to the Source Type select still wins until the next switch. */
+  function syncSourceTypeToScraper() {
+    const opt = scraperKeyEl.options[scraperKeyEl.selectedIndex];
+    if (!opt) return;
+    const sourceType = opt.getAttribute("data-source_type");
+    if (sourceType && sourceType !== sourceTypeEl.value) {
+      sourceTypeEl.value = sourceType;
+      updateSourceTypeUI();
+    }
+  }
+
   function updateSourceTypeUI() {
     const scraper = usesScraper();
     scraperKeyRow.style.display = scraper ? "" : "none";
@@ -627,7 +642,10 @@
     if (scraper) autofillScraperUrl();
   }
   sourceTypeEl.addEventListener("change", updateSourceTypeUI);
-  scraperKeyEl.addEventListener("change", autofillScraperUrl);
+  scraperKeyEl.addEventListener("change", () => {
+    autofillScraperUrl();
+    syncSourceTypeToScraper();
+  });
 
   /* ── Load existing source into form ──────────────────────── */
   function populateSourceSelector(sources) {

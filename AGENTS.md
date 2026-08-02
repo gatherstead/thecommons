@@ -9,8 +9,11 @@ thecommons/
 ├── backendServer/                # Django 6 + DRF — API, ingestion pipeline, broadcast, async
 │   ├── backend/                  #   Project config: settings/ (base/dev/prod/test), urls, celery,
 │   │                             #     jwt_auth (Better Auth JWKS), permissions, test_runner
-│   ├── events/                   #   Public app: Event/Town/Tag/Category/UserProfile/Business +
-│   │                             #     neon_auth mirrors, digests (Brevo), Redis cache, Celery tasks
+│   ├── accounts/                 #   Identity/auth-bridge app: neon_auth mirrors (BetterAuth*),
+│   │                             #     UserProfile + BusinessProfile, /auth/me, /businesses
+│   ├── events/                   #   Public app: Event/Town/Tag/Category + genuine event views
+│   ├── newsletter/                #   NewsletterSubscriber, subscribe/manage views, digest engine
+│   │                              #     (email_service, tasks, templates, digest commands)
 │   ├── ingestion/                #   Pipeline: EventSource → RawEvent → StagedEvent → published Event
 │   ├── broadcast/                #   Event syndication: Playwright adapters, DB-queue worker, routing
 │   ├── templates/                #   HTML for admin docs pages + email digests
@@ -71,17 +74,17 @@ Run backend + theCommonsWeb together for end-to-end auth (Django validates JWTs 
 
 | Concern | Key files | Deep dive |
 |---------|-----------|-----------|
-| Auth bridge | `backend/jwt_auth.py`, `backend/permissions.py`, `src/lib/auth.ts` | [ARCHITECTURE.md §Authentication](ARCHITECTURE.md#authentication) |
-| Data models | `events/models.py`, `ingestion/models.py`, `broadcast/models.py` | [ARCHITECTURE.md §Data Models](ARCHITECTURE.md#data-models) |
-| API endpoints | `backend/urls.py`, `events/urls.py`, `broadcast/urls.py` | [ARCHITECTURE.md §API Endpoints](ARCHITECTURE.md#api-endpoints) |
+| Auth bridge | `backend/jwt_auth.py`, `backend/permissions.py`, `accounts/models.py`, `src/lib/auth.ts` | [ARCHITECTURE.md §Authentication](ARCHITECTURE.md#authentication) |
+| Data models | `accounts/models.py`, `events/models.py`, `newsletter/models.py`, `ingestion/models.py`, `broadcast/models.py` | [ARCHITECTURE.md §Data Models](ARCHITECTURE.md#data-models) |
+| API endpoints | `backend/urls.py` (include()-only), `accounts/urls.py`, `events/urls.py`, `newsletter/urls.py`, `ingestion/urls.py`, `broadcast/urls.py` | [ARCHITECTURE.md §API Endpoints](ARCHITECTURE.md#api-endpoints) |
 | Ingestion pipeline | `ingestion/services.py`, `ingestion/standardizer.py`, `ingestion/importers/`, `ingestion/safety_scorer.py` | [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) |
 | Safety scoring | `ingestion/safety_scorer.py` | [docs/safety-scoring.md](docs/safety-scoring.md) |
 | Broadcast | `broadcast/services.py`, `broadcast/worker.py`, `broadcast/runner.py`, `broadcast/adapters/` | [docs/broadcast.md](docs/broadcast.md) |
-| Redis + Celery | `backend/celery.py`, `events/tasks.py`, `ingestion/tasks.py`, `events/cache.py` | [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md) |
+| Redis + Celery | `backend/celery.py`, `newsletter/tasks.py`, `ingestion/tasks.py`, `events/tasks.py`, `events/cache.py` | [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md) |
 | Frontend data layer | `src/lib/queryClient.ts`, `src/hooks/useEvents.ts`, `src/services/` | [ARCHITECTURE.md §Frontend](ARCHITECTURE.md#frontend-architecture) |
-| Email digests | `events/email_service.py`, `events/tasks.py` | [ARCHITECTURE.md §Async](ARCHITECTURE.md#async-redis--celery) |
+| Email digests | `newsletter/email_service.py`, `newsletter/tasks.py` (generic transport: `events/email_service.py::send_email`) | [ARCHITECTURE.md §Async](ARCHITECTURE.md#async-redis--celery) |
 | Design system | `src/app/globals.css`, `src/components/ui/` | [CODING_STYLE.md](CODING_STYLE.md) |
-| Admin UI | `events/admin.py`, `ingestion/admin.py` | [docs/admin-backend.md](docs/admin-backend.md) |
+| Admin UI | `accounts/admin.py`, `events/admin.py`, `newsletter/admin.py`, `ingestion/admin.py` | [docs/admin-backend.md](docs/admin-backend.md) |
 | Testing & CI | `backend/settings/test.py`, `.github/workflows/ci.yml`, `vitest.config.ts` | [ARCHITECTURE.md §Testing](ARCHITECTURE.md#testing--ci) |
 | Dev DB isolation | Neon dev branch + `settings/dev.py` | [docs/dev-db-isolation.md](docs/dev-db-isolation.md) |
 | Deployment | systemd units, nginx, env vars on VM | [DEPLOY.md](DEPLOY.md) |
@@ -91,7 +94,7 @@ Run backend + theCommonsWeb together for end-to-end auth (Django validates JWTs 
 - **Never migrate `neon_auth` tables.** Better Auth (Next.js) owns them. Django mirrors are `managed = False`.
 - **`Town` and `Category` are SQL tables** — don't hardcode. Pipeline skips events with unknown town slugs.
 - **Auth lives in Next.js**, not Django. Don't add Django login/signup views or use `django.contrib.auth.User` for app users.
-- **`broadcast/` is isolated from `events/`.** `broadcast/routing.py` must not import from `events` (enforced by tests).
+- **`broadcast/` and `ingestion/` are isolated from the rest.** No app imports from `ingestion`/`broadcast`; `broadcast/routing.py` must not import from `events` (enforced by tests). `accounts`, `newsletter`, and `events` may read each other where the domain genuinely overlaps — e.g. `accounts.me` writes a `NewsletterSubscriber` row (email-preference sync) and `newsletter._build_recipients` reads `accounts.UserProfile` (tag-filtered digests). Both directions are intentional; don't "fix" the coupling.
 - **No Django ORM inside `sync_playwright`** — fetch all data into plain objects first, then drive the browser.
 - **Redis layout is fixed:** DB 0 = Celery broker + results, DB 1 = Django cache. Don't mix them.
 - **pnpm only for frontends** (pinned to pnpm 11). `npm install` breaks the symlinked store / peer pinning.

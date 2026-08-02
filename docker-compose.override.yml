@@ -1,0 +1,161 @@
+# Local-dev override — auto-loaded by plain `docker compose up`/`build`
+# alongside docker-compose.yml (Compose's default two-file merge). The VM
+# must NEVER pick this up: prod invocations always pass `-f
+# docker-compose.yml` explicitly, e.g. `docker compose -f docker-compose.yml
+# up -d --build`, which skips this file entirely.
+#
+# Why this file exists: docker-compose.yml's nginx bakes in a config
+# (deploy/nginx/thecommons.conf) that hard-requires the Cloudflare origin
+# cert at /etc/ssl/cloudflare/thecommons.town.{pem,key} — that cert doesn't
+# exist on a dev machine, and nginx refuses to start at all with `listen 443
+# ssl` blocks pointing at missing files. Rather than maintaining a second
+# tracked nginx.conf (this ticket's scope is one thecommons.conf, matching
+# the "one file" convention), this override replaces JUST that one file's
+# *content* at the same in-container path via an inline `configs:` entry —
+# an HTTP-only equivalent using `*.localhost` hostnames (which resolve to
+# 127.0.0.1 with no /etc/hosts edits needed, per RFC 6761) instead of the
+# real *.thecommons.town domains. No cert, no SSL directives, nothing to
+# configure.
+#
+# It also remaps every bind-mounted host path from the Linux VM's
+# /home/ubuntu/... layout to plain repo-relative directories, since those
+# absolute paths don't exist (and shouldn't be assumed) on a dev machine.
+# Docker creates them automatically on first `up` if missing.
+
+# Local-dev environment shared by every Django/Celery service.
+#
+# Two things here are NOT cosmetic:
+#
+# 1. DJANGO_ENV=dev. The base compose file sets `prod` on all of these, and
+#    prod.py does `os.environ["DJANGO_ALLOWED_HOSTS"]` (prod.py:16) — a hard
+#    KeyError. That key isn't in backendServer/.env, so without this override
+#    every backend container would crash-loop on startup locally. `dev` is an
+#    explicit valid value rather than unsetting the var, because
+#    backend/settings/__init__.py treats an unrecognized DJANGO_ENV as a hard
+#    error and only unset/empty as dev — being explicit documents the intent.
+#
+# 2. REDIS_URL / REDIS_CACHE_URL. base.py:146,193 default these to
+#    redis://localhost:6379/{0,1}. Inside a container "localhost" is that
+#    container itself, so the default silently points Celery at nothing.
+#    They must name the compose service (`redis`). Keeps the DB 0 = broker /
+#    DB 1 = cache split. No password locally (the redis service starts
+#    unauthenticated when REDIS_PASSWORD is unset).
+x-local-django-env: &local-django-env
+  DJANGO_ENV: dev
+  REDIS_URL: redis://redis:6379/0
+  REDIS_CACHE_URL: redis://redis:6379/1
+  MEDIA_ROOT: /home/ubuntu/broadcast/media
+  BROADCAST_SCREENSHOT_DIR: /home/ubuntu/broadcast/screenshots
+  BROADCAST_DOWNLOAD_DIR: /home/ubuntu/broadcast/downloads
+
+services:
+  # Only port 80 locally — no TLS, so no reason to publish 443.
+  # (`!override` replaces the base list outright instead of merging into it.)
+  nginx:
+    ports: !override
+      - "80:80"
+    # `!override` (not a plain list) drops the base's Cloudflare cert bind
+    # mount entirely — it's not just unused here, the host path it points at
+    # (/etc/ssl/cloudflare) usually doesn't exist on a dev machine at all.
+    volumes: !override
+      - ./.local-dev/media:/var/www/media:ro
+    configs:
+      - source: nginx_dev_conf
+        target: /etc/nginx/conf.d/thecommons.conf
+
+  backend:
+    environment: *local-django-env
+    volumes:
+      - ./.local-dev/media:/home/ubuntu/broadcast/media
+      - ./.local-dev/screenshots:/home/ubuntu/broadcast/screenshots
+      - ./.local-dev/downloads:/home/ubuntu/broadcast/downloads
+
+  celery:
+    environment: *local-django-env
+
+  celerybeat:
+    environment: *local-django-env
+
+  scrape-worker:
+    environment: *local-django-env
+
+  broadcast-worker:
+    environment: *local-django-env
+    volumes:
+      - ./.local-dev/screenshots:/home/ubuntu/broadcast/screenshots
+      - ./.local-dev/downloads:/home/ubuntu/broadcast/downloads
+
+  migrate:
+    environment: *local-django-env
+    volumes:
+      - ./.local-dev/backups:/home/ubuntu/backups
+
+# Inline config content (Compose Spec top-level `configs:`, written directly
+# into this YAML file — no second nginx.conf file needed on disk). Mirrors
+# deploy/nginx/thecommons.conf's routes 1:1 (apex/api/broadcast), minus TLS.
+configs:
+  nginx_dev_conf:
+    content: |
+      # Variable upstreams + Docker's embedded resolver, mirroring
+      # deploy/nginx/thecommons.conf. Without this nginx resolves upstreams at
+      # startup and refuses to boot when one is missing — which locally is the
+      # common case (bringing up only part of the stack), not an edge case.
+      resolver 127.0.0.11 valid=10s ipv6=off;
+
+      server {
+          listen 80;
+          server_name localhost;
+
+          location / {
+              set $$upstream_nextjs nextjs;
+              proxy_pass http://$$upstream_nextjs:3000;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          }
+      }
+
+      server {
+          listen 80;
+          server_name api.localhost;
+
+          client_max_body_size 20m;
+
+          location /static/ {
+              alias /usr/share/nginx/html/static/;
+          }
+
+          location /media/ {
+              alias /var/www/media/;
+          }
+
+          location / {
+              set $$upstream_backend backend;
+              proxy_pass http://$$upstream_backend:8000;
+              # Forward "localhost", NOT $$host. dev.py:16 hardcodes
+              # ALLOWED_HOSTS = ["localhost", "127.0.0.1"] with no env
+              # override, so passing through "api.localhost" makes Django
+              # reject every request with DisallowedHost (HTTP 400) — the
+              # same failure shape as the June 2026 "no events" outage.
+              # Rewriting the header here keeps this a local-dev nginx
+              # concern instead of editing application settings. The prod
+              # config (deploy/nginx/thecommons.conf) correctly passes
+              # $$host, because prod.py's ALLOWED_HOSTS does include
+              # api.thecommons.town.
+              proxy_set_header Host localhost;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          }
+      }
+
+      server {
+          listen 80;
+          server_name broadcast.localhost;
+
+          root /usr/share/nginx/html/broadcast;
+          index index.html;
+
+          location / {
+              try_files $$uri /index.html;
+          }
+      }

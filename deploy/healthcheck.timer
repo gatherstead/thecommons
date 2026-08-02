@@ -1,11 +1,20 @@
 # Runs healthcheck.service hourly — copy to /etc/systemd/system/healthcheck.timer
 # then: sudo systemctl daemon-reload && sudo systemctl enable --now healthcheck.timer
 #
-# Deliberately NOT a django-celery-beat entry: beat itself is one of the
-# things this checks, so scheduling it through beat would mean a dead beat
-# silences its own alarm. A systemd timer runs independent of the app stack —
-# it fires even if Postgres, Redis, and every Celery process are down, so
-# those failures actually surface as FAILs instead of just not running.
+# Deliberately a HOST systemd timer, not:
+#   - a django-celery-beat entry: beat itself is one of the things this
+#     checks (via manage.py healthcheck's PeriodicTask freshness probe), so
+#     scheduling the check through beat would mean a dead beat silences its
+#     own alarm.
+#   - a Docker Compose `healthcheck:` block on one of the app services: that
+#     only reports the liveness of the one container it's attached to, and
+#     goes silent the moment that container (or the whole compose project)
+#     stops existing — exactly the "everything is down" case this needs to
+#     catch. A container can't watch the engine it runs on; the host can.
+# A systemd timer on the VM runs independent of the compose stack — it fires
+# even if Postgres (Neon, external), Redis, and every container in
+# docker-compose.yml are down, so those failures actually surface as FAILs
+# instead of just not running.
 
 [Unit]
 Description=Run The Commons health check hourly

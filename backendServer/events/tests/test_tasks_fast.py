@@ -2,7 +2,8 @@ import unittest
 
 from django.test import tag
 
-from events.tasks import ping, send_one_digest
+from events.tasks import ping
+from newsletter.tasks import send_one_digest
 
 
 @tag("fast")

@@ -52,7 +52,7 @@ class BeatLastRunPersistenceTests(TestCase):
         # but keeps the row realistic.
         self.periodic_task = PeriodicTask.objects.create(
             name=TASK_NAME,
-            task="events.tasks.fan_out_weekly_digest",
+            task="newsletter.tasks.fan_out_weekly_digest",
             crontab=self.crontab,
             enabled=True,
             last_run_at=timezone.now() - timedelta(days=1),

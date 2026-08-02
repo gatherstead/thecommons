@@ -10,6 +10,7 @@ Read-only: no `.save()`/`.delete()` anywhere in this module.
 """
 
 import os
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.db import OperationalError, ProgrammingError
@@ -43,8 +44,13 @@ _RECENT_RUNS_PER_SOURCE = 5
 # Sort order for the health column: most severe first, `inactive` last since
 # those rows are intentionally excluded from alerting. `unknown` sits between
 # `warn` and `ok`: absence of signal is worth surfacing above a healthy row,
-# but it is not evidence of a problem the way `warn` is.
-_HEALTH_RANK = {"error": 0, "warn": 1, "unknown": 2, "ok": 3, "inactive": 4}
+# but it is not evidence of a problem the way `warn` is. `push` ranks
+# alongside `inactive` (same value, not just "also near the end") — a
+# direct/push source is excluded from staleness alerting for the identical
+# reason an inactive one is: nothing ever polls it, so "stale" doesn't apply.
+# This dict is read by both `_worse()` and the results sort below; a level
+# missing from it is a `KeyError` that takes the whole page down (ticket 40.2).
+_HEALTH_RANK = {"error": 0, "warn": 1, "unknown": 2, "ok": 3, "inactive": 4, "push": 4}
 
 # How readable `ingestion_sourcerun` is on a target database. A three-state
 # value rather than a bool because the three failure causes need different
@@ -251,18 +257,31 @@ def source_health(source_row, recent_runs, now):
     """Classify a source's health from plain data — no DB access.
 
     `source_row` is one row as produced by `_source_rows` (dict with `active`,
-    `poll_interval_hours`, `last_polled_dt` and `created_at` — real datetimes,
-    not the ISO strings on the public row shape — `raw_count`, `funnel`,
-    `published_all_time`). `recent_runs` is a list of dicts (most-recent-first)
-    with `status`, `finished_at`, `error_message` for one source. `now` is a
-    datetime compared against `last_polled_dt` / `created_at`.
+    `source_type`, `poll_interval_hours`, `last_polled_dt` and `created_at` —
+    real datetimes, not the ISO strings on the public row shape — `raw_count`,
+    `funnel`, `published_all_time`). `recent_runs` is a list of dicts
+    (most-recent-first) with `status`, `finished_at`, `error_message` for one
+    source. `now` is a datetime compared against `last_polled_dt` /
+    `created_at`.
 
-    Returns {"level": "ok" | "unknown" | "warn" | "error" | "inactive",
-    "reasons": [str, ...]}. Every applicable rule is evaluated and its reason
-    collected; the most severe level (error > warn > unknown > ok) wins.
-    Inactive sources are excluded from alerting entirely and always report
-    "inactive", never "error".
+    Returns {"level": "ok" | "unknown" | "warn" | "error" | "inactive" |
+    "push", "reasons": [str, ...]}. Every applicable rule is evaluated and its
+    reason collected; the most severe level (error > warn > unknown > ok)
+    wins. Inactive sources are excluded from alerting entirely and always
+    report "inactive", never "error". Direct/push sources (ticket 40.2) are
+    excluded the same way but report the distinct "push" level instead, since
+    `inactive` reads as "broken" for a source that is working exactly as
+    designed — pushed to by users, never polled.
     """
+    # Direct-submission sources (ingestion/views.py:76-80) are deliberately
+    # created `active=False` because they're pushed to by users, not polled —
+    # flipping that to `active=True` would make the staleness rules below
+    # false-alarm on a source that was never supposed to be polled in the
+    # first place. Checked before the `active` gate so a direct source never
+    # falls into the `inactive` branch and reads as "broken".
+    if source_row.get("source_type") == "direct":
+        return {"level": "push", "reasons": ["direct/push source — not polled"]}
+
     if not source_row["active"]:
         return {"level": "inactive", "reasons": []}
 
@@ -431,6 +450,39 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
         for row in Event.objects.using(db).values("source_name").annotate(n=Count("pk"))
     }
 
+    # Direct-submission sources never match `published_all_time_by_name`
+    # above, because the exact-match lookup on `EventSource.name` doesn't
+    # match what `Event.source_name` actually holds for these rows. Two
+    # different code paths stamp two different shapes: the per-submission
+    # path (ingestion/services.py:220-222) stamps a per-organizer string —
+    # f"Direct submission by {organizer}" (or "...by host" with no organizer)
+    # — while the bulk sweep path (ingestion/services.py:80-83) instead
+    # stamps the literal `EventSource.name` ("Direct Host Submission"). Ticket
+    # 40.1: count both, so the all-time safety net (36.6, above) isn't
+    # permanently dead for this source. One additional query, gated on
+    # whether this call has any direct sources at all — `collector_summary`
+    # excludes direct sources entirely (never pays it) and
+    # `broadcast_inbound_summary` pays it once per call, not once per source.
+    # If `ingestion/services.py`'s "Direct submission by" prefix ever changes,
+    # update it here too.
+    #
+    # Caveat worth naming: this is one total shared by every direct row, not a
+    # per-source breakdown — the prefix carries the *organizer*, not the source,
+    # so it cannot be attributed back to a specific `EventSource`. Correct today
+    # because `ingestion/views.py` get_or_creates exactly one direct source; if a
+    # second one is ever added, both rows would report this same combined count.
+    direct_source_names = {s["name"] for s in sources if s["source_type"] == "direct"}
+    published_all_time_direct = 0
+    if direct_source_names:
+        published_all_time_direct = (
+            Event.objects.using(db)
+            .filter(
+                Q(source_name__startswith="Direct submission by")
+                | Q(source_name__in=direct_source_names)
+            )
+            .count()
+        )
+
     no_staged_counts = {
         row["source"]: row["n"]
         for row in RawEvent.objects.using(db)
@@ -478,7 +530,20 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             # keying off status alone would report a genuinely-live event as
             # unpublished for as long as that gap lasts (on prod, indefinitely —
             # `auto_publish_safe_events` early-returns when nothing is pending).
-            published=Count("id", filter=Q(published_event__isnull=False)),
+            #
+            # 40.4: also scoped to status in ("approved", "published") — not
+            # just any non-null `published_event`. `ingest_direct_submission`
+            # now keeps `published_event` pointed at a previously-published
+            # Event on its duplicate/held/no_town early returns too, so it can
+            # re-point a terminal row at a live Event without orphaning it.
+            # Those rows are still correctly credited to their own bucket
+            # (`duplicate`/`held_for_review`/`no_town`); without this status
+            # filter they'd *also* count here, double-counting against `raw`.
+            # This keeps the original intent — "published means a live event
+            # this row is responsible for" — rather than "any non-null FK".
+            published=Count(
+                "id", filter=Q(published_event__isnull=False, status__in=["approved", "published"])
+            ),
             # The residual approved bucket: approved but not yet published.
             # Disjoint from `published` above, which is what keeps the funnel
             # reconciliation exact.
@@ -534,7 +599,14 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
         no_town_count = funnel_staged.get("skipped_no_town", 0)
         no_town_note = _no_town_note(no_town_count)
         published_in_window = funnel_staged.get("published", 0)
-        published_all_time = published_all_time_by_name.get(source["name"], 0)
+        # Direct sources use the prefix-or-literal count computed once above
+        # (ticket 40.1) — the exact-match dict never has anything for them.
+        # Collector sources keep the original exact-match lookup, unchanged.
+        published_all_time = (
+            published_all_time_direct
+            if source["source_type"] == "direct"
+            else published_all_time_by_name.get(source["name"], 0)
+        )
         # Only computed for a zero-in-window row — mirrors `raw_zero_note`:
         # a healthy funnel has nothing to disambiguate.
         published_note = _published_note(published_all_time) if published_in_window == 0 else None
@@ -574,11 +646,13 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             "no_town_note": no_town_note,
             # All-time, un-windowed count of live Events attributed to this
             # source by `Event.source_name` — see the `published_all_time_by_name`
-            # query above. `Event` has no source FK or creation timestamp, so
-            # this cannot be windowed the way `raw_all_time` is; it is the
-            # honest "has this source ever gotten anything published, ever"
-            # signal for a source whose old StagedEvent anchors no longer
-            # survive the funnel window (ticket 36.6).
+            # / `published_all_time_direct` queries above. `Event` has no
+            # source FK or creation timestamp, so this cannot be windowed the
+            # way `raw_all_time` is; it is the honest "has this source ever
+            # gotten anything published, ever" signal for a source whose old
+            # StagedEvent anchors no longer survive the funnel window (ticket
+            # 36.6), and for direct sources whose `source_name` never matches
+            # `EventSource.name` exactly (ticket 40.1).
             "published_all_time": published_all_time,
             # Only set when `published == 0` in-window — see `_published_note`.
             # Renders as a tooltip/subtext on the `published` funnel cell so a
@@ -672,13 +746,100 @@ def broadcast_outbound_summary(db: str, start, end) -> dict:
     return {"by_status": by_status, "total": total, "targets_by_status": targets_by_status}
 
 
-def _drilldown_source(db, key, start, end, limit):
-    raw_events = list(
-        RawEvent.objects.using(db)
-        .filter(source_id=key, created_at__gte=start, created_at__lt=end)
-        .select_related("staged")
-        .order_by("-created_at")[:limit]
+def summarize_sources(rows: list[dict], now=None) -> dict:
+    """Aggregate already-built collector/inbound rows into the monitor page's
+    KPI tile numbers (ticket 40.6). `rows` is the concatenation of
+    `collector_summary()` + `broadcast_inbound_summary()`'s output — this
+    function issues no queries of its own, only reductions over fields those
+    rows already carry (`funnel`, `health.level`, `last_polled`,
+    `latest_raw_created_at`). `monitor()` already pays for those round trips,
+    some over a WAN to Neon on the `prod_readonly` path; adding a fresh query
+    here to answer a question the rows already know the answer to would
+    double that cost for no reason.
+
+    `now` defaults to `timezone.now()`; pass it explicitly for deterministic
+    tests, mirroring `source_health`. `last_polled` / `latest_raw_created_at`
+    are ISO strings parsed with `datetime.fromisoformat` and compared as real
+    datetimes, never as strings: two rows' ISO strings can carry different
+    UTC offsets (e.g. a naive local run vs. a `+00:00` Postgres value), and a
+    lexicographic string comparison would silently pick the wrong "newest".
+
+    Returns:
+    {
+        "funnel": {"raw": int, "published": int, "held_for_review": int,
+                   "duplicate": int, "no_town": int},
+        "health": {"error": int, "warn": int, "unknown": int, "ok": int,
+                   "inactive": int, "push": int},
+        "freshness": {"newest_raw_created_at": str | None,
+                      "polled_last_24h": int},
+    }
+    """
+    if now is None:
+        now = timezone.now()
+
+    funnel_totals = dict.fromkeys(
+        ("raw", "published", "held_for_review", "duplicate", "no_town"), 0
     )
+    health_counts = dict.fromkeys(_HEALTH_RANK, 0)
+    newest_raw_dt = None
+    polled_last_24h = 0
+
+    for row in rows:
+        row_funnel = row.get("funnel") or {}
+        for key in funnel_totals:
+            funnel_totals[key] += row_funnel.get(key, 0)
+
+        level = (row.get("health") or {}).get("level")
+        if level in health_counts:
+            health_counts[level] += 1
+
+        latest_raw = row.get("latest_raw_created_at")
+        if latest_raw:
+            latest_raw_dt = datetime.fromisoformat(latest_raw)
+            if newest_raw_dt is None or latest_raw_dt > newest_raw_dt:
+                newest_raw_dt = latest_raw_dt
+
+        last_polled = row.get("last_polled")
+        if last_polled:
+            delta = now - datetime.fromisoformat(last_polled)
+            if timedelta(0) <= delta <= timedelta(hours=24):
+                polled_last_24h += 1
+
+    return {
+        "funnel": funnel_totals,
+        "health": health_counts,
+        "freshness": {
+            "newest_raw_created_at": newest_raw_dt.isoformat() if newest_raw_dt else None,
+            "polled_last_24h": polled_last_24h,
+        },
+    }
+
+
+def _drilldown_source(db, kind, key, start, end, limit, offset=0):
+    """Rows for one source (`key` is a numeric id), or — ticket 40.5 — every
+    source of `kind`'s type when `key` is `None`. The all-sources predicates
+    mirror `collector_summary` / `broadcast_inbound_summary` exactly
+    (`~Q(source_type="direct")` / `Q(source_type="direct")`), just applied via
+    the `source__` join since this queries `RawEvent`, not `EventSource`.
+
+    `select_related("source")` alongside the existing `select_related("staged")`
+    keeps the all-sources mode from N+1ing on `source_name` — one row per raw
+    event either way, just a wider select.
+    """
+    qs = (
+        RawEvent.objects.using(db)
+        .filter(created_at__gte=start, created_at__lt=end)
+        .select_related("staged", "source")
+    )
+    if key is not None:
+        qs = qs.filter(source_id=key)
+    elif kind == "inbound":
+        qs = qs.filter(Q(source__source_type="direct"))
+    else:
+        qs = qs.filter(~Q(source__source_type="direct"))
+
+    total = qs.count()
+    raw_events = list(qs.order_by("-created_at")[offset : offset + limit])
     rows = []
     for raw in raw_events:
         staged = getattr(raw, "staged", None)
@@ -690,19 +851,23 @@ def _drilldown_source(db, key, start, end, limit):
                 "processed": raw.processed,
                 "staged_status": staged.status if staged else None,
                 "published": bool(staged and staged.published_event_id),
+                "source_name": raw.source.name,
             }
         )
-    return rows
+    return rows, total
 
 
-def _drilldown_outbound(db, key, start, end, limit):
+def _drilldown_outbound(db, key, start, end, limit, offset=0):
     submissions_qs = BroadcastSubmission.objects.using(db).filter(
         created_at__gte=start, created_at__lt=end
     )
     if key:
         submissions_qs = submissions_qs.filter(targets__site_key=key).distinct()
 
-    submissions = list(submissions_qs.order_by("-created_at").prefetch_related("targets")[:limit])
+    total = submissions_qs.count()
+    submissions = list(
+        submissions_qs.order_by("-created_at").prefetch_related("targets")[offset : offset + limit]
+    )
 
     rows = []
     for submission in submissions:
@@ -719,20 +884,28 @@ def _drilldown_outbound(db, key, start, end, limit):
                 ],
             }
         )
-    return rows
+    return rows, total
 
 
-def _drilldown_runs(db, key, start, end, limit, runs_state=None):
+def _drilldown_runs(db, key, start, end, limit, offset=0, runs_state=None):
     """Recent SourceRun rows for one source — "what has this source been
     doing", not windowed by `start`/`end` (a source's run history matters
     regardless of the funnel window currently selected). `start`/`end` are
     accepted for signature symmetry with the other drilldown helpers only.
+
+    Run history is inherently per-source — there's no sensible "all sources"
+    fan-out for "what has this source been doing" — so a missing `key`
+    degrades to empty rather than querying every source's runs (ticket 40.5).
     """
+    if key is None:
+        return [], 0
     if runs_state is None:
         runs_state = resolve_source_runs_state(db)
     if runs_state != RUNS_AVAILABLE:
-        return []
-    runs = SourceRun.objects.using(db).filter(source_id=key).order_by("-started_at")[:limit]
+        return [], 0
+    qs = SourceRun.objects.using(db).filter(source_id=key).order_by("-started_at")
+    total = qs.count()
+    runs = qs[offset : offset + limit]
     return [
         {
             "started_at": _iso(run.started_at),
@@ -745,17 +918,29 @@ def _drilldown_runs(db, key, start, end, limit, runs_state=None):
             "error_message": run.error_message,
         }
         for run in runs
-    ]
+    ], total
 
 
-def drilldown(db: str, kind: str, key, start, end, limit: int = 100, runs_state=None) -> list[dict]:
+def drilldown(
+    db: str, kind: str, key, start, end, limit: int = 100, offset: int = 0, runs_state=None
+) -> tuple[list[dict], int]:
+    """Returns `(rows, total)`, where `total` is the unpaginated count of rows
+    matching the same filters/window — the client renders "showing X-Y of N"
+    from it (ticket 40.5). `offset` is clamped defensively here (not just at
+    the view layer) since this is a public function other callers can reach
+    directly. Every early-return below must keep the `(list, int)` shape —
+    degrading to a bare `[]` is exactly the kind of mismatch that took the
+    whole monitor page down before (see `_HEALTH_RANK`'s docstring for the
+    same lesson learned the hard way).
+    """
+    offset = max(offset, 0)
     if not _db_ok(db):
-        return []
+        return [], 0
 
     if kind in ("collector", "inbound"):
-        return _drilldown_source(db, key, start, end, limit)
+        return _drilldown_source(db, kind, key, start, end, limit, offset=offset)
     if kind == "outbound":
-        return _drilldown_outbound(db, key, start, end, limit)
+        return _drilldown_outbound(db, key, start, end, limit, offset=offset)
     if kind == "runs":
-        return _drilldown_runs(db, key, start, end, limit, runs_state=runs_state)
-    return []
+        return _drilldown_runs(db, key, start, end, limit, offset=offset, runs_state=runs_state)
+    return [], 0

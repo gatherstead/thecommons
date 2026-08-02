@@ -9,7 +9,8 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from events.models import BetterAuthUser, Event, Town, UserProfile
+from accounts.models import BetterAuthUser, UserProfile
+from events.models import Event, Town
 
 
 def make_user(user_type="LOCAL", email=None, **profile_kwargs):

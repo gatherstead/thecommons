@@ -371,6 +371,43 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(row["funnel"]["approved"], 0)
         self.assertEqual(row["published_count"], 2)
 
+    def test_duplicate_row_with_prior_event_is_not_double_counted(self):
+        """40.4: `ingest_direct_submission`'s duplicate/held/no_town early
+        returns now keep `published_event` pointed at a Event a *prior* call
+        already published, instead of orphaning it (production audit 40.3
+        found 4 of 4 live direct-submission Events orphaned this way). Such a
+        row must be counted once — in its own status bucket — not also in
+        `published`, or the funnel buckets stop summing to `raw`.
+        """
+        raw = RawEvent.objects.create(
+            source=self.collector_a,
+            raw_title="Duplicate With Prior Event",
+            raw_start=self.start + timedelta(hours=1),
+            processed=True,
+        )
+        prior_event = make_event(title="Prior Live Event")
+        StagedEvent.objects.create(
+            raw_event=raw,
+            title="Duplicate With Prior Event",
+            description="d",
+            location_name="l",
+            town="carrboro",
+            start_datetime=self.start + timedelta(hours=1),
+            status="duplicate",
+            published_event=prior_event,
+        )
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector A"
+        ]
+        funnel = row["funnel"]
+        # Counted once, in `duplicate` (setUp's a6 + this new row) — not
+        # also folded into `published`, which stays at setUp's a7 alone.
+        self.assertEqual(funnel["duplicate"], 2)
+        self.assertEqual(funnel["published"], 1)
+        accounted = sum(v for k, v in funnel.items() if k != "raw")
+        self.assertEqual(accounted, funnel["raw"])
+
     def test_published_note_is_none_when_window_has_published_rows(self):
         # Collector A already has one published row in this window (setUp's
         # "a7" StagedEvent) — nothing to disambiguate, so no note.
@@ -393,6 +430,47 @@ class MonitoringQueryServiceTests(TestCase):
         ]
         self.assertEqual(row["published_all_time"], 2)
         self.assertEqual(row["published_note"], "0 in window; 2 events live all-time")
+
+    def test_direct_source_published_all_time_counts_prefix_and_literal_names(self):
+        # Ticket 40.1: two different code paths stamp two different
+        # `Event.source_name` shapes for direct submissions — the
+        # per-submission path (ingestion/services.py:220-222) stamps a
+        # per-organizer prefix, the bulk sweep path (services.py:80-83)
+        # stamps the literal `EventSource.name`. Both must count toward the
+        # direct source's all-time attribution.
+        make_event(title="Prefixed, with organizer", source_name="Direct submission by Alice")
+        make_event(title="Prefixed, no organizer", source_name="Direct submission by host")
+        make_event(title="Literal EventSource.name", source_name="Direct Host Submission")
+        make_event(title="Unrelated collector event", source_name="Collector A")
+
+        row = broadcast_inbound_summary("default", self.start, self.end)[0]
+        self.assertEqual(row["name"], "Direct Host Submission")
+        self.assertEqual(row["published_all_time"], 3)
+
+    def test_direct_source_published_note_fires_when_all_time_nonzero(self):
+        # The window's `published` count is 0 for this source (setUp's "d1"
+        # StagedEvent is `duplicate`, not published) — `published_note`
+        # (ticket 36.6) must still fire off the all-time count now that
+        # ticket 40.1 makes that count nonzero for direct sources.
+        make_event(title="Live direct event", source_name="Direct submission by Bob")
+
+        row = broadcast_inbound_summary("default", self.start, self.end)[0]
+        self.assertEqual(row["published_count"], 0)
+        self.assertEqual(row["published_all_time"], 1)
+        self.assertEqual(row["published_note"], "0 in window; 1 events live all-time")
+
+    def test_collector_published_all_time_still_exact_match_only(self):
+        # Ticket 40.1 adds a separate prefix-matching branch used only for
+        # `source_type == "direct"` rows. Collector sources must keep the
+        # original exact-match-on-EventSource.name behavior, unaffected by a
+        # direct-shaped source_name existing elsewhere in the table.
+        make_event(title="Live Event One", source_name="Collector B")
+        make_event(title="Looks like a direct event", source_name="Direct submission by Nobody")
+
+        row = {r["name"]: r for r in collector_summary("default", self.start, self.end)}[
+            "Collector B"
+        ]
+        self.assertEqual(row["published_all_time"], 1)
 
     def test_direct_source_excluded_from_collector_summary(self):
         names = [r["name"] for r in collector_summary("default", self.start, self.end)]
@@ -431,8 +509,9 @@ class MonitoringQueryServiceTests(TestCase):
         )
 
     def test_drilldown_collector_returns_rows_most_recent_first(self):
-        rows = drilldown("default", "collector", self.collector_a.id, self.start, self.end)
+        rows, total = drilldown("default", "collector", self.collector_a.id, self.start, self.end)
         self.assertEqual(len(rows), 7)
+        self.assertEqual(total, 7)
         self.assertEqual(rows[0]["raw_title"], "A7")
         self.assertEqual(rows[-1]["raw_title"], "A1")
 
@@ -450,18 +529,63 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertIsNone(unprocessed_row["staged_status"])
 
     def test_drilldown_respects_limit(self):
-        rows = drilldown("default", "collector", self.collector_a.id, self.start, self.end, limit=2)
+        rows, total = drilldown(
+            "default", "collector", self.collector_a.id, self.start, self.end, limit=2
+        )
         self.assertEqual(len(rows), 2)
+        # `total` is the unpaginated count — stays 7 regardless of the limit.
+        self.assertEqual(total, 7)
+
+    def test_drilldown_respects_offset(self):
+        # Non-overlapping pages: offset=2, limit=2 picks up exactly where
+        # limit=2 offset=0 left off, most-recent-first.
+        page_one, _ = drilldown(
+            "default", "collector", self.collector_a.id, self.start, self.end, limit=2, offset=0
+        )
+        page_two, total = drilldown(
+            "default", "collector", self.collector_a.id, self.start, self.end, limit=2, offset=2
+        )
+        self.assertEqual(len(page_one), 2)
+        self.assertEqual(len(page_two), 2)
+        self.assertFalse(set(r["raw_id"] for r in page_one) & set(r["raw_id"] for r in page_two))
+        self.assertEqual(total, 7)
 
     def test_drilldown_inbound_uses_direct_source(self):
-        rows = drilldown("default", "inbound", self.direct_source.id, self.start, self.end)
+        rows, total = drilldown("default", "inbound", self.direct_source.id, self.start, self.end)
         self.assertEqual(len(rows), 1)
+        self.assertEqual(total, 1)
         self.assertEqual(rows[0]["raw_title"], "D1")
         self.assertEqual(rows[0]["staged_status"], "duplicate")
+        self.assertEqual(rows[0]["source_name"], self.direct_source.name)
+
+    def test_drilldown_collector_absent_key_returns_all_collector_sources(self):
+        # Ticket 40.5: an absent key now means "every source of this kind",
+        # not "filter on source_id=None" (which used to silently match
+        # nothing). Direct/inbound sources must not leak into this mode.
+        rows, total = drilldown("default", "collector", None, self.start, self.end)
+        source_names = {r["source_name"] for r in rows}
+        self.assertIn("Collector A", source_names)
+        self.assertIn("Collector B", source_names)
+        self.assertNotIn(self.direct_source.name, source_names)
+        # 7 from Collector A + 1 from Collector B, per setUp.
+        self.assertEqual(total, 8)
+
+    def test_drilldown_inbound_absent_key_returns_all_direct_sources(self):
+        rows, total = drilldown("default", "inbound", None, self.start, self.end)
+        source_names = {r["source_name"] for r in rows}
+        self.assertEqual(source_names, {self.direct_source.name})
+        self.assertEqual(total, 1)
+
+    def test_drilldown_runs_absent_key_returns_empty_not_a_fan_out(self):
+        # Run history is inherently per-source — no "all sources" mode here.
+        rows, total = drilldown("default", "runs", None, self.start, self.end)
+        self.assertEqual(rows, [])
+        self.assertEqual(total, 0)
 
     def test_drilldown_outbound_all_sites(self):
-        rows = drilldown("default", "outbound", None, self.start, self.end)
+        rows, total = drilldown("default", "outbound", None, self.start, self.end)
         self.assertEqual(len(rows), 1)
+        self.assertEqual(total, 1)
         row = rows[0]
         self.assertEqual(row["submission_id"], str(self.submission.id))
         self.assertEqual(row["title"], "Broadcast Event")
@@ -470,11 +594,13 @@ class MonitoringQueryServiceTests(TestCase):
         self.assertEqual(site_keys, {"site-one", "site-two"})
 
     def test_drilldown_outbound_filters_by_site_key(self):
-        rows = drilldown("default", "outbound", "site-one", self.start, self.end)
+        rows, total = drilldown("default", "outbound", "site-one", self.start, self.end)
         self.assertEqual(len(rows), 1)
+        self.assertEqual(total, 1)
 
-        rows = drilldown("default", "outbound", "nonexistent-site", self.start, self.end)
+        rows, total = drilldown("default", "outbound", "nonexistent-site", self.start, self.end)
         self.assertEqual(rows, [])
+        self.assertEqual(total, 0)
 
     def test_unconfigured_prod_readonly_returns_empty_not_crash(self):
         """Force `prod_readonly` out of DATABASES (this dev env may have it set via
@@ -490,11 +616,11 @@ class MonitoringQueryServiceTests(TestCase):
             self.assertEqual(broadcast_outbound_summary("prod_readonly", self.start, self.end), {})
             self.assertEqual(
                 drilldown("prod_readonly", "collector", self.collector_a.id, self.start, self.end),
-                [],
+                ([], 0),
             )
             self.assertEqual(
                 drilldown("prod_readonly", "runs", self.collector_a.id, self.start, self.end),
-                [],
+                ([], 0),
             )
 
     def test_drilldown_runs_returns_most_recent_first_unwindowed(self):
@@ -522,8 +648,9 @@ class MonitoringQueryServiceTests(TestCase):
         # if the runs helper (wrongly) windowed on started_at.
         narrow_start = self.now - timedelta(minutes=1)
         narrow_end = self.now + timedelta(minutes=1)
-        rows = drilldown("default", "runs", self.collector_a.id, narrow_start, narrow_end)
+        rows, total = drilldown("default", "runs", self.collector_a.id, narrow_start, narrow_end)
         self.assertEqual(len(rows), 2)
+        self.assertEqual(total, 2)
         self.assertEqual(rows[0]["status"], "failed")
         self.assertEqual(rows[0]["error_message"], "kaboom")
         self.assertEqual(rows[1]["status"], "ok")
@@ -538,12 +665,34 @@ class MonitoringQueryServiceTests(TestCase):
                 finished_at=self.now - timedelta(hours=i),
                 status="ok",
             )
-        rows = drilldown("default", "runs", self.collector_a.id, self.start, self.end, limit=2)
+        rows, total = drilldown(
+            "default", "runs", self.collector_a.id, self.start, self.end, limit=2
+        )
         self.assertEqual(len(rows), 2)
+        self.assertEqual(total, 3)
+
+    def test_drilldown_runs_respects_offset(self):
+        for i in range(3):
+            SourceRun.objects.create(
+                source=self.collector_a,
+                started_at=self.now - timedelta(hours=i),
+                finished_at=self.now - timedelta(hours=i),
+                status="ok",
+            )
+        page_one, _ = drilldown(
+            "default", "runs", self.collector_a.id, self.start, self.end, limit=2, offset=0
+        )
+        page_two, total = drilldown(
+            "default", "runs", self.collector_a.id, self.start, self.end, limit=2, offset=2
+        )
+        self.assertEqual(len(page_one), 2)
+        self.assertEqual(len(page_two), 1)
+        self.assertEqual(total, 3)
 
     def test_drilldown_runs_unknown_source_returns_empty(self):
-        rows = drilldown("default", "runs", 999999, self.start, self.end)
+        rows, total = drilldown("default", "runs", 999999, self.start, self.end)
         self.assertEqual(rows, [])
+        self.assertEqual(total, 0)
 
     def test_rows_carry_health_and_last_run_keys(self):
         rows = collector_summary("default", self.start, self.end)
@@ -600,6 +749,22 @@ class SourceHealthIntegrationTests(TestCase):
         rows = collector_summary("default", self.start, self.end)
         row = next(r for r in rows if r["name"] == "Dead Source")
         self.assertEqual(row["health"]["level"], "inactive")
+
+    def test_direct_source_reports_push_not_inactive(self):
+        # Ticket 40.2: the direct source is created `active=False` by
+        # `ingestion/views.py:76-80` (pushed to, never polled) — wired through
+        # `_source_rows`, it must report "push", not "inactive".
+        EventSource.objects.create(
+            name="Direct Host Submission",
+            source_type="direct",
+            url="",
+            active=False,
+            last_polled=None,
+        )
+        rows = broadcast_inbound_summary("default", self.start, self.end)
+        row = next(r for r in rows if r["name"] == "Direct Host Submission")
+        self.assertEqual(row["health"]["level"], "push")
+        self.assertIn("direct/push source — not polled", row["health"]["reasons"])
 
     def test_never_polled_active_source_is_unknown_not_error(self):
         # `created_at` is auto_now_add, so this source is seconds old — inside
@@ -832,6 +997,26 @@ class SourceHealthIntegrationTests(TestCase):
         # every source in the call regardless of source count, not one per source.
         with self.assertNumQueries(9):
             collector_summary("default", self.start, self.end)
+
+    def test_direct_published_all_time_query_is_one_query_regardless_of_source_count(self):
+        # Ticket 40.1: the prefix-or-literal count backing a direct source's
+        # `published_all_time` must be one additional query for the whole
+        # call, not one per direct source.
+        for i in range(3):
+            EventSource.objects.create(
+                name=f"Direct Extra {i}",
+                source_type="direct",
+                url="",
+                active=False,
+                poll_interval_hours=24,
+            )
+
+        # Same 9 queries as `test_raw_events_recent_runs_fetched_in_single_query`
+        # (that test's breakdown doesn't depend on source_type) + 1 for the
+        # direct published_all_time count (40.1), gated on there being any
+        # direct sources in this call at all — still independent of how many.
+        with self.assertNumQueries(10):
+            broadcast_inbound_summary("default", self.start, self.end)
 
     def test_passing_runs_state_skips_the_availability_probe(self):
         # A page render resolves availability once and threads it into both
@@ -1197,7 +1382,7 @@ class SourceRunsUnavailableTests(TestCase):
                 self.end,
                 runs_state=RUNS_MISSING_TABLE,
             ),
-            [],
+            ([], 0),
         )
 
     def test_drilldown_runs_returns_empty_without_the_grant(self):
@@ -1210,5 +1395,5 @@ class SourceRunsUnavailableTests(TestCase):
                 self.end,
                 runs_state=RUNS_NO_PERMISSION,
             ),
-            [],
+            ([], 0),
         )

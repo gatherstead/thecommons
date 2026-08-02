@@ -20,13 +20,19 @@ try:
 except ImportError:  # pragma: no cover - depends on a parallel agent's migration
     HAS_SOURCE_RUN = False
 
-_ICS_BODY = """BEGIN:VCALENDAR
+# _probe_ics drops events whose start is already in the past (mirrors
+# fetch_ics_feed). Build the fixture ~1 year out at import time so it can never
+# expire the way a hardcoded date does — a fixed DTSTART silently turned this
+# into a time-bomb that started failing once real-world time passed it.
+_ICS_START = (timezone.now() + timedelta(days=365)).strftime("%Y%m%dT120000Z")
+_ICS_END = (timezone.now() + timedelta(days=365)).strftime("%Y%m%dT140000Z")
+_ICS_BODY = f"""BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
 UID:1@example.com
 SUMMARY:Farmers Market
-DTSTART:20260801T120000Z
-DTEND:20260801T140000Z
+DTSTART:{_ICS_START}
+DTEND:{_ICS_END}
 END:VEVENT
 END:VCALENDAR
 """
@@ -137,7 +143,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         self.assertIn("error", kinds)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.requests.get")
+    @mock.patch("devtools.views.probe.requests.get")
     def test_ics_source_streams_stages_and_terminates(self, mock_get):
         source = EventSource.objects.create(
             name="ICS Test",
@@ -146,7 +152,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         )
         mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)
 
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -176,7 +182,8 @@ class ProbeStreamViewTests(TransactionTestCase):
         # reliable in CI, so instead patch _validate_url to simulate the guard
         # tripping, exactly as it would for a private/loopback host.
         with mock.patch(
-            "devtools.views._validate_url", side_effect=ValueError("Blocked hostname: localhost")
+            "devtools.views.probe._validate_url",
+            side_effect=ValueError("Blocked hostname: localhost"),
         ):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
@@ -188,7 +195,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.get_scraper", return_value=None)
+    @mock.patch("devtools.views.probe.get_scraper", return_value=None)
     def test_unknown_scraper_key_yields_named_refusal(self, mock_get_scraper):
         source = EventSource.objects.create(
             name="Scraper Test",
@@ -196,7 +203,7 @@ class ProbeStreamViewTests(TransactionTestCase):
             url="https://example.com/events",
             scraper_key="does_not_exist",
         )
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -207,8 +214,8 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.render_page", return_value="")
-    @mock.patch("devtools.views.get_scraper", return_value=_FakeScraper())
+    @mock.patch("devtools.views.probe.render_page", return_value="")
+    @mock.patch("devtools.views.probe.get_scraper", return_value=_FakeScraper())
     def test_scraper_empty_fetch_yields_named_refusal(self, mock_get_scraper, mock_render):
         source = EventSource.objects.create(
             name="Scraper Test",
@@ -216,7 +223,7 @@ class ProbeStreamViewTests(TransactionTestCase):
             url="https://example.com/events",
             scraper_key="fake",
         )
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -227,8 +234,8 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.render_page", return_value="<html>fake page</html>")
-    @mock.patch("devtools.views.get_scraper", return_value=_FakeScraper())
+    @mock.patch("devtools.views.probe.render_page", return_value="<html>fake page</html>")
+    @mock.patch("devtools.views.probe.get_scraper", return_value=_FakeScraper())
     def test_scraper_source_streams_parsed_titles(self, mock_get_scraper, mock_render):
         source = EventSource.objects.create(
             name="Scraper Test",
@@ -236,7 +243,7 @@ class ProbeStreamViewTests(TransactionTestCase):
             url="https://example.com/events",
             scraper_key="fake",
         )
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -259,7 +266,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.requests.get")
+    @mock.patch("devtools.views.probe.requests.get")
     def test_http_source_uses_requests_not_browser(self, mock_get):
         mock_get.return_value = _FakeResponse(text="<html>fake page</html>", status_code=200)
         source = EventSource.objects.create(
@@ -269,9 +276,9 @@ class ProbeStreamViewTests(TransactionTestCase):
             scraper_key="fake",
         )
         with (
-            mock.patch("devtools.views._validate_url"),
-            mock.patch("devtools.views.get_scraper", return_value=_FakeScraper()),
-            mock.patch("devtools.views.render_page") as mock_render,
+            mock.patch("devtools.views.probe._validate_url"),
+            mock.patch("devtools.views.probe.get_scraper", return_value=_FakeScraper()),
+            mock.patch("devtools.views.probe.render_page") as mock_render,
         ):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
@@ -313,14 +320,14 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.requests.get", side_effect=Exception("boom"))
+    @mock.patch("devtools.views.probe.requests.get", side_effect=Exception("boom"))
     def test_unexpected_exception_yields_error_frame_with_traceback(self, mock_get):
         source = EventSource.objects.create(
             name="ICS Test",
             source_type="ics",
             url="https://example.com/feed.ics",
         )
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -340,8 +347,8 @@ class ProbeStreamViewTests(TransactionTestCase):
             url="https://example.com/feed.ics",
         )
         with (
-            mock.patch("devtools.views.requests.get") as mock_get,
-            mock.patch("devtools.views._validate_url"),
+            mock.patch("devtools.views.probe.requests.get") as mock_get,
+            mock.patch("devtools.views.probe._validate_url"),
         ):
             mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)
             resp = probe_stream(self._get({"source_id": str(source.id), "db": "not_a_real_db"}))
@@ -354,7 +361,7 @@ class ProbeStreamViewTests(TransactionTestCase):
     # ── Ticket 35.6: write-path dry run ─────────────────────────────────────
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.requests.get")
+    @mock.patch("devtools.views.probe.requests.get")
     def test_ics_probe_emits_write_stage_and_leaves_no_rows(self, mock_get):
         """The write stage is new: fetch+parse alone used to be the whole probe,
         which is exactly what let all three collectors probe green during the
@@ -372,7 +379,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         raw_count_before = RawEvent.objects.count()
         staged_count_before = StagedEvent.objects.count()
 
-        with mock.patch("devtools.views._validate_url"):
+        with mock.patch("devtools.views.probe._validate_url"):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)
 
@@ -393,7 +400,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views.requests.get")
+    @mock.patch("devtools.views.probe.requests.get")
     def test_write_stage_failure_yields_error_frame_not_done(self, mock_get):
         """A source whose fetch+parse succeed but whose write step fails must
         render a failing frame, not "Done" — that's the entire point of this
@@ -412,7 +419,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         # QuerySet each call, so patching the manager's own attribute wouldn't
         # intercept it — patch it at the QuerySet class instead.
         with (
-            mock.patch("devtools.views._validate_url"),
+            mock.patch("devtools.views.probe._validate_url"),
             mock.patch(
                 "django.db.models.query.QuerySet.get_or_create",
                 side_effect=Exception("write boom"),
@@ -437,7 +444,7 @@ class ProbeStreamViewTests(TransactionTestCase):
         self._assert_no_writes(source)
 
     @override_settings(DEBUG=True)
-    @mock.patch("devtools.views._resolve_db", return_value="prod_readonly")
+    @mock.patch("devtools.views.probe._resolve_db", return_value="prod_readonly")
     def test_prod_readonly_skips_write_stage_with_explanatory_frame(self, mock_resolve_db):
         """`prod_readonly` is a genuinely read-only Postgres role — attempting
         a write there wouldn't even reach the rollback, it would just raise
@@ -469,8 +476,8 @@ class ProbeStreamViewTests(TransactionTestCase):
         # above to force "prod_readonly" through, which is what actually
         # drives `_probe_dry_run_write`'s read-only-alias check.
         with (
-            mock.patch("devtools.views.requests.get") as mock_get,
-            mock.patch("devtools.views._validate_url"),
+            mock.patch("devtools.views.probe.requests.get") as mock_get,
+            mock.patch("devtools.views.probe._validate_url"),
             mock.patch.object(EventSource.objects, "using", return_value=EventSource.objects),
         ):
             mock_get.return_value = _FakeResponse(text=_ICS_BODY, status_code=200)

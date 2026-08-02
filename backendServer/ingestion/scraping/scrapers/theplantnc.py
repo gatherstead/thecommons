@@ -95,6 +95,7 @@ class TheplantncScraper(Scraper):
     key = "theplantnc"
     url = "https://www.theplantnc.com/events"
     name = "The Plant"
+    source_type = "http"
 
     def extract(self, html: str) -> list[RawEventData]:
         tree = lxml_html.fromstring(html)

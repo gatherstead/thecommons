@@ -174,7 +174,9 @@ class MonitorViewTests(TestCase):
         databases_with_prod = {**settings.DATABASES, "prod_readonly": settings.DATABASES["default"]}
         with (
             override_settings(DATABASES=databases_with_prod),
-            patch("devtools.views.resolve_source_runs_state", return_value=RUNS_UNREACHABLE),
+            patch(
+                "devtools.views.monitor.resolve_source_runs_state", return_value=RUNS_UNREACHABLE
+            ),
         ):
             content = monitor(
                 self._get("/devtools/monitor", {"db": "prod_readonly"})
@@ -186,7 +188,7 @@ class MonitorViewTests(TestCase):
     # ── Degradation banners ─────────────────────────────────────────────────
 
     def _render_with_state(self, state):
-        with patch("devtools.views.resolve_source_runs_state", return_value=state):
+        with patch("devtools.views.monitor.resolve_source_runs_state", return_value=state):
             resp = monitor(self._get("/devtools/monitor"))
         self.assertEqual(resp.status_code, 200)
         return resp.content.decode()
@@ -216,7 +218,7 @@ class MonitorViewTests(TestCase):
         # The probe succeeds, then the connection drops while the summaries
         # run. Previously a raw Django traceback.
         with patch(
-            "devtools.views.collector_summary",
+            "devtools.views.monitor.collector_summary",
             side_effect=OperationalError("connection closed"),
         ):
             resp = monitor(self._get("/devtools/monitor"))
@@ -234,7 +236,7 @@ class MonitorViewTests(TestCase):
         # would let a re-resolution through the other go uncounted.
         with (
             patch(
-                "devtools.views.resolve_source_runs_state",
+                "devtools.views.monitor.resolve_source_runs_state",
                 wraps=resolve_source_runs_state,
             ) as probe,
             patch("devtools.monitoring.resolve_source_runs_state", new=probe),
@@ -255,7 +257,116 @@ class MonitorViewTests(TestCase):
         self.assertIn("rows", data)
         self.assertEqual(len(data["rows"]), 1)
         self.assertEqual(data["rows"][0]["raw_title"], "Test Raw")
+        self.assertEqual(data["rows"][0]["source_name"], self.source.name)
         self.assertEqual(data["db"], "default")
+        # Ticket 40.5: total/offset/limit ride alongside rows so the client
+        # can render "showing X-Y of N".
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["offset"], 0)
+        self.assertEqual(data["limit"], 100)
+
+    # ── 40.5: offset + total ────────────────────────────────────────────────
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_offset_and_limit_produce_non_overlapping_pages(self):
+        for i in range(4):
+            raw = RawEvent.objects.create(
+                source=self.source,
+                raw_title=f"Extra {i}",
+                raw_start=self.now,
+                source_uid=f"extra{i}",
+            )
+            RawEvent.objects.filter(pk=raw.pk).update(created_at=self.now - timedelta(minutes=i))
+        # setUp's "Test Raw" plus 4 more here = 5 total in-window rows.
+        page_one = json.loads(
+            monitor_data(
+                self._get(
+                    "/devtools/monitor/data",
+                    {"kind": "collector", "key": str(self.source.id), "limit": "2", "offset": "0"},
+                )
+            ).content
+        )
+        page_two = json.loads(
+            monitor_data(
+                self._get(
+                    "/devtools/monitor/data",
+                    {"kind": "collector", "key": str(self.source.id), "limit": "2", "offset": "2"},
+                )
+            ).content
+        )
+        self.assertEqual(page_one["total"], 5)
+        self.assertEqual(page_two["total"], 5)
+        ids_one = {r["raw_id"] for r in page_one["rows"]}
+        ids_two = {r["raw_id"] for r in page_two["rows"]}
+        self.assertEqual(len(ids_one), 2)
+        self.assertEqual(len(ids_two), 2)
+        self.assertFalse(ids_one & ids_two)
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_negative_offset_clamps_to_zero(self):
+        resp = monitor_data(
+            self._get(
+                "/devtools/monitor/data",
+                {"kind": "collector", "key": str(self.source.id), "offset": "-5"},
+            )
+        )
+        data = json.loads(resp.content)
+        # "-5".isdigit() is False, so this falls back to the same 0 default —
+        # exercised explicitly since a negative offset must never slice
+        # backwards or 500.
+        self.assertEqual(data["offset"], 0)
+        self.assertEqual(len(data["rows"]), 1)
+
+    # ── 40.5: all-sources mode ───────────────────────────────────────────────
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_collector_empty_key_returns_all_collector_sources(self):
+        other = EventSource.objects.create(
+            name="Other Collector",
+            source_type="scraper",
+            url="https://other.example.com/events",
+        )
+        RawEvent.objects.create(
+            source=other, raw_title="Other Raw", raw_start=self.now, source_uid="other1"
+        )
+        resp = monitor_data(
+            self._get("/devtools/monitor/data", {"kind": "collector", "key": "", "window": "30d"})
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        names = {r["source_name"] for r in data["rows"]}
+        self.assertEqual(names, {self.source.name, "Other Collector"})
+        self.assertEqual(data["total"], 2)
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_inbound_empty_key_excludes_collector_sources(self):
+        direct_source = EventSource.objects.create(
+            name="Direct Host Submission",
+            source_type="direct",
+            url="https://commons.local/direct",
+            active=False,
+        )
+        RawEvent.objects.create(
+            source=direct_source, raw_title="Direct Raw", raw_start=self.now, source_uid="direct1"
+        )
+        resp = monitor_data(
+            self._get("/devtools/monitor/data", {"kind": "inbound", "key": "", "window": "30d"})
+        )
+        data = json.loads(resp.content)
+        names = {r["source_name"] for r in data["rows"]}
+        self.assertEqual(names, {"Direct Host Submission"})
+        self.assertNotIn(self.source.name, names)
+
+    @override_settings(DEBUG=True)
+    def test_monitor_data_runs_empty_key_returns_empty_not_a_fan_out(self):
+        # Run history has no "all sources" mode — it's inherently per-source.
+        resp = monitor_data(
+            self._get("/devtools/monitor/data", {"kind": "runs", "key": "", "window": "30d"})
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        self.assertEqual(data["rows"], [])
+        self.assertEqual(data["total"], 0)
 
     @override_settings(DEBUG=True)
     def test_monitor_data_invalid_kind_returns_400(self):

@@ -28,6 +28,12 @@ class Scraper:
     # Human-readable English name of the source site, used to attribute published
     # events (Event.source_name) — e.g. "Visit Pittsboro", not "visitpittsboro.com".
     name: str = ""
+    # How the HTML this scraper parses has to be fetched, matching
+    # EventSource.source_type: "http" when a plain `requests` GET already returns
+    # the event markup (server-rendered pages), "scraper" when the markup is only
+    # there after client-side JS runs and the page must go through Playwright.
+    # Defaults to the browser path since that works for both, at the cost of speed.
+    source_type: str = "scraper"
     # CSS selector `render_page` should wait for before snapshotting the DOM.
     # Only needed when the event markup itself is injected by a client-side
     # XHR that fires after "domcontentloaded" (e.g. a widget that calls a REST

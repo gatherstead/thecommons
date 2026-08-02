@@ -155,7 +155,7 @@ class StagedEvent(models.Model):
 
     # Tracks who submitted this event via the public API; null for pipeline events.
     submitted_by = models.ForeignKey(
-        "events.BetterAuthUser",
+        "accounts.BetterAuthUser",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

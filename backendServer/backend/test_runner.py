@@ -1,7 +1,7 @@
 from django.db import connections
 from django.test.runner import DiscoverRunner
 
-from events.models import BetterAuthAccount, BetterAuthUser
+from accounts.models import BetterAuthAccount, BetterAuthUser
 
 
 class NeonAuthTestRunner(DiscoverRunner):

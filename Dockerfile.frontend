@@ -1,0 +1,187 @@
+# syntax=docker/dockerfile:1
+#
+# Shared frontend Dockerfile for The Commons — builds BOTH frontend apps from
+# one file, each in its own isolated stage-tree:
+#
+#   - `commons-runtime` — theCommonsWeb (Next.js 16), a real long-lived Node
+#                         process. Runs `node server.js` on port 3000.
+#   - `broadcast-build` — broadcastWeb (Vite 7 SPA), BUILD-ONLY. Produces a
+#                         static bundle at /app/dist and stops there — a
+#                         separate nginx image COPYs --from this stage and
+#                         serves the files; this stage itself never runs a
+#                         server and must not be used as a final image.
+#
+# theCommonsWeb/ and broadcastWeb/ are two SEPARATE pnpm workspaces (own
+# pnpm-workspace.yaml + own pnpm-lock.yaml, not one monorepo), so each gets
+# its own independent `pnpm install --frozen-lockfile` — nothing is shared
+# or hoisted between them.
+#
+# Build context is the REPO ROOT (both apps' source lives under it):
+#   docker build -f Dockerfile.frontend --target commons-runtime .
+#   docker build -f Dockerfile.frontend --target broadcast-build .
+#
+# Target platform: Oracle Ubuntu 24.04 on ARM64 (prod VM); dev is Apple
+# Silicon. node:22-slim is multi-arch, so no --platform pin is needed.
+
+########################################################################
+# Stage: pnpm-base
+#
+# Shared base only for pinning the Node/pnpm toolchain — NOT for sharing
+# installed dependencies (the two apps' installs stay fully separate below).
+# pnpm 11 requires Node >=22.13; node:22-slim tracks current 22.x, so it
+# satisfies that floor.
+########################################################################
+FROM node:22-slim AS pnpm-base
+
+# Pin the exact pnpm version CI uses (.github/workflows/ci.yml pins
+# pnpm/action-setup@v4 to 11.1.1) via corepack, which ships with Node 22 —
+# no separate npm install of pnpm itself (that would violate the
+# pnpm-only/no-npm-install rule for a tool that manages pnpm).
+RUN corepack enable && corepack prepare pnpm@11.1.1 --activate
+
+########################################################################
+# Stage: commons-deps
+#
+# Installs theCommonsWeb's locked dependencies only. Split from the build
+# stage so this (slow) layer caches across source-only changes.
+########################################################################
+FROM pnpm-base AS commons-deps
+
+WORKDIR /app
+
+# Manifests first for layer caching — copying full source here would bust
+# the cache on every source edit even when dependencies didn't change.
+COPY theCommonsWeb/package.json theCommonsWeb/pnpm-lock.yaml theCommonsWeb/pnpm-workspace.yaml ./
+# --frozen-lockfile: fail rather than silently re-resolve, matching CI.
+# pnpm-workspace.yaml's allowBuilds (esbuild, sharp, better-sqlite3,
+# @prisma/client, unrs-resolver) still applies here since it's copied in
+# above — native postinstall scripts keep working.
+RUN pnpm install --frozen-lockfile
+
+########################################################################
+# Stage: commons-build
+#
+# Builds the Next.js app to its standalone output. Build-time env vars
+# mirror the placeholder set CI uses (.github/workflows/ci.yml
+# frontend-commons "Type-check (build)" step) — `next build` prerenders
+# routes that import src/lib/db.ts (throws without DATABASE_URL) and
+# Better Auth (parses *_BETTER_AUTH_URL as a URL). These are placeholders
+# baked only into build-time tracing, never real credentials, and are
+# discarded — the running container gets its real config from
+# theCommonsWeb/.env.local via compose's env_file at container start, not
+# from anything in this image.
+########################################################################
+FROM commons-deps AS commons-build
+
+WORKDIR /app
+COPY theCommonsWeb/ ./
+
+ARG DATABASE_URL=postgres://build:build@localhost:5432/build
+ARG BETTER_AUTH_SECRET=build-only-placeholder-secret
+ARG BETTER_AUTH_URL=http://localhost:3000
+ARG NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ARG NEXT_PUBLIC_THE_COMMONS_API_KEY=build-placeholder
+ENV DATABASE_URL=$DATABASE_URL \
+    BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET \
+    BETTER_AUTH_URL=$BETTER_AUTH_URL \
+    NEXT_PUBLIC_BETTER_AUTH_URL=$NEXT_PUBLIC_BETTER_AUTH_URL \
+    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
+    NEXT_PUBLIC_THE_COMMONS_API_KEY=$NEXT_PUBLIC_THE_COMMONS_API_KEY
+
+RUN pnpm run build
+
+########################################################################
+# Stage: commons-runtime  (contract name — final Next.js image)
+#
+# Copies only the standalone trace, not node_modules. Next's documented
+# standalone layout (see Next.js docs, "output: standalone"):
+#   .next/standalone/  -> server.js + a pruned node_modules, becomes /app
+#   .next/static/      -> NOT included in standalone automatically; must be
+#                         copied to /app/.next/static by hand, or the site
+#                         serves with no CSS/JS chunks (the classic failure
+#                         mode this stage exists to avoid).
+#   public/             -> also not included automatically; copied to /app/public.
+########################################################################
+FROM node:22-slim AS commons-runtime
+
+WORKDIR /app
+
+# Non-root runtime user (contract requirement). node:22-slim already ships a
+# uid/gid 1000 `node` user — reused here rather than creating a second one
+# (a fresh `groupadd --gid 1000` collides with it and fails the build).
+#
+# Order matters: standalone first (least likely to change), then the two
+# directories standalone mode deliberately omits.
+COPY --from=commons-build --chown=node:node /app/.next/standalone ./
+COPY --from=commons-build --chown=node:node /app/.next/static ./.next/static
+COPY --from=commons-build --chown=node:node /app/public ./public
+
+USER node
+
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+EXPOSE 3000
+
+# Exec-form CMD so node runs as PID 1 and receives signals directly.
+# server.js is the standalone entrypoint next build emits.
+CMD ["node", "server.js"]
+
+########################################################################
+# Stage: broadcast-deps
+#
+# Installs broadcastWeb's locked dependencies only — entirely separate
+# pnpm workspace/lockfile from theCommonsWeb, so this does not reuse or
+# extend commons-deps above.
+########################################################################
+FROM pnpm-base AS broadcast-deps
+
+WORKDIR /app
+
+COPY broadcastWeb/package.json broadcastWeb/pnpm-lock.yaml broadcastWeb/pnpm-workspace.yaml ./
+# broadcastWeb's allowBuilds only permits esbuild (see pnpm-workspace.yaml);
+# still copied in above so that allowlist is honored during install.
+RUN pnpm install --frozen-lockfile
+
+########################################################################
+# Stage: broadcast-build  (contract name — BUILD-ONLY, no server)
+#
+# `pnpm run build` = `tsc -b && vite build`, output in dist/. Vite inlines
+# VITE_* build args at compile time (see broadcastWeb/.env.example) — these
+# become part of the compiled JS, not runtime env, so they must be passed
+# as build args here rather than left for container start.
+#
+# NOTE: prod CI (.github/workflows/ci.yml ~lines 274-281) greps the built
+# dist/assets/*.js for a thecommons.town origin as a guard against a
+# malformed VITE_BROADCAST_API_BASE_URL that "builds fine" but silently
+# misroutes every API call. That check lives in CI/deploy, not here — this
+# stage just needs correct build args passed in to produce a correct bundle.
+#
+# This stage is intentionally the last thing in this file: it has no CMD/
+# EXPOSE and must never be run as a standalone container — an nginx image
+# does `COPY --from=broadcast-build /app/dist ...` to consume it.
+########################################################################
+FROM broadcast-deps AS broadcast-build
+
+WORKDIR /app
+COPY broadcastWeb/ ./
+
+ARG VITE_BROADCAST_API_BASE_URL=http://localhost:8000
+ARG VITE_BETTER_AUTH_URL=http://localhost:3000
+ARG VITE_BROADCAST_EXTENSION_ID=
+ENV VITE_BROADCAST_API_BASE_URL=$VITE_BROADCAST_API_BASE_URL \
+    VITE_BETTER_AUTH_URL=$VITE_BETTER_AUTH_URL \
+    VITE_BROADCAST_EXTENSION_ID=$VITE_BROADCAST_EXTENSION_ID
+
+# tsc -b writes tsconfig.tsbuildinfo and vite build writes dist/ — both as
+# whatever user runs this stage. Non-root is only "where practical" per the
+# contract; this stage never ships as a runtime container (nothing to run
+# as root or otherwise), so it's left at the default build-time user, and
+# the only thing that matters is that /app/dist exists for the nginx image
+# to copy out.
+RUN pnpm run build
+
+# Deliberately no CMD/EXPOSE/USER-drop here — this stage is a build
+# artifact source, not a runnable image.

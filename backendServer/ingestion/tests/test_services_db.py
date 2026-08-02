@@ -258,6 +258,8 @@ class IngestDirectSubmissionTownMissTests(TestCase):
         self.assertFalse(Event.objects.exists())
         staged = StagedEvent.objects.get()
         self.assertEqual(staged.status, "skipped_no_town")
+        # No prior Event exists on a first submission — must stay unset.
+        self.assertIsNone(staged.published_event)
 
     def test_resubmit_of_out_of_coverage_event_does_not_stack_rows(self):
         """ingest_direct_submission tears down the prior staged row for the

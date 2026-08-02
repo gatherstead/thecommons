@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -11,20 +10,13 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.models import UserProfile
 from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUser
 from ingestion.models import StagedEvent
 
 from . import cache as events_cache
-from .email_service import send_newsletter_welcome
-from .models import (
-    BusinessProfile,
-    Category,
-    Event,
-    NewsletterSubscriber,
-    Town,
-    UserProfile,
-)
-from .serializers import BusinessProfileSerializer, EventSerializer
+from .models import Category, Event, Town
+from .serializers import EventSerializer
 
 PAGE_SIZE = 30
 
@@ -36,7 +28,7 @@ class EventsPagination(PageNumberPagination):
 
 
 @api_view(["GET"])
-def getTowns(request):
+def get_towns(request):
     data = cache.get(events_cache.TOWNS_CACHE_KEY)
     if data is None:
         towns = Town.objects.all().order_by("name")
@@ -46,7 +38,7 @@ def getTowns(request):
 
 
 @api_view(["GET"])
-def getCategories(request):
+def get_categories(request):
     data = cache.get(events_cache.CATEGORIES_CACHE_KEY)
     if data is None:
         cats = Category.objects.all().order_by("display_name")
@@ -56,7 +48,7 @@ def getCategories(request):
 
 
 @api_view(["GET"])
-def getAll(request):  # noqa: C901  # query-param filtering; complexity is inherent
+def get_all(request):  # noqa: C901  # query-param filtering; complexity is inherent
     """
     List published events (paginated, page_size=30).
 
@@ -124,7 +116,7 @@ def getAll(request):  # noqa: C901  # query-param filtering; complexity is inher
 
 @api_view(["GET", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
-def getOne(request, event_id):
+def get_one(request, event_id):
     event = get_object_or_404(Event, uuid=event_id)
     if request.method == "DELETE":
         if not getattr(request.user, "is_authenticated", False):
@@ -144,7 +136,7 @@ def getOne(request, event_id):
 @api_view(["GET", "PATCH", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
-def manageStagedEvent(request, event_id):  # noqa: C901  # multi-method CRUD view; complexity is inherent
+def manage_staged_event(request, event_id):  # noqa: C901  # multi-method CRUD view; complexity is inherent
     staged = get_object_or_404(StagedEvent, id=event_id, submitted_by=request.user)
 
     if request.method == "DELETE":
@@ -196,7 +188,7 @@ def manageStagedEvent(request, event_id):  # noqa: C901  # multi-method CRUD vie
 @api_view(["POST"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([HasCommonsAPIKeyOrUser])
-def createEvent(request):
+def create_event(request):
     data = request.data
 
     required = ["title", "town", "venue", "date", "description"]
@@ -228,7 +220,7 @@ def createEvent(request):
 @api_view(["GET"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
-def getMyEvents(request):
+def get_my_events(request):
     user = request.user
 
     staged_qs = StagedEvent.objects.filter(submitted_by=user).order_by("-created_at")
@@ -263,178 +255,10 @@ def getMyEvents(request):
     return Response(results)
 
 
-def _account_type(user_id):
-    """The authoritative account type lives on UserProfile, not BetterAuthUser."""
-    return UserProfile.objects.filter(user_id=user_id).values_list("user_type", flat=True).first()
-
-
-@api_view(["GET", "POST"])
-@authentication_classes([BearerTokenAuthentication])
-@permission_classes([IsAuthenticated])
-def businesses(request):
-    account_type = _account_type(request.user.id)
-
-    if request.method == "GET":
-        if account_type != "VENUE":
-            return Response(
-                {"error": "Only venue accounts can browse the business directory."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        qs = BusinessProfile.objects.filter(is_published=True).prefetch_related(
-            "tags", "service_area"
-        )
-
-        tag = request.query_params.get("tag")
-        if tag:
-            qs = qs.filter(tags__name=tag.strip().lower())
-
-        service_area = request.query_params.get("service_area")
-        if service_area:
-            qs = qs.filter(service_area__slug=service_area.strip())
-
-        q = request.query_params.get("q")
-        if q:
-            qs = qs.filter(business_name__icontains=q)
-
-        qs = qs.distinct().order_by("business_name")
-        return Response(BusinessProfileSerializer(qs, many=True).data)
-
-    # POST
-    if account_type != "BUSINESS":
-        return Response(
-            {"error": "Only business accounts can create a listing."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    if BusinessProfile.objects.filter(user_id=request.user.id).exists():
-        return Response(
-            {"error": "You already have a business listing."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    serializer = BusinessProfileSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save(user=request.user)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-
 @api_view(["GET"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
-def my_business(request):
-    business = (
-        BusinessProfile.objects.filter(user_id=request.user.id)
-        .prefetch_related("tags", "service_area")
-        .first()
-    )
-    if business is None:
-        return Response({"detail": "No business listing."}, status=status.HTTP_404_NOT_FOUND)
-    return Response(BusinessProfileSerializer(business).data)
-
-
-@api_view(["GET", "PATCH", "DELETE"])
-@authentication_classes([BearerTokenAuthentication])
-@permission_classes([IsAuthenticated])
-def business_detail(request, business_id):
-    business = get_object_or_404(BusinessProfile, uuid=business_id)
-    is_owner = business.user_id == request.user.id
-
-    if request.method == "GET":
-        if not is_owner and _account_type(request.user.id) != "VENUE":
-            return Response(
-                {"error": "You do not have access to this listing."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return Response(BusinessProfileSerializer(business).data)
-
-    if not is_owner:
-        return Response(
-            {"error": "You can only modify your own listing."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    if request.method == "DELETE":
-        business.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    # PATCH
-    serializer = BusinessProfileSerializer(business, data=request.data, partial=True)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save()
-    return Response(serializer.data)
-
-
-@api_view(["POST"])
-def subscribe(request):
-    email = request.data.get("email", "").strip().lower()
-    frequency = request.data.get("frequency", "WEEKLY").upper()
-
-    if not email:
-        return Response({"error": "email is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-    if frequency not in ("WEEKLY", "MONTHLY"):
-        return Response(
-            {"error": "frequency must be WEEKLY or MONTHLY"}, status=status.HTTP_400_BAD_REQUEST
-        )
-
-    subscriber, created = NewsletterSubscriber.objects.update_or_create(
-        email=email,
-        defaults={"frequency": frequency, "is_active": True},
-    )
-
-    send_newsletter_welcome(subscriber.email, subscriber.manage_token)
-
-    return Response(
-        {"email": subscriber.email, "frequency": subscriber.frequency},
-        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-    )
-
-
-@api_view(["GET", "PATCH"])
-def newsletter_manage(request):
-    token = request.query_params.get("token")
-
-    subscriber = None
-    if token:
-        try:
-            subscriber = NewsletterSubscriber.objects.filter(manage_token=token).first()
-        except ValidationError:
-            subscriber = None
-
-    if subscriber is None:
-        return Response({"error": "Unknown or invalid token."}, status=status.HTTP_404_NOT_FOUND)
-
-    if request.method == "PATCH":
-        frequency = (request.data.get("frequency") or "").upper()
-        if frequency not in ("WEEKLY", "MONTHLY", "NEVER"):
-            return Response(
-                {"error": "frequency must be WEEKLY, MONTHLY, or NEVER"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if frequency == "NEVER":
-            subscriber.is_active = False
-        else:
-            subscriber.frequency = frequency
-            subscriber.is_active = True
-        subscriber.save()
-
-    return Response(
-        {
-            "email": subscriber.email,
-            "frequency": subscriber.frequency,
-            "is_active": subscriber.is_active,
-        }
-    )
-
-
-@api_view(["GET"])
-@authentication_classes([BearerTokenAuthentication])
-@permission_classes([IsAuthenticated])
-def getMyProfile(request):
+def get_my_profile(request):
     profile = UserProfile.objects.filter(user_id=request.user.id).select_related("user").first()
     if profile is None:
         return Response({"detail": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -447,86 +271,5 @@ def getMyProfile(request):
             "primary_city": profile.primary_city,
             "address": profile.address,
             "email_preference": profile.email_preference,
-        }
-    )
-
-
-@api_view(["GET", "PATCH"])
-@authentication_classes([BearerTokenAuthentication])
-@permission_classes([IsAuthenticated])
-def me(request):  # noqa: C901  # multi-field profile PATCH; complexity is inherent
-    profile = (
-        UserProfile.objects.filter(user_id=request.user.id)
-        .select_related("user")
-        .prefetch_related("tags")
-        .first()
-    )
-    if profile is None:
-        return Response({"detail": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    if request.method == "PATCH":
-        data = request.data
-
-        if "email_preference" in data:
-            pref = data["email_preference"].upper()
-            if pref not in ("WEEKLY", "MONTHLY", "NEVER"):
-                return Response(
-                    {"error": "email_preference must be WEEKLY, MONTHLY, or NEVER"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            profile.email_preference = pref
-
-        if "user_type" in data:
-            new_type = data["user_type"].upper()
-            if new_type not in ("BUSINESS", "VENUE"):
-                return Response(
-                    {"error": "user_type can only be changed to BUSINESS or VENUE"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if profile.user_type == "LOCAL":
-                return Response(
-                    {"error": "Cannot change account type from LOCAL"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            profile.user_type = new_type
-
-        if "primary_city" in data:
-            profile.primary_city = data["primary_city"]
-
-        if "address" in data:
-            profile.address = data["address"]
-
-        if "tags" in data:
-            from .models import Tag
-
-            tag_names = [t.strip().lower() for t in data["tags"] if t.strip()]
-            tag_objs = []
-            for name in tag_names:
-                tag_obj, _ = Tag.objects.get_or_create(name=name)
-                tag_objs.append(tag_obj)
-            profile.tags.set(tag_objs)
-
-        profile.save()
-
-        email = (profile.user.email or "").strip().lower()
-        if email:
-            if profile.email_preference in ("WEEKLY", "MONTHLY"):
-                NewsletterSubscriber.objects.update_or_create(
-                    email=email,
-                    defaults={"frequency": profile.email_preference, "is_active": True},
-                )
-            else:
-                NewsletterSubscriber.objects.filter(email=email).update(is_active=False)
-
-    return Response(
-        {
-            "id": profile.user.id,
-            "email": profile.user.email,
-            "business_name": profile.user.name,
-            "user_type": profile.user_type,
-            "primary_city": profile.primary_city,
-            "address": profile.address,
-            "email_preference": profile.email_preference,
-            "tags": [t.name for t in profile.tags.all()],
         }
     )

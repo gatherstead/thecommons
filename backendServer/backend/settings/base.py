@@ -19,7 +19,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "accounts.apps.AccountsConfig",
     "events.apps.EventsConfig",
+    "newsletter.apps.NewsletterConfig",
     "ingestion.apps.IngestionConfig",
     "broadcast.apps.BroadcastConfig",
     "django_celery_beat",
@@ -248,7 +250,7 @@ UNFOLD: dict[str, Any] = {
                     {"title": "Users", "link": "/admin/auth/user/", "icon": "person"},
                     {
                         "title": "User Profiles",
-                        "link": "/admin/events/userprofile/",
+                        "link": "/admin/accounts/userprofile/",
                         "icon": "manage_accounts",
                     },
                 ],

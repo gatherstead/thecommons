@@ -18,7 +18,7 @@ from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
 import backend.jwt_auth as jwt_auth
-from events.models import NewsletterSubscriber
+from newsletter.models import NewsletterSubscriber
 
 from .factories import make_user
 

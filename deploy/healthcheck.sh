@@ -2,24 +2,28 @@
 #
 # The Commons — VM health check.
 #
-# A single, scannable report of the box's health: RAM/disk, every systemd unit,
-# and (via the Django `healthcheck` command) Redis, Postgres, the Celery worker,
-# and the beat schedule. Run it on the VM:
+# A single, scannable report of the box's health: RAM/disk, every long-running
+# compose service (T6/T7 moved the app stack into containers — see
+# docker-compose.yml), and (via the Django `healthcheck` command, now run
+# *inside* the backend container) Redis, Postgres, the Celery worker, and the
+# beat schedule. Run it on the VM:
 #
 #     bash deploy/healthcheck.sh
 #     bash deploy/healthcheck.sh --no-color | tee health.log
 #
-# System-level checks (RAM/disk/systemd/cron) are done here in bash; app-level
-# checks are delegated to `manage.py healthcheck`, whose STATUS|name|detail lines
-# are colorized below. Exits non-zero if any critical check fails so it can feed
-# monitoring — including a stale/never-run beat schedule, which is now a FAIL,
-# not a WARN (a dead scheduler is an outage, not a suggestion).
+# System-level checks (RAM/disk/containers/cron) are done here in bash;
+# app-level checks are delegated to `manage.py healthcheck`, whose
+# STATUS|name|detail lines are colorized below. Exits non-zero if any
+# critical check fails so it can feed monitoring — including a stale/never-run
+# beat schedule, which is a FAIL, not a WARN (a dead scheduler is an outage,
+# not a suggestion).
 #
 # Tunables (env vars, with defaults):
-#   RAM_WARN=80  RAM_FAIL=95     # % memory used
-#   DISK_WARN=80 DISK_FAIL=95    # % of / used
-#   UV_BIN=uv                    # path to uv (VM: /snap/bin/uv)
-#   CELERY_TIMEOUT=1.0           # seconds to wait for a worker ping
+#   RAM_WARN=80  RAM_FAIL=95      # % memory used
+#   DISK_WARN=80 DISK_FAIL=95     # % of / used
+#   CELERY_TIMEOUT=1.0            # seconds to wait for a worker ping
+#   RESTART_WARN=3                # container RestartCount that trips a WARN
+#   COMPOSE_FILE=docker-compose.yml
 set -uo pipefail
 
 # ── config ───────────────────────────────────────────────────────────────────
@@ -27,15 +31,19 @@ RAM_WARN="${RAM_WARN:-80}"
 RAM_FAIL="${RAM_FAIL:-95}"
 DISK_WARN="${DISK_WARN:-80}"
 DISK_FAIL="${DISK_FAIL:-95}"
-UV_BIN="${UV_BIN:-uv}"
 CELERY_TIMEOUT="${CELERY_TIMEOUT:-1.0}"
+RESTART_WARN="${RESTART_WARN:-3}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 
-SERVICES=(redis-server celery celerybeat gunicorn nextjs broadcast-worker scrape-worker)
+# The long-running services from docker-compose.yml. `migrate` and
+# `broadcast-spa-build` are deliberately excluded: both are one-shot/build-only
+# (restart: "no", exit 0 by design — see their comments in docker-compose.yml)
+# and would misreport as dead services if checked here.
+SERVICES=(redis backend celery celerybeat broadcast-worker scrape-worker nextjs nginx)
 LEGACY_CRON='manage.py (ingest_events|send_weekly_digest)'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKEND="$REPO_ROOT/backendServer"
 
 # ── flags ────────────────────────────────────────────────────────────────────
 USE_COLOR=auto
@@ -105,19 +113,67 @@ else
     report WARN "disk" "could not read df -P /"
 fi
 
-# ── systemd units ────────────────────────────────────────────────────────────
+# ── compose services ─────────────────────────────────────────────────────────
+# Container-aware replacement for the old `systemctl is-active` loop. Always
+# pass -f explicitly and run from REPO_ROOT: a bare `docker compose` (no -f)
+# auto-loads docker-compose.override.yml, which swaps in local-dev-only
+# config and must never be what a prod healthcheck inspects.
 section "Services"
-if command -v systemctl >/dev/null 2>&1; then
+DOCKER_OK=1
+if ! command -v docker >/dev/null 2>&1; then
+    report WARN "docker" "docker not available (not a VM with the stack deployed?)"
+    DOCKER_OK=0
+elif ! docker compose version >/dev/null 2>&1; then
+    report WARN "docker" "docker compose plugin not available"
+    DOCKER_OK=0
+fi
+
+BACKEND_UP=0
+if [ "$DOCKER_OK" -eq 1 ]; then
+    pushd "$REPO_ROOT" >/dev/null
     for svc in "${SERVICES[@]}"; do
-        state="$(systemctl is-active "$svc" 2>/dev/null || true)"
-        if [ "$state" = active ]; then
-            report OK "$svc" "active"
+        # --all so a stopped/crashed container is still found (a bare `ps -q`
+        # only lists running ones, which would collapse "never started" and
+        # "exited" into the same unhelpful "no container" report).
+        cid="$(docker compose -f "$COMPOSE_FILE" ps --all -q "$svc" 2>/dev/null | head -n1)"
+        if [ -z "$cid" ]; then
+            report FAIL "$svc" "no container found"
+            continue
+        fi
+
+        # {{if .State.Health}} guards services with no HEALTHCHECK (only
+        # redis defines one) — asking for .State.Health.Status on those
+        # would error the template instead of returning empty.
+        inspect="$(docker inspect --format \
+            '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}' \
+            "$cid" 2>/dev/null || true)"
+        status="${inspect%%|*}"
+        rest="${inspect#*|}"
+        health="${rest%%|*}"
+        restarts="${rest#*|}"
+
+        if [ -z "$status" ]; then
+            report FAIL "$svc" "docker inspect failed for $cid"
+        elif [ "$status" = running ]; then
+            [ "$svc" = backend ] && BACKEND_UP=1
+            if [ "$health" = unhealthy ]; then
+                report FAIL "$svc" "running but unhealthy (restarts=$restarts)"
+            elif [ "${restarts:-0}" -ge "$RESTART_WARN" ]; then
+                report WARN "$svc" "running, but restarted $restarts times (possible restart-loop)"
+            elif [ "$health" != none ]; then
+                report OK "$svc" "running, health=$health"
+            else
+                report OK "$svc" "running"
+            fi
+        elif [ "$status" = restarting ]; then
+            # Caught mid-crash-loop: docker is actively bouncing this
+            # container, distinct from a container that's cleanly exited.
+            report FAIL "$svc" "restarting (crash-looping, restarts=$restarts)"
         else
-            report FAIL "$svc" "${state:-unknown}"
+            report FAIL "$svc" "$status (restarts=$restarts)"
         fi
     done
-else
-    report WARN "systemd" "systemctl not available (not a VM?)"
+    popd >/dev/null
 fi
 
 # ── legacy OS cron (must be gone — beat owns these now) ───────────────────────
@@ -133,17 +189,22 @@ else
     report OK "legacy-cron" "no crontab on this host"
 fi
 
-# ── app-level checks (Django command) ────────────────────────────────────────
+# ── app-level checks (Django command, now run inside the backend container) ──
+# `exec` needs a running container; DOCKER_OK/BACKEND_UP come from the
+# Services loop above, so a down stack reports one clear FAIL here instead of
+# an ambiguous `docker compose exec` error.
 section "Application"
 app_out=""
-if [ -d "$BACKEND" ]; then
-    # Mirror the systemd units: run from the backend dir with .env loaded.
-    pushd "$BACKEND" >/dev/null
-    if [ -f .env ]; then set -a; . ./.env; set +a; fi
-    app_out="$("$UV_BIN" run python manage.py healthcheck --require-prod --celery-timeout "$CELERY_TIMEOUT" 2>/dev/null || true)"
-    popd >/dev/null
+if [ "$DOCKER_OK" -ne 1 ]; then
+    report FAIL "app-checks" "docker/compose not available — cannot exec into backend"
+elif [ "$BACKEND_UP" -ne 1 ]; then
+    report FAIL "app-checks" "backend container is not running — cannot run manage.py healthcheck"
 else
-    report FAIL "app-checks" "backendServer not found at $BACKEND"
+    pushd "$REPO_ROOT" >/dev/null
+    # -T: no TTY allocation, required for a non-interactive/systemd context.
+    app_out="$(docker compose -f "$COMPOSE_FILE" exec -T backend \
+        python manage.py healthcheck --require-prod --celery-timeout "$CELERY_TIMEOUT" 2>/dev/null || true)"
+    popd >/dev/null
 fi
 
 if [ -n "$app_out" ]; then
@@ -151,8 +212,8 @@ if [ -n "$app_out" ]; then
         [ -z "$status" ] && continue
         report "$status" "$name" "$detail"
     done <<< "$app_out"
-elif [ -d "$BACKEND" ]; then
-    report FAIL "app-checks" "manage.py healthcheck produced no output (uv/Django error?)"
+elif [ "$DOCKER_OK" -eq 1 ] && [ "$BACKEND_UP" -eq 1 ]; then
+    report FAIL "app-checks" "manage.py healthcheck produced no output (container exec error?)"
 fi
 
 # ── summary ──────────────────────────────────────────────────────────────────

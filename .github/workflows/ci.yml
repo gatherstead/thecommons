@@ -256,6 +256,34 @@ jobs:
               export BROADCAST_BUILD_VITE_BROADCAST_API_BASE_URL="$VITE_BROADCAST_API_BASE_URL"
               export BROADCAST_BUILD_VITE_BETTER_AUTH_URL="$VITE_BETTER_AUTH_URL"
               export BROADCAST_BUILD_VITE_BROADCAST_EXTENSION_ID="$VITE_BROADCAST_EXTENSION_ID"
+
+              # Guard: `. env_file` is shell sourcing, NOT a dotenv parser, so a
+              # BARE value containing a shell metacharacter is mis-parsed rather
+              # than rejected. The real case this caught: theCommonsWeb/.env.local
+              # had an unquoted DATABASE_URL whose Neon query string contains `&`
+              # (`...?sslmode=require&channel_binding=require`). The shell reads
+              # `VAR=x & y=z` as "assign x in a BACKGROUND subshell, then assign
+              # y", so DATABASE_URL never reached this shell at all. Without this
+              # guard the export below sets it to the empty string, compose's
+              # `${NEXTJS_BUILD_DATABASE_URL:-<placeholder>}` treats empty as
+              # unset, and the build "succeeds" with a placeholder DB URL baked
+              # into the image — green pipeline, wrong artifact.
+              #
+              # Fix the env file (quote the value); this only makes the failure
+              # loud. Every var here is required, so empty is always a bug.
+              missing=""
+              for v in NEXTJS_BUILD_DATABASE_URL NEXTJS_BUILD_BETTER_AUTH_SECRET \
+                       NEXTJS_BUILD_BETTER_AUTH_URL NEXTJS_BUILD_NEXT_PUBLIC_BETTER_AUTH_URL \
+                       NEXTJS_BUILD_NEXT_PUBLIC_API_BASE_URL NEXTJS_BUILD_NEXT_PUBLIC_THE_COMMONS_API_KEY \
+                       BROADCAST_BUILD_VITE_BROADCAST_API_BASE_URL BROADCAST_BUILD_VITE_BETTER_AUTH_URL; do
+                eval "val=\${$v:-}"
+                [ -n "$val" ] || missing="$missing $v"
+              done
+              if [ -n "$missing" ]; then
+                echo "::error::empty build arg(s):$missing — a value in theCommonsWeb/.env.local or broadcastWeb/.env failed to survive shell sourcing (usually a bare value containing & or a space; quote it)"
+                exit 1
+              fi
+
               docker compose -f docker-compose.yml build
             )
 
@@ -375,6 +403,16 @@ jobs:
             check "https://thecommons.town/" 200
             check "https://broadcast.thecommons.town/" 200
             check "https://api.thecommons.town/events/" 200
+            # Fourth origin, easy to forget because nothing user-facing points
+            # at it directly: auth.thecommons.town is what makes the
+            # .thecommons.town cookie domain work across subdomains (suite 37),
+            # and backendServer/.env's BETTER_AUTH_JWKS_URL points here, so every
+            # broadcast JWT verification fetches this exact URL. Probing the JWKS
+            # endpoint rather than `/` checks the thing the backend depends on.
+            # Dropping this server block from deploy/nginx/thecommons.conf makes
+            # the hostname fall through to the www->apex redirect, which the
+            # garbage-JWT probe below would only report indirectly as a 500.
+            check "https://auth.thecommons.town/api/auth/jwks" 200
 
             # Regression check for the Unix-socket REMOTE_ADDR gap: nginx proxies
             # to gunicorn over a Unix socket, which used to leave REMOTE_ADDR

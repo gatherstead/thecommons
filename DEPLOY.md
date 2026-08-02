@@ -53,6 +53,20 @@ immediately if the VM doesn't have Docker, the `ubuntu` user can't run it withou
 `sudo`, or the bind-mount directories/env files it depends on don't exist. Do all
 eleven steps in order before the first push to `main` after this cutover.
 
+> ⚠️ **If you check a feature branch out on the VM to rehearse this before
+> merging, expect an immediate 500 on `api.thecommons.town`.** The systemd
+> gunicorn is still running and imports Python modules lazily *from the working
+> tree*, so a `git checkout` swaps files underneath a process whose settings are
+> already loaded in memory. A branch carrying an app-layout change (the suite-41
+> `accounts`/`newsletter` extraction is the live example) then produces
+> `RuntimeError: Model class accounts.models.BetterAuthUser doesn't declare an
+> explicit app_label and isn't in an application in INSTALLED_APPS` — new file,
+> old `INSTALLED_APPS`. `sudo systemctl restart gunicorn` immediately after the
+> checkout reloads both consistently and clears it. Restart the Celery units too
+> if the branch moved any task modules. None of this applies once the stack is
+> containerized: an image is a snapshot, so a checkout can't change code out from
+> under a running container.
+
 ## 1. Install Docker Engine + the Compose v2 plugin (arm64)
 
 ```bash
@@ -195,6 +209,46 @@ If any of the three files is missing, create it from its `.env.example` and fill
 in real values before proceeding — every other step assumes they're already
 correct except step 6, which calls out the one change that's mandatory.
 
+> ⚠️ **Quote any value containing `&`, a space, or `#`.** The build path
+> (`set -a; . theCommonsWeb/.env.local`) is **shell sourcing, not a dotenv
+> parser** — it does not reject a malformed line, it *mis-parses* it. A bare
+> Neon URL is the live example, because its query string contains `&`:
+>
+> ```
+> DATABASE_URL=postgres://…?sslmode=require&channel_binding=require     # BROKEN
+> DATABASE_URL='postgres://…?sslmode=require&channel_binding=require'   # correct
+> ```
+>
+> The shell reads `VAR=x & y=z` as "assign `x` in a **background subshell**,
+> then assign `y`", so `DATABASE_URL` never reaches the calling shell. Compose's
+> `env_file:` parses the same file correctly, so the running containers look
+> fine — only the *build args* are wrong, and compose's `${VAR:-placeholder}`
+> defaults turn that into a build that succeeds with placeholder config baked
+> in. `backendServer/.env` already quotes its `DATABASE_URL`;
+> `theCommonsWeb/.env.local` did not, which is what surfaced this.
+>
+> Audit all three files at once — this compares each key's literal value against
+> what sourcing actually yields, and prints no secrets:
+>
+> ```bash
+> cd /home/ubuntu/thecommons
+> for f in backendServer/.env theCommonsWeb/.env.local broadcastWeb/.env; do
+>   echo "=== $f ==="
+>   awk '/^[A-Za-z_][A-Za-z0-9_]*=/ {k=substr($0,1,index($0,"=")-1); v=substr($0,index($0,"=")+1);
+>        if ((substr(v,1,1)=="\"" && substr(v,length(v),1)=="\"") || (substr(v,1,1)=="'"'"'" && substr(v,length(v),1)=="'"'"'")) v=substr(v,2,length(v)-2);
+>        print k"\t"length(v)}' "$f" > /tmp/lit
+>   ( set -a; . "$f" >/dev/null 2>&1; set +a
+>     while IFS=$'\t' read -r k n; do eval "cur=\${$k-__UNSET__}"
+>       [ "$cur" = "__UNSET__" ] && { echo "  $k BROKEN (unset after sourcing)"; continue; }
+>       [ "${#cur}" = "$n" ] || echo "  $k TRUNCATED ($n -> ${#cur})"
+>     done < /tmp/lit )
+> done
+> ```
+>
+> The `deploy` job also fails loudly now if any required build arg comes out
+> empty (`.github/workflows/ci.yml`), but fix the file rather than relying on
+> that backstop.
+
 ## 6. ⚠️ Blocking: point `backendServer/.env` at the container Redis, not localhost
 
 **This is the step this whole suite exists to get right — treat it as a release
@@ -246,6 +300,27 @@ missing either crashes every container on boot, not just Celery:
 `manage.py healthcheck` pings Redis DB 0 and round-trips DB 1, so the hourly
 watchdog (Part 3 §Health check) will eventually catch a missed edit here — but the
 point of calling this out as its own step is to not discover it that way.
+
+> ⚠️ **This edit breaks the still-running host stack the moment you save it.**
+> Steps 7–9 haven't happened yet, so the *systemd* gunicorn/celery are still
+> serving production out of this same `.env` — and on the host there is no such
+> hostname as `redis`, so every cached read starts throwing
+> `redis.exceptions.ConnectionError: Error -3 connecting to redis:6379.
+> Temporary failure in name resolution` and `api.thecommons.town/events/` 500s.
+> The step reads like inert preparation; it isn't. Bridge it before you edit, so
+> the host stack keeps resolving `redis` to the local `redis-server` until the
+> containers take over:
+>
+> ```bash
+> grep -q '^127.0.0.1[[:space:]]\+redis\b' /etc/hosts || echo '127.0.0.1 redis' | sudo tee -a /etc/hosts
+> sudo systemctl restart gunicorn celery celerybeat broadcast-worker scrape-worker
+> ```
+>
+> Containers are unaffected either way — they resolve `redis` through Docker's
+> embedded DNS inside their own namespace and never consult the host's
+> `/etc/hosts`. **Remove the line once step 9 has retired the host units**
+> (`sudo sed -i '/^127\.0\.0\.1[[:space:]]\+redis$/d' /etc/hosts`); leaving it
+> behind is harmless but will mislead whoever debugs this box next.
 
 ## 7. First manual bring-up — everything except `nginx`
 

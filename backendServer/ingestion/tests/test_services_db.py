@@ -10,7 +10,7 @@ from events.models import Event, Town
 from events.tests.factories import make_town, make_user
 from ingestion.deduplicator import find_duplicate
 from ingestion.models import EventSource, RawEvent, StagedEvent
-from ingestion.services import ingest_direct_submission, publish_all_approved
+from ingestion.services import ingest_direct_submission, publish_all_approved, resolve_town
 
 START = datetime(2099, 6, 1, 18, 0, tzinfo=UTC)
 
@@ -128,6 +128,43 @@ class PublishAllApprovedTests(TestCase):
         self.assertEqual(result["removed"], 0)
         self.assertFalse(Event.objects.exists())
         self.assertEqual(StagedEvent.objects.get(title="Somewhere Else").status, "skipped_no_town")
+
+    def test_force_town_is_a_fallback_not_an_override(self):
+        """devtools' "force town" selector (e.g. the playground pinning a
+        source to "Raleigh") must not flatten an event Gemini correctly
+        placed in a different, covered town (e.g. "Cary") -- only a guess
+        that doesn't resolve to a known Town should fall back to it.
+        """
+        cary = make_town(slug="cary", name="Cary")
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self._staged("Cary Show", "approved", town="Cary")
+
+        publish_all_approved(force_town=raleigh)
+
+        event = Event.objects.get(title="Cary Show")
+        self.assertEqual(event.town_id, cary.id)
+
+    def test_force_town_backfills_when_gemini_guess_is_empty(self):
+        """The empty-string case is the one `force_town` exists for -- the
+        standardizer prompt tells Gemini to return "" when it can't determine
+        a town at all.
+        """
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self._staged("Mystery Venue Show", "approved", town="")
+
+        publish_all_approved(force_town=raleigh)
+
+        event = Event.objects.get(title="Mystery Venue Show")
+        self.assertEqual(event.town_id, raleigh.id)
+
+    def test_force_town_backfills_when_gemini_guess_is_out_of_coverage(self):
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self._staged("Somewhere Else Forced", "approved", town="Greensboro")
+
+        publish_all_approved(force_town=raleigh)
+
+        event = Event.objects.get(title="Somewhere Else Forced")
+        self.assertEqual(event.town_id, raleigh.id)
 
     def test_second_run_does_not_relog_an_already_skipped_row(self):
         """36.1's stated QA: a second consecutive pipeline run must not
@@ -304,3 +341,25 @@ class IngestDirectSubmissionTownMissTests(TestCase):
 
         staged.refresh_from_db()
         self.assertEqual(staged.status, "skipped_no_town")
+
+
+@tag("db")
+class ResolveTownTests(TestCase):
+    def test_valid_guess_wins_over_fallback(self):
+        cary = make_town(slug="cary", name="Cary")
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self.assertEqual(resolve_town("Cary", raleigh), cary)
+
+    def test_empty_guess_uses_fallback(self):
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self.assertEqual(resolve_town("", raleigh), raleigh)
+
+    def test_unmatched_guess_uses_fallback(self):
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self.assertEqual(resolve_town("Greensboro", raleigh), raleigh)
+
+    def test_empty_guess_with_no_fallback_is_none(self):
+        self.assertIsNone(resolve_town("", None))
+
+    def test_unmatched_guess_with_no_fallback_is_none(self):
+        self.assertIsNone(resolve_town("Greensboro", None))

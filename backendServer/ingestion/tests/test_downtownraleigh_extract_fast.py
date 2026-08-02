@@ -28,10 +28,10 @@ class DowntownraleighExtractTests(SimpleTestCase):
         mock_now.return_value = _FIXTURE_BUILD_TIME
         events = DowntownraleighScraper().extract(self.html)
 
-        # Fixture carries 7 events: 1 back-dated (Jan 1) that the filter must
-        # drop, 3 on Jul 31, 3 on Aug 1. The "Ongoing" bucket has no day/month
-        # anchor and is skipped entirely regardless of date.
-        self.assertEqual(len(events), 6)
+        # Fixture carries 9 events: 1 back-dated (Jan 1) that the filter must
+        # drop, 3 on Jul 31, 3 on Aug 1, 2 on Aug 3. The "Ongoing" bucket has
+        # no day/month anchor and is skipped entirely regardless of date.
+        self.assertEqual(len(events), 8)
         self.assertNotIn("Past Event (back-dated for filter test)", [e.title for e in events])
         self.assertNotIn("Staying Alive Special Exhibition", [e.title for e in events])
 
@@ -67,6 +67,24 @@ class DowntownraleighExtractTests(SimpleTestCase):
 
         golf = next(e for e in events if e.title == "National Disc Golf Day")
         self.assertEqual(golf.start.hour, 11)
+
+    @mock.patch("ingestion.scraping.scrapers.downtownraleigh.timezone.now")
+    def test_bare_hour_with_no_meridiem_is_treated_as_pm(self, mock_now):
+        mock_now.return_value = _FIXTURE_BUILD_TIME
+        events = DowntownraleighScraper().extract(self.html)
+
+        # "7:30 until we run out of comics" -- no am/pm anywhere in the text.
+        ikyfl = next(e for e in events if e.title == "IKYFL Monday Open Mic Comedy Show")
+        self.assertEqual((ikyfl.start.hour, ikyfl.start.minute), (19, 30))
+
+    @mock.patch("ingestion.scraping.scrapers.downtownraleigh.timezone.now")
+    def test_bare_range_with_no_meridiem_uses_leading_hour_as_pm(self, mock_now):
+        mock_now.return_value = _FIXTURE_BUILD_TIME
+        events = DowntownraleighScraper().extract(self.html)
+
+        # "6:30-9:30" -- a range with no am/pm token on either side.
+        bare_range = next(e for e in events if e.title == "Bare Range Event")
+        self.assertEqual((bare_range.start.hour, bare_range.start.minute), (18, 30))
 
     @mock.patch("ingestion.scraping.scrapers.downtownraleigh.timezone.now")
     def test_no_time_text_defaults_to_midnight(self, mock_now):

@@ -17,6 +17,23 @@ from ingestion.standardizer import standardize_event
 logger = logging.getLogger(__name__)
 
 
+def resolve_town(raw_town: str, fallback: Town | None) -> Town | None:
+    """Resolve Gemini's per-event town guess to a `Town` row, falling back only
+    when the guess is empty or doesn't match a known town.
+
+    `fallback` (devtools' "force town" selector, or `None` in the normal cron
+    path) exists for the case Gemini can't determine a town at all — the
+    standardizer prompt tells it to return `""` when unclear. It is a
+    fallback, not an override: a source that mostly covers one city but
+    occasionally surfaces a neighboring one (e.g. a Raleigh events site
+    listing a Cary show) should keep Gemini's correct per-event guess rather
+    than have every event flattened to the operator's blanket selection.
+    """
+    town_slug = raw_town.lower().replace(" ", "-") if raw_town else None
+    town = Town.objects.filter(slug=town_slug).first() if town_slug else None
+    return town or fallback
+
+
 def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inherent pipeline complexity
     """
     Atomically moves all approved StagedEvents into the Events table, then
@@ -55,29 +72,23 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
 
         for staged in approved_staged:
             if staged.published_event_id is None:
-                if force_town is not None:
-                    town_obj = force_town
-                else:
-                    town_slug = staged.town.lower().replace(" ", "-") if staged.town else None
-                    town_obj = Town.objects.filter(slug=town_slug).first() if town_slug else None
-                    if town_obj is None:
-                        # Terminal-ish status, not a delete: `skipped_no_town` rows
-                        # stay out of the `approved` queryset above, so this branch
-                        # (and its log line) only ever fires once per row instead of
-                        # re-logging on every subsequent run. They remain dedupe
-                        # candidates (CANDIDATE_STATUSES in deduplicator.py) and are
-                        # reopened deliberately via `manage.py reopen_skipped_towns`
-                        # once coverage is added — see that command's docstring.
-                        logger.warning(
-                            "Skipping staged event '%s' — no Town matches slug '%s'"
-                            " (gemini town=%r)",
-                            staged.title,
-                            town_slug,
-                            staged.town,
-                        )
-                        staged.status = "skipped_no_town"
-                        staged.save(update_fields=["status"])
-                        continue
+                town_obj = resolve_town(staged.town, force_town)
+                if town_obj is None:
+                    # Terminal-ish status, not a delete: `skipped_no_town` rows
+                    # stay out of the `approved` queryset above, so this branch
+                    # (and its log line) only ever fires once per row instead of
+                    # re-logging on every subsequent run. They remain dedupe
+                    # candidates (CANDIDATE_STATUSES in deduplicator.py) and are
+                    # reopened deliberately via `manage.py reopen_skipped_towns`
+                    # once coverage is added — see that command's docstring.
+                    logger.warning(
+                        "Skipping staged event '%s' — no Town matches gemini town=%r",
+                        staged.title,
+                        staged.town,
+                    )
+                    staged.status = "skipped_no_town"
+                    staged.save(update_fields=["status"])
+                    continue
                 if staged.raw_event_id and staged.raw_event and staged.raw_event.source:
                     source_name = staged.raw_event.source.name
                 else:

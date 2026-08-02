@@ -31,7 +31,7 @@ The sidebar is organized into three sections, configured in `backend/settings.py
 | **Events** | Published Events | `/admin/events/event/` |
 | | Tags | `/admin/events/tag/` |
 | **Users** | Users | `/admin/auth/user/` |
-| | User Profiles | `/admin/events/userprofile/` |
+| | User Profiles | `/admin/accounts/userprofile/` |
 
 ---
 
@@ -184,7 +184,7 @@ Standard Django user management. Use this to:
 - Reset passwords
 - Grant/revoke `is_staff` or `is_superuser` flags
 
-### User Profiles — `/admin/events/userprofile/`
+### User Profiles — `/admin/accounts/userprofile/`
 
 Extended profile data attached to each Django user.
 

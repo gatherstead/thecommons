@@ -208,80 +208,143 @@ jobs:
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
           fingerprint: ${{ steps.fp.outputs.fingerprint }}
-          # Mirrors DEPLOY.md §Deploying Updates (validated dry-run in 16-12-vm-prep).
-          # uv is at /snap/bin (not on the non-interactive PATH); pnpm is a global
-          # npm bin already on PATH. set -e aborts on the first failure.
+          # Mirrors DEPLOY.md §Deploying Updates. Containers via
+          # docker-compose.yml (T6/T7 of the Dockerization suite) replace the
+          # old uv-sync + pnpm-build + systemctl-restart flow. Requires the VM
+          # to have Docker Engine + the `docker compose` v2 plugin, and the
+          # deploy user in the `docker` group — one-time setup, documented in
+          # a separate ticket. No more `sudo`: group membership is enough.
+          # `-f docker-compose.yml` is REQUIRED on every invocation below — a
+          # bare `docker compose` also auto-loads docker-compose.override.yml
+          # (local-dev-only: plain HTTP, no cert, repo-relative bind mounts),
+          # which would deploy the dev config to prod. set -e aborts on the
+          # first failure.
           script: |
             set -e
-            # CI=true lets pnpm purge/rebuild node_modules non-interactively (no TTY
-            # over SSH); without it pnpm aborts with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY.
-            export CI=true
             cd /home/ubuntu/thecommons
-            # pnpm build regenerates tsconfig.tsbuildinfo locally each run, which used
-            # to be tracked in git and would then block the fast-forward pull below.
-            # It's a generated TS incremental-build cache, now gitignored — discard any
-            # local copy so the pull can proceed even before that lands on this VM.
+            # The real frontend build now happens inside `docker compose
+            # build` (Dockerfile.frontend), not via a host-side pnpm, but a
+            # stray tracked/leftover tsconfig.tsbuildinfo from a pre-Docker
+            # deploy could still block the fast-forward below — cheap
+            # insurance to discard it before pulling.
             git checkout -- theCommonsWeb/tsconfig.tsbuildinfo broadcastWeb/tsconfig.tsbuildinfo 2>/dev/null || true
             git pull origin main
 
-            cd backendServer
-            /snap/bin/uv sync
+            # Build every image on the VM — arm64-native (the VM is Oracle
+            # Ubuntu 24.04 ARM64) and needs no registry. nextjs and
+            # broadcast-spa-build bake NEXT_PUBLIC_*/VITE_* values in as
+            # build args with safe placeholder defaults (see
+            # docker-compose.yml's header) — a bare `build` here would
+            # silently ship those placeholders (verified failure mode: a
+            # broadcast bundle with no thecommons.town API origin baked in,
+            # misrouting every call at runtime). Source the real env files
+            # and re-export under the *_BUILD_* names docker-compose.yml's
+            # build args actually read. Scoped to this subshell so these
+            # values (DATABASE_URL, BETTER_AUTH_SECRET, ...) don't linger in
+            # the wider script env.
+            (
+              set -a
+              . theCommonsWeb/.env.local
+              . broadcastWeb/.env
+              set +a
+              export NEXTJS_BUILD_DATABASE_URL="$DATABASE_URL"
+              export NEXTJS_BUILD_BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET"
+              export NEXTJS_BUILD_BETTER_AUTH_URL="$BETTER_AUTH_URL"
+              export NEXTJS_BUILD_NEXT_PUBLIC_BETTER_AUTH_URL="$NEXT_PUBLIC_BETTER_AUTH_URL"
+              export NEXTJS_BUILD_NEXT_PUBLIC_API_BASE_URL="$NEXT_PUBLIC_API_BASE_URL"
+              export NEXTJS_BUILD_NEXT_PUBLIC_THE_COMMONS_API_KEY="$NEXT_PUBLIC_THE_COMMONS_API_KEY"
+              export BROADCAST_BUILD_VITE_BROADCAST_API_BASE_URL="$VITE_BROADCAST_API_BASE_URL"
+              export BROADCAST_BUILD_VITE_BETTER_AUTH_URL="$VITE_BETTER_AUTH_URL"
+              export BROADCAST_BUILD_VITE_BROADCAST_EXTENSION_ID="$VITE_BROADCAST_EXTENSION_ID"
+              docker compose -f docker-compose.yml build
+            )
+
+            # Bug-class check, now run against the built image instead of a
+            # host dist/ dir: a malformed VITE_BROADCAST_API_BASE_URL (e.g.
+            # missing "//") builds "successfully" but silently misroutes
+            # every API call. Fail here, before the broken image goes live,
+            # rather than discovering it later via a confusing 404/405 in
+            # production.
+            if ! docker compose -f docker-compose.yml run --rm -T --no-deps --entrypoint sh broadcast-spa-build \
+                -c 'grep -rq "https\?://[a-zA-Z0-9.-]*thecommons\.town" /app/dist/assets/*.js'; then
+              echo "::error::broadcastWeb build does not reference a thecommons.town API origin — check broadcastWeb/.env"
+              exit 1
+            fi
 
             # Guarded migrate: `migrate --check` exits non-zero when unapplied
             # migrations exist and applies nothing (Django 6: "Exits with a
             # non-zero status if unapplied migrations exist and does not
             # actually apply migrations"). So prod only writes schema when
-            # there is real work — and never without a fresh pre-migrate dump.
-            if /snap/bin/uv run python manage.py migrate --check; then
+            # there is real work — and never without a fresh pre-migrate
+            # dump. Django commands run via one-shot containers off the
+            # image just built above; --no-deps skips starting redis/etc.
+            # for a plain management command.
+            if docker compose -f docker-compose.yml run --rm -T --no-deps migrate python manage.py migrate --check; then
               echo "No unapplied migrations — skipping migrate."
             else
               echo "Unapplied migrations detected — plan tail:"
-              /snap/bin/uv run python manage.py showmigrations --plan | tail -20
-              # A silent skip here would defeat the guard: no pg_dump = no
-              # backup = hard failure, never a warning.
-              if ! command -v pg_dump >/dev/null 2>&1; then
-                echo "::error::pg_dump not found on the VM — run: sudo apt install postgresql-client. Refusing to migrate without a pre-migrate backup."
-                exit 1
-              fi
+              docker compose -f docker-compose.yml run --rm -T --no-deps migrate python manage.py showmigrations --plan | tail -20
+
               mkdir -p /home/ubuntu/backups
-              # Subshell so backendServer/.env (DATABASE_URL etc.) never leaks
-              # into the rest of this script's env or the log (set -x stays
-              # off). The app's DATABASE_URL already carries Neon's sslmode,
-              # so pg_dump consumes it as-is. pipefail: a failed pg_dump must
-              # not leave a truncated-but-"green" gzip behind. This dump is
+              # pg_dump now runs in a postgres:18-alpine container: the VM no
+              # longer ships postgresql-client, and the backend image (slim
+              # Python) never did. Pinned to 18 deliberately — pg_dump can
+              # dump servers older than itself but refuses newer ones, so the
+              # newest client stays unconditionally safe against whatever
+              # version Neon runs. Subshell so backendServer/.env
+              # (DATABASE_URL etc.) never leaks into the rest of this
+              # script's env or the log (set -x stays off); `-e
+              # DATABASE_URL` (no `=value`) passes it into the container by
+              # reference so the value never appears in argv either.
+              # `/home/ubuntu/backups` is bind-mounted so the dump lands on
+              # the host and survives the container being removed (--rm).
+              # set -o pipefail (verified supported by postgres:18-alpine's
+              # /bin/sh): a failed pg_dump must not leave a
+              # truncated-but-"green" gzip behind. A silent skip here would
+              # defeat the guard: no dump = no backup = hard failure, never a
+              # warning — set -e (outer) + pipefail (inner) already enforce
+              # that without a separate tool-existence check. This dump is
               # belt-and-suspenders — Neon PITR/branching is the real restore
               # mechanism (see DEPLOY.md).
               (
-                set -o pipefail
-                set -a; . ./.env; set +a
-                pg_dump "$DATABASE_URL" | gzip > "/home/ubuntu/backups/pre-migrate-$(date +%Y%m%d-%H%M%S).sql.gz"
+                set -a; . backendServer/.env; set +a
+                docker run --rm \
+                  -e DATABASE_URL \
+                  -v /home/ubuntu/backups:/backups \
+                  postgres:18-alpine \
+                  sh -c 'set -o pipefail; pg_dump "$DATABASE_URL" | gzip > "/backups/pre-migrate-$(date +%Y%m%d-%H%M%S).sql.gz"'
               )
               # Keep only the 5 newest dumps.
               ls -1t /home/ubuntu/backups/pre-migrate-*.sql.gz | tail -n +6 | xargs -r rm -f --
-              /snap/bin/uv run python manage.py migrate --noinput
+              docker compose -f docker-compose.yml run --rm -T --no-deps migrate python manage.py migrate --noinput
             fi
 
-            /snap/bin/uv run python manage.py collectstatic --noinput
+            # collectstatic is no longer a deploy step — it now runs at image
+            # build time (backendServer/Dockerfile bakes it into
+            # /app/staticfiles_build/static, and deploy/nginx/Dockerfile
+            # COPY --from='s it into the nginx image above).
+            #
+            # pnpm install/build are no longer deploy steps either —
+            # Dockerfile.frontend does both frontend builds as part of the
+            # `docker compose build` above; there is no host-side
+            # node_modules or build step left to run.
 
-            cd ../theCommonsWeb
-            pnpm install --frozen-lockfile
-            pnpm run build
+            # Recreate every service from the images just built. No more
+            # `sudo systemctl restart` — the deploy user is in the `docker`
+            # group, so this runs unprivileged.
+            docker compose -f docker-compose.yml up -d
 
-            cd ../broadcastWeb
-            pnpm install --frozen-lockfile
-            pnpm run build
-
-            # Bug-class check: a malformed VITE_BROADCAST_API_BASE_URL (e.g. missing
-            # "//") builds "successfully" but silently misroutes every API call.
-            # Fail here, before the broken build goes live, rather than discovering
-            # it later via a confusing 404/405 in production.
-            if ! grep -rq 'https\?://[a-zA-Z0-9.-]*thecommons\.town' dist/assets/*.js; then
-              echo "::error::broadcastWeb build does not reference a thecommons.town API origin — check broadcastWeb/.env"
-              exit 1
-            fi
-
-            sudo -n systemctl restart gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
-            systemctl is-active gunicorn nextjs celery celerybeat broadcast-worker scrape-worker
+            # Health assertion replacing `systemctl is-active`. migrate and
+            # broadcast-spa-build are one-shot (`restart: "no"`) and exit 0
+            # by design, so they're excluded from the "still running" check.
+            docker compose -f docker-compose.yml ps
+            running_services=$(docker compose -f docker-compose.yml ps --status running --services)
+            for svc in redis backend celery celerybeat broadcast-worker scrape-worker nextjs nginx; do
+              if ! printf '%s\n' "$running_services" | grep -qx "$svc"; then
+                echo "::error::service '$svc' is not running after deploy — see docker compose ps output above"
+                exit 1
+              fi
+            done
       - name: Post-deploy smoke test
         uses: appleboy/ssh-action@v1
         with:

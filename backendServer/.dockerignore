@@ -1,0 +1,39 @@
+# Build context is backendServer/ itself (docker build -f backendServer/Dockerfile backendServer).
+# Keep this list in sync with .gitignore where the two overlap.
+
+# Local virtualenv — the image builds its own venv via `uv sync`, never
+# reuses a host one (different OS/arch: dev is Apple Silicon, prod is
+# Oracle ARM64, but a stray macOS-built .venv would be architecture-wrong
+# either way).
+.venv/
+
+# Python bytecode / caches
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Env files — config comes from compose's env_file at runtime, never baked
+# into the image. `.env*` also catches .env.local, .env.prod, etc.
+.env
+.env.*
+!.env.example
+
+# Generated/runtime data — collectstatic output is produced fresh at build
+# time; media and broadcast artifacts are runtime state that lives outside
+# the image (volumes in compose).
+staticfiles_build/
+media/
+broadcast_artifacts/
+
+# Editor/OS cruft
+.DS_Store
+.idea/
+.vscode/
+
+# VCS (not present under backendServer/, but harmless to exclude defensively)
+.git/
+.gitignore

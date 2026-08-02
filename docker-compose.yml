@@ -1,0 +1,318 @@
+# The Commons — production compose file (T6/T7 of the Dockerization suite).
+#
+# Replaces the systemd unit graph in deploy/*.service (gunicorn, celery,
+# celerybeat, broadcast-worker, scrape-worker) plus the hand-maintained
+# nginx config described in DEPLOY.md §nginx. Postgres is NOT here —
+# DATABASE_URL always points at Neon (external), in every environment.
+#
+# Usage:
+#   VM (prod):        docker compose -f docker-compose.yml up -d --build
+#   local dev:         docker compose up --build
+#                       (docker-compose.override.yml is auto-loaded and swaps
+#                       in plain-HTTP nginx + local bind-mount paths — see
+#                       that file's header for the full explanation)
+#
+# Build-time secrets gotcha: `nextjs` and `broadcast-spa-build` below bake
+# NEXT_PUBLIC_*/VITE_* values into their JS bundles via build args. Compose
+# variable interpolation (the ${VAR:-default} syntax used throughout this
+# file) only reads the shell environment or a `.env` file living next to
+# this compose file — it CANNOT read theCommonsWeb/.env.local or
+# broadcastWeb/.env directly (those are consumed by env_file: at container
+# *runtime*, a completely different mechanism). Every build arg below has a
+# safe CI-style placeholder default so `docker compose build` always
+# succeeds with zero setup, but a REAL prod build needs the real values
+# exported into the shell (or placed in a root .env) first, e.g.:
+#   set -a; source theCommonsWeb/.env.local; source broadcastWeb/.env; set +a
+#   docker compose build nextjs broadcast-spa-build
+# CI already greps the compiled broadcast bundle for a thecommons.town
+# origin (.github/workflows/ci.yml) as a guard against exactly this being
+# forgotten.
+
+x-logging: &default-logging
+  # journalctl dies with systemd — plain json-file with rotation is the
+  # replacement. `docker logs <service>` still works identically.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── Redis — Celery broker/results (DB 0) + read-endpoint cache (DB 1) ────
+  # Was the system-installed redis-server.service.
+  #
+  # ⚠️ CUTOVER REQUIREMENT — prod's backendServer/.env MUST change.
+  # REDIS_URL and REDIS_CACHE_URL currently point at 127.0.0.1/localhost
+  # (that's also base.py's default: base.py:146,193). Inside a container
+  # "localhost" is the container itself, so leaving them as-is doesn't error —
+  # Celery just silently connects to nothing and no task ever runs. That is
+  # the same shape of failure as the 2026-07-21 outage (async stack dead,
+  # everything else green), so treat it as a release blocker, not a nit:
+  #
+  #   REDIS_URL=redis://:<password>@redis:6379/0
+  #   REDIS_CACHE_URL=redis://:<password>@redis:6379/1
+  #
+  # The password must match REDIS_PASSWORD below. `manage.py healthcheck`
+  # pings DB 0 and round-trips DB 1, so the hourly watchdog catches this if it
+  # is missed — but it should be done as part of the cutover, not discovered.
+  # (Not set here in `environment:` because that would override the whole URL
+  # and drop the password embedded in it.)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    # REDIS_PASSWORD is a container-only knob — Django/Celery never read it
+    # directly, only REDIS_URL/REDIS_CACHE_URL (which already embed a
+    # password in their `:<password>@` segment). It must be set in
+    # backendServer/.env to the SAME password embedded in those URLs, or
+    # this container's --requirepass and the app's connection string drift
+    # out of sync. Left unset (local dev — see docker-compose.override.yml
+    # and .env.example's unauthenticated `redis://localhost:6379/0`), redis
+    # starts with no auth.
+    command: >
+      sh -c '
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes
+      else
+        exec redis-server --appendonly yes
+      fi'
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG || redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - redis-data:/data
+    logging: *default-logging
+
+  # ── One-shot migration — replaces the manual `manage.py migrate` deploy
+  # step. Also seeds django_celery_beat's schedule tables, so celerybeat
+  # needs this to have run at least once. Not a Celery service, so it has
+  # no reason to wait on redis.
+  migrate:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: app
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    volumes:
+      # Real, persistent host storage for the pre-migrate pg_dump the CI
+      # pipeline takes today (.github/workflows/ci.yml) — an ephemeral
+      # container filesystem here would make that dump vanish on the next
+      # `docker compose down`, silently turning the safety net into a
+      # no-op. `docker compose run --rm migrate` doesn't currently invoke
+      # pg_dump itself (that's still the deploy pipeline's job, out of
+      # scope for this ticket) — this mount just makes sure the path is
+      # real and ready for whichever process writes to it.
+      - ${BACKUPS_HOST:-/home/ubuntu/backups}:/home/ubuntu/backups
+    logging: *default-logging
+
+  # ── Django / gunicorn ────────────────────────────────────────────────────
+  backend:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Gunicorn binds TCP 0.0.0.0:8000 now (no more unix socket) — reachable
+    # only from other containers on the compose network, never the host.
+    expose:
+      - "8000"
+    volumes:
+      # Same absolute path on both sides on purpose: MEDIA_ROOT /
+      # BROADCAST_SCREENSHOT_DIR / BROADCAST_DOWNLOAD_DIR in
+      # backendServer/.env are real host paths already in prod's .env
+      # today (DEPLOY.md); mounting the container at the identical path
+      # means that .env file needs zero changes for the cutover. The host
+      # directories must exist and be writable by uid 1000 (the image's
+      # non-root `app` user — matches the `ubuntu` user's usual uid 1000
+      # on the Oracle VM) before first run.
+      - ${MEDIA_ROOT_HOST:-/home/ubuntu/broadcast/media}:/home/ubuntu/broadcast/media
+      - ${BROADCAST_SCREENSHOT_HOST:-/home/ubuntu/broadcast/screenshots}:/home/ubuntu/broadcast/screenshots
+      - ${BROADCAST_DOWNLOAD_HOST:-/home/ubuntu/broadcast/downloads}:/home/ubuntu/broadcast/downloads
+    logging: *default-logging
+
+  # ── Default Celery worker (digest emails etc. — everything not routed to
+  # the broadcast/scrape queues) ───────────────────────────────────────────
+  celery:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    command: ["celery", "-A", "backend", "worker", "-n", "commons-default@%h", "-l", "info", "--concurrency=2"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 1g
+    logging: *default-logging
+
+  # ── Celery beat — exactly one process (Celery best practice; do not
+  # scale this service). DatabaseScheduler keeps the schedule in Postgres,
+  # seeded by `migrate` above. ─────────────────────────────────────────────
+  celerybeat:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    command: ["celery", "-A", "backend", "beat", "-l", "info"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging: *default-logging
+
+  # ── Broadcast Playwright worker — drains the `broadcast` queue. -c 1 is
+  # mandatory, not tuning: recover_orphans() assumes a single worker, so
+  # concurrency > 1 would let a live queue-drain race orphan recovery. ────
+  broadcast-worker:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: playwright
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    command: ["celery", "-A", "backend", "worker", "-Q", "broadcast", "-n", "commons-broadcast@%h", "-c", "1", "-l", "info"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 2g
+    volumes:
+      - ${BROADCAST_SCREENSHOT_HOST:-/home/ubuntu/broadcast/screenshots}:/home/ubuntu/broadcast/screenshots
+      - ${BROADCAST_DOWNLOAD_HOST:-/home/ubuntu/broadcast/downloads}:/home/ubuntu/broadcast/downloads
+    logging: *default-logging
+
+  # ── Ingestion scrape worker — drains the `scrape` queue. Same -c 1
+  # rationale as broadcast-worker's queue-drain note above; here it's just
+  # to keep headless-Chromium memory off the default worker. ──────────────
+  scrape-worker:
+    build:
+      context: backendServer
+      dockerfile: Dockerfile
+      target: playwright
+    restart: unless-stopped
+    env_file:
+      - backendServer/.env
+    environment:
+      DJANGO_ENV: prod
+    command: ["celery", "-A", "backend", "worker", "-Q", "scrape", "-n", "commons-scrape@%h", "-c", "1", "-l", "info"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 2g
+    logging: *default-logging
+
+  # ── Next.js (theCommonsWeb) ──────────────────────────────────────────────
+  nextjs:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: commons-runtime
+      args:
+        # See the file header re: why these come from shell/root-.env
+        # interpolation rather than theCommonsWeb/.env.local directly.
+        DATABASE_URL: ${NEXTJS_BUILD_DATABASE_URL:-postgres://build:build@localhost:5432/build}
+        BETTER_AUTH_SECRET: ${NEXTJS_BUILD_BETTER_AUTH_SECRET:-build-only-placeholder-secret}
+        BETTER_AUTH_URL: ${NEXTJS_BUILD_BETTER_AUTH_URL:-https://auth.thecommons.town}
+        NEXT_PUBLIC_BETTER_AUTH_URL: ${NEXTJS_BUILD_NEXT_PUBLIC_BETTER_AUTH_URL:-https://auth.thecommons.town}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXTJS_BUILD_NEXT_PUBLIC_API_BASE_URL:-https://api.thecommons.town}
+        NEXT_PUBLIC_THE_COMMONS_API_KEY: ${NEXTJS_BUILD_NEXT_PUBLIC_THE_COMMONS_API_KEY:-build-placeholder}
+    restart: unless-stopped
+    env_file:
+      - theCommonsWeb/.env.local
+    # Standalone Next server on 3000 — internal only, nginx fronts it.
+    expose:
+      - "3000"
+    logging: *default-logging
+
+  # ── Build-only helper: produces the compiled broadcastWeb SPA so nginx
+  # can COPY --from it (see nginx's `additional_contexts` below). This
+  # stage (Dockerfile.frontend `broadcast-build`) has no CMD/EXPOSE and
+  # must never actually run — `command`/`restart: "no"` mirror the
+  # `migrate` one-shot pattern so a stray `docker compose up` (which starts
+  # every service by default) just runs a harmless no-op and exits 0
+  # instead of crash-looping on a missing entrypoint.
+  broadcast-spa-build:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: broadcast-build
+      args:
+        VITE_BROADCAST_API_BASE_URL: ${BROADCAST_BUILD_VITE_BROADCAST_API_BASE_URL:-https://api.thecommons.town}
+        VITE_BETTER_AUTH_URL: ${BROADCAST_BUILD_VITE_BETTER_AUTH_URL:-https://auth.thecommons.town}
+        VITE_BROADCAST_EXTENSION_ID: ${BROADCAST_BUILD_VITE_BROADCAST_EXTENSION_ID:-}
+    command: ["true"]
+    restart: "no"
+
+  # ── nginx — the ONLY service publishing host ports. ─────────────────────
+  # Bakes in two build artifacts produced by sibling Dockerfiles via Buildx
+  # named build contexts bound to the compose services above (verified:
+  # `docker compose build` resolves `service:<name>` contexts and builds
+  # them first even when only `nginx` is requested):
+  #   backend-static -> backend's `app` stage:      /app/staticfiles_build/static
+  #   broadcast-spa  -> broadcast-spa-build's stage: /app/dist
+  # See deploy/nginx/Dockerfile for the COPY --from= lines that consume
+  # these names.
+  nginx:
+    build:
+      context: deploy/nginx
+      dockerfile: Dockerfile
+      additional_contexts:
+        backend-static: "service:backend"
+        broadcast-spa: "service:broadcast-spa-build"
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - nextjs
+      - broadcast-spa-build
+    volumes:
+      # Client-uploaded event images (MEDIA_ROOT) — nginx serves these
+      # directly, never through gunicorn. Read-only: nginx never writes here.
+      - ${MEDIA_ROOT_HOST:-/home/ubuntu/broadcast/media}:/var/www/media:ro
+      # Cloudflare Full-strict origin cert. Bind-mounted read-only — NEVER
+      # copied into an image layer. Doesn't exist on a dev machine, which is
+      # why docker-compose.override.yml replaces this whole service's nginx
+      # config (via an inline `configs:` entry) with an HTTP-only one that
+      # never references this path.
+      - ${CLOUDFLARE_CERT_DIR_HOST:-/etc/ssl/cloudflare}:/etc/ssl/cloudflare:ro
+    logging: *default-logging
+
+volumes:
+  redis-data:

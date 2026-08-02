@@ -1,0 +1,95 @@
+# Root .dockerignore — applies to any build whose context is the repo root
+# (currently: Dockerfile.frontend, context `.`). backendServer/ has its own
+# .dockerignore for its own context (backendServer/); this file doesn't
+# replace that, it covers the root-context builds.
+#
+# Keep in sync with .gitignore where the two overlap. The point of this file
+# is as much about SECRETS as it is about build speed: the repo root holds a
+# real private key (oraclevps.key) and broadcastWeb/ holds a committed cert
+# (commons-broadcast.pem) — neither may ever enter a build context.
+#
+# IMPORTANT — verified empirically against this Docker Desktop/buildkit
+# version: a pattern WITHOUT a leading `**/` only matches at the exact
+# context-root path, even with no slash in the pattern at all (e.g. bare
+# `*.pem` did NOT exclude a nested broadcastWeb/commons-broadcast.pem in a
+# throwaway test build — only `**/*.pem` did). This is stricter than plain
+# .gitignore semantics, where a no-slash pattern matches at any depth. So
+# every pattern below that must also apply inside a subdirectory (which is
+# nearly all of them, since theCommonsWeb/, broadcastWeb/, backendServer/
+# are subdirectories of this context) carries an explicit `**/` form —
+# don't "simplify" these back down to bare patterns.
+
+# ── Secrets — must never enter a build context ────────────────────────────
+oraclevps.key
+*.key
+**/*.key
+*.pem
+**/*.pem
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+
+# ── VCS ────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# Claude Code worktrees — full duplicate checkouts (own node_modules/.venv)
+# used for parallel agent sessions, not application source. Never relevant
+# to a build and, left in, they alone can add several hundred MB of stale
+# installs to the context.
+.claude/worktrees/
+
+# ── Node ───────────────────────────────────────────────────────────────────
+# node_modules is reinstalled fresh inside each stage via `pnpm install
+# --frozen-lockfile` — a host-built node_modules (wrong OS/arch: dev is
+# Apple Silicon, prod is Oracle ARM64; also pnpm's node_modules is a symlink
+# farm into a content-addressed store that doesn't travel with the folder)
+# must never be copied in.
+node_modules/
+**/node_modules/
+
+# Build output — produced fresh inside the image, not copied from host.
+.next/
+**/.next/
+dist/
+**/dist/
+
+# TypeScript incremental build cache (generated, host-specific, diverges on
+# every build — see root .gitignore).
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# ── Python / backend cruft (irrelevant to the frontend builds, but a root-
+# context build still walks the whole tree unless excluded here) ──────────
+backendServer/.venv/
+backendServer/staticfiles/
+**/.venv/
+**/staticfiles/
+__pycache__/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.pytest_cache/
+**/.pytest_cache/
+
+# ── Runtime/generated data ──────────────────────────────────────────────────
+dump.rdb
+broadcast-extension.zip
+
+# ── Editor/OS cruft ─────────────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+.idea/
+**/.idea/
+.vscode/
+**/.vscode/
+
+# Local docker-compose bind-mount targets
+**/.local-dev/

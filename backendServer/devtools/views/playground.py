@@ -14,7 +14,7 @@ from ingestion.importers.scraper_importer import fetch_http_source, fetch_scrape
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.scraping.scrapers import list_scrapers
-from ingestion.services import auto_publish_safe_events
+from ingestion.services import auto_publish_safe_events, resolve_town
 from ingestion.standardizer import standardize_all_unprocessed
 
 from ..pipeline_runner import _event_dict, _resolve_source_name, run_pipeline_into_queue
@@ -39,19 +39,26 @@ def _ingest_and_publish(source, town, source_type, limit, prompt_suffix, skip_de
     _apply_limit(source, limit)
     standardize_all_unprocessed(source=source, prompt_suffix=prompt_suffix)
 
+    # `town` is a fallback, not an override -- only backfill it where Gemini's
+    # own guess doesn't resolve to a known `Town` (empty, or a place we don't
+    # track). A guess that resolves to a *different* known town is trusted
+    # and left alone. See `resolve_town`.
     for staged in StagedEvent.objects.filter(raw_event__source=source):
-        staged.town = town.name
-        staged.save(update_fields=["town"])
+        if resolve_town(staged.town, None) is None:
+            staged.town = town.name
+            staged.save(update_fields=["town"])
 
     if not skip_dedup:
         dedup_all_pending(source=source)
     score_all_unscored(source=source, prompt_suffix=prompt_suffix)
     counts = auto_publish_safe_events(source=source, force_town=town)
 
+    # Filtered by source only, not `town=town` -- some events may have
+    # published under a town Gemini correctly guessed instead of the forced
+    # selection, and those still belong in this run's results.
     published = [
         _event_dict(e)
         for e in Event.objects.filter(
-            town=town,
             staged_source__raw_event__source=source,
         ).distinct()
     ]

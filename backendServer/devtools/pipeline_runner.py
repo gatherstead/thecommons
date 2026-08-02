@@ -4,7 +4,6 @@ import traceback
 from urllib.parse import urlparse
 
 from django.db import connection, transaction
-from django.utils.text import slugify
 
 from events.models import Event, Town
 from ingestion.deduplicator import dedup_all_pending
@@ -13,7 +12,7 @@ from ingestion.importers.scraper_importer import fetch_http_source, fetch_scrape
 from ingestion.models import EventSource, RawEvent, StagedEvent
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.scraping.scrapers import get_scraper
-from ingestion.services import auto_publish_safe_events
+from ingestion.services import auto_publish_safe_events, resolve_town
 from ingestion.standardizer import standardize_all_unprocessed
 
 from .sse import QueueLoggingHandler
@@ -126,16 +125,25 @@ def _run_standardize_stage(q, source, prompt_suffix):
 
 
 def _run_force_town_stage(q, source, town):
+    """Backfill the forced town onto staged events, but only where Gemini's own
+    guess doesn't resolve to a known `Town` (empty, or a place we don't track).
+    A guess that resolves to a *different* known town (e.g. a Raleigh-focused
+    source occasionally surfacing a Cary event) is trusted and left alone --
+    "force town" is a fallback for what Gemini couldn't determine, not a
+    blanket override of what it got right. See `resolve_town` in
+    `ingestion/services.py`.
+    """
     q.put(("stage", {"stage": "force_town", "status": "start"}))
     for staged in StagedEvent.objects.filter(raw_event__source=source):
-        if slugify(staged.town) != town.slug:
+        if resolve_town(staged.town, None) is None:
             q.put(
                 (
                     "warning",
                     {
                         "code": "town_mismatch",
                         "message": (
-                            f"Gemini guessed town '{staged.town}' but you forced '{town.name}'"
+                            f"Gemini could not resolve town '{staged.town}' -- "
+                            f"used forced '{town.name}'"
                         ),
                         "detail": {
                             "staged_title": staged.title,
@@ -144,8 +152,8 @@ def _run_force_town_stage(q, source, town):
                     },
                 )
             )
-        staged.town = town.name
-        staged.save(update_fields=["town"])
+            staged.town = town.name
+            staged.save(update_fields=["town"])
     q.put(("stage", {"stage": "force_town", "status": "end"}))
 
 
@@ -195,11 +203,14 @@ def _run_publish_stage(q, source, town):
     q.put(("stage", {"stage": "publish", "status": "start"}))
     counts = auto_publish_safe_events(source=source, force_town=town)
 
-    # Snapshot published events BEFORE rollback may discard them
+    # Snapshot published events BEFORE rollback may discard them. Filtered by
+    # source only, not `town=town` -- `force_town` is a fallback, so some
+    # events may have published under a town Gemini correctly guessed instead
+    # of the operator's forced selection (see `resolve_town`), and those
+    # still belong in this run's results.
     published = [
         _event_dict(e)
         for e in Event.objects.filter(
-            town=town,
             staged_source__raw_event__source=source,
         ).distinct()
     ]

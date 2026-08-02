@@ -21,18 +21,21 @@ class is the API endpoint itself, not the chamber's events page. See
 sample of that JSON response (the `.html` extension is just this repo's
 fixture-naming convention; the body is JSON).
 
-`startDateTime`/`endDateTime` in the API have no UTC offset -- they're wall-
-clock local time, per the chamber's own event copy ("Time zone:
-America/New_York"), so we attach `America/New_York` directly. Titles the
-chamber has manually marked `*CANCELLED*` are dropped rather than published
-as live events.
+`startDateTime`/`endDateTime` in the API have no UTC offset, but despite the
+chamber's own event copy claiming "Time zone: America/New_York", the values
+are actually already UTC -- e.g. a ribbon-cutting whose description says
+"Time of Ceremony: 4:30" (pm) ships `startDateTime` of `20:00:00`, which is
+4:30pm EDT converted to UTC, not 8:00pm wall-clock local. Attaching
+`America/New_York` directly (as this scraper originally did) double-applies
+the offset and publishes every event ~4 hours later than its real start, so
+we attach UTC instead. Titles the chamber has manually marked `*CANCELLED*`
+are dropped rather than published as live events.
 """
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from html import unescape
-from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
@@ -40,14 +43,12 @@ from ingestion.scraping.scrapers.base import RawEventData, Scraper
 
 logger = logging.getLogger("ingestion")
 
-_LOCAL_TZ = ZoneInfo("America/New_York")
-
 
 def _parse_local(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value).replace(tzinfo=_LOCAL_TZ)
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
     except ValueError:
         return None
 

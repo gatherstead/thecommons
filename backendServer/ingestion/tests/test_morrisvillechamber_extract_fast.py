@@ -41,9 +41,9 @@ class MorrisvillechamberExtractTests(SimpleTestCase):
         events = MorrisvillechamberScraper().extract(self.html)
 
         pizza = next(e for e in events if e.title.startswith("Bambino's Pizza"))
-        self.assertEqual(pizza.start.isoformat(), "2026-08-04T20:00:00-04:00")
+        self.assertEqual(pizza.start.isoformat(), "2026-08-04T20:00:00+00:00")
         self.assertIsNotNone(pizza.start.tzinfo)
-        self.assertEqual(pizza.end.isoformat(), "2026-08-04T21:00:00-04:00")
+        self.assertEqual(pizza.end.isoformat(), "2026-08-04T21:00:00+00:00")
         self.assertEqual(
             pizza.source_url,
             "https://morrisvillechamber.org/event-detail?e=EXCq5cP0tOLp7S7CEjtAWg2",

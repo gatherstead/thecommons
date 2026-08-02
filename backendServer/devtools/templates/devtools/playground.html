@@ -1414,6 +1414,10 @@
         });
       }
       renderResults(data);
+      /* instant, not smooth: smooth-scroll animations can get dropped
+         by the browser when the tab is backgrounded/unfocused */
+      resultsArea.scrollIntoView({ behavior: "auto", block: "start" });
+      window.scrollBy(0, 4);
       runBtn.disabled         = false;
       saveBtn.disabled        = false;
       publishOnlyBtn.disabled = false;

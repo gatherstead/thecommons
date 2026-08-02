@@ -33,9 +33,7 @@ class DowntownraleighExtractTests(SimpleTestCase):
         # anchor and is skipped entirely regardless of date.
         self.assertEqual(len(events), 6)
         self.assertNotIn("Past Event (back-dated for filter test)", [e.title for e in events])
-        self.assertNotIn(
-            "Staying Alive Special Exhibition", [e.title for e in events]
-        )
+        self.assertNotIn("Staying Alive Special Exhibition", [e.title for e in events])
 
     @mock.patch("ingestion.scraping.scrapers.downtownraleigh.timezone.now")
     def test_time_range_parses_start_hour(self, mock_now):
@@ -51,9 +49,7 @@ class DowntownraleighExtractTests(SimpleTestCase):
             karaoke.source_url,
             "https://downtownraleigh.org/do/crank-karaoke--crank-arm-brewing",
         )
-        self.assertEqual(
-            karaoke.source_uid, "/do/crank-karaoke--crank-arm-brewing#2026-07-31"
-        )
+        self.assertEqual(karaoke.source_uid, "/do/crank-karaoke--crank-arm-brewing#2026-07-31")
 
     @mock.patch("ingestion.scraping.scrapers.downtownraleigh.timezone.now")
     def test_range_without_leading_meridiem_uses_trailing_one(self, mock_now):

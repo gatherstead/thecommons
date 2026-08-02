@@ -182,7 +182,8 @@ class ProbeStreamViewTests(TransactionTestCase):
         # reliable in CI, so instead patch _validate_url to simulate the guard
         # tripping, exactly as it would for a private/loopback host.
         with mock.patch(
-            "devtools.views.probe._validate_url", side_effect=ValueError("Blocked hostname: localhost")
+            "devtools.views.probe._validate_url",
+            side_effect=ValueError("Blocked hostname: localhost"),
         ):
             resp = probe_stream(self._get({"source_id": str(source.id)}))
             frames = self._consume(resp)

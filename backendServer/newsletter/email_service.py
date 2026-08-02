@@ -52,7 +52,6 @@ def _build_recipients(frequency: str) -> list[dict]:
     divergent recipient logic anywhere else.
     """
     from accounts.models import UserProfile
-
     from newsletter.models import NewsletterSubscriber
 
     profile_tags_by_email = {

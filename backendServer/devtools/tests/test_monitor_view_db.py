@@ -174,7 +174,9 @@ class MonitorViewTests(TestCase):
         databases_with_prod = {**settings.DATABASES, "prod_readonly": settings.DATABASES["default"]}
         with (
             override_settings(DATABASES=databases_with_prod),
-            patch("devtools.views.monitor.resolve_source_runs_state", return_value=RUNS_UNREACHABLE),
+            patch(
+                "devtools.views.monitor.resolve_source_runs_state", return_value=RUNS_UNREACHABLE
+            ),
         ):
             content = monitor(
                 self._get("/devtools/monitor", {"db": "prod_readonly"})

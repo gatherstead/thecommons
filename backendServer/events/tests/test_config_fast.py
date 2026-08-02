@@ -12,8 +12,8 @@ import unittest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, override_settings, tag
 
-from backend.settings import select_settings_env
 from accounts.models import BetterAuthAccount
+from backend.settings import select_settings_env
 from events.management.commands.healthcheck import FAIL, OK, Command
 
 

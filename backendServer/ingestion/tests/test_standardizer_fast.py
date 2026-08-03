@@ -3,7 +3,7 @@ from unittest import mock
 
 from django.test import tag
 
-from ingestion.standardizer import _coerce_price, _coerce_str, fetch_page_text
+from ingestion.standardizer import CANCELLED_TITLE_RE, _coerce_price, _coerce_str, fetch_page_text
 
 
 @tag("fast")
@@ -78,3 +78,31 @@ class CoercePriceTests(unittest.TestCase):
 
     def test_overflow_value_returns_sentinel(self):
         self.assertEqual(_coerce_price(10**9), -1)
+
+
+@tag("fast")
+class CancelledTitleRegexTests(unittest.TestCase):
+    """CANCELLED_TITLE_RE must match both spellings plus common typographic
+    variants (asterisks, en/em dash, colon) regardless of surrounding text,
+    since it's matched with `.search`, not `.fullmatch`."""
+
+    def test_matches_asterisk_wrapped(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("*CANCELLED*"))
+
+    def test_matches_en_dash_form(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("Canceled – Fall Festival"))
+
+    def test_matches_em_dash_form(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("Canceled — Fall Festival"))
+
+    def test_matches_colon_form(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("CANCELED: Movie Night"))
+
+    def test_matches_double_l_spelling(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("Event Cancelled"))
+
+    def test_matches_single_l_spelling(self):
+        self.assertIsNotNone(CANCELLED_TITLE_RE.search("Event Canceled"))
+
+    def test_no_match_on_clean_title(self):
+        self.assertIsNone(CANCELLED_TITLE_RE.search("Fall Festival on the Green"))

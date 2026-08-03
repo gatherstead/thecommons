@@ -21,13 +21,14 @@ def resolve_town(raw_town: str, fallback: Town | None) -> Town | None:
     """Resolve Gemini's per-event town guess to a `Town` row, falling back only
     when the guess is empty or doesn't match a known town.
 
-    `fallback` (devtools' "force town" selector, or `None` in the normal cron
-    path) exists for the case Gemini can't determine a town at all — the
-    standardizer prompt tells it to return `""` when unclear. It is a
-    fallback, not an override: a source that mostly covers one city but
-    occasionally surfaces a neighboring one (e.g. a Raleigh events site
-    listing a Cary show) should keep Gemini's correct per-event guess rather
-    than have every event flattened to the operator's blanket selection.
+    `fallback` (devtools' "force town" selector, or — in the normal cron path
+    — the staged event's own `EventSource.default_town`, per 45.4) exists for
+    the case Gemini can't determine a town at all — the standardizer prompt
+    tells it to return `""` when unclear. It is a fallback, not an override: a
+    source that mostly covers one city but occasionally surfaces a
+    neighboring one (e.g. a Raleigh events site listing a Cary show) should
+    keep Gemini's correct per-event guess rather than have every event
+    flattened to the operator's (or source's) blanket selection.
     """
     town_slug = raw_town.lower().replace(" ", "-") if raw_town else None
     town = Town.objects.filter(slug=town_slug).first() if town_slug else None
@@ -72,7 +73,20 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
 
         for staged in approved_staged:
             if staged.published_event_id is None:
-                town_obj = resolve_town(staged.town, force_town)
+                # 45.4: `force_town` is a *runtime* argument the nightly cron
+                # path always passes as `None` (only devtools' playground and
+                # "force town" pipeline stage set it). Per-source
+                # `default_town` is resolved here, per staged event, rather
+                # than threaded down from the caller: a single batch can span
+                # multiple sources, so one run-wide fallback would be wrong,
+                # and an explicit `force_town` (an operator's deliberate
+                # override for this run) still wins when both are set.
+                fallback = force_town
+                if fallback is None and staged.raw_event_id and staged.raw_event:
+                    source = staged.raw_event.source
+                    if source is not None:
+                        fallback = source.default_town
+                town_obj = resolve_town(staged.town, fallback)
                 if town_obj is None:
                     # Terminal-ish status, not a delete: `skipped_no_town` rows
                     # stay out of the `approved` queryset above, so this branch

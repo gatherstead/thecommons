@@ -166,6 +166,80 @@ class PublishAllApprovedTests(TestCase):
         event = Event.objects.get(title="Somewhere Else Forced")
         self.assertEqual(event.town_id, raleigh.id)
 
+    def _staged_from_source(self, title, town, default_town=None, source_uid=None):
+        """A staged event linked to a real RawEvent/EventSource pair, needed
+        to exercise `EventSource.default_town` -- `_staged` alone leaves
+        `raw_event` unset, which resolve_town's per-source fallback needs.
+        """
+        source = EventSource.objects.create(
+            name=f"Source for {title}",
+            source_type="ics",
+            url=f"https://feed.test/{source_uid or title}.ics",
+            default_town=default_town,
+        )
+        raw = RawEvent.objects.create(
+            source=source,
+            raw_title=title,
+            raw_description="d",
+            raw_start_datetime=START,
+            source_uid=source_uid or title,
+        )
+        return self._staged(title, "approved", town=town, raw_event=raw)
+
+    def test_default_town_backfills_when_gemini_guess_is_empty(self):
+        """45.4: `EventSource.default_town` is the same fallback-not-override
+        contract as devtools' `force_town`, just resolved per staged event
+        inside the publish loop (each event's own source) instead of
+        threaded down from the caller -- see `resolve_town`'s docstring.
+        """
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self._staged_from_source("Mystery Venue Show", town="", default_town=raleigh)
+
+        publish_all_approved()
+
+        event = Event.objects.get(title="Mystery Venue Show")
+        self.assertEqual(event.town_id, raleigh.id)
+
+    def test_default_town_is_a_fallback_not_an_override(self):
+        """Regression for the bug PR #42 already fixed once: a source's
+        default_town must not flatten an event Gemini correctly placed in a
+        different, covered town.
+        """
+        cary = make_town(slug="cary", name="Cary")
+        raleigh = make_town(slug="raleigh", name="Raleigh")
+        self._staged_from_source("Cary Show", town="Cary", default_town=raleigh)
+
+        publish_all_approved()
+
+        event = Event.objects.get(title="Cary Show")
+        self.assertEqual(event.town_id, cary.id)
+
+    def test_no_default_town_behaves_as_today(self):
+        """A source with no `default_town` set (the status quo) still lands a
+        blank-town event in `skipped_no_town`, exactly as before 45.4.
+        """
+        self._staged_from_source("No Town Show", town="", default_town=None)
+
+        result = publish_all_approved()
+
+        self.assertEqual(result["published"], 0)
+        self.assertFalse(Event.objects.exists())
+        self.assertEqual(StagedEvent.objects.get(title="No Town Show").status, "skipped_no_town")
+
+    def test_explicit_force_town_wins_over_source_default_town(self):
+        """An operator's explicit `force_town` (devtools) still takes
+        priority over a source's own `default_town` when both would apply --
+        it's a more specific, deliberate choice for *this run*.
+        """
+        source_default = make_town(slug="raleigh", name="Raleigh")
+        operator_choice = make_town(slug="durham", name="Durham")
+        self._staged_from_source("Ambiguous Show", town="", default_town=source_default)
+
+        publish_all_approved(force_town=operator_choice)
+
+        event = Event.objects.get(title="Ambiguous Show")
+        self.assertEqual(event.town_id, operator_choice.id)
+
     def test_second_run_does_not_relog_an_already_skipped_row(self):
         """36.1's stated QA: a second consecutive pipeline run must not
         re-emit the 'no Town matches' warning for a row the first run already
@@ -264,7 +338,7 @@ class IngestDirectSubmissionTownMissTests(TestCase):
             raw_title="Raw Out of Area Show",
             raw_description="A show",
             raw_location="Some Venue, Greensboro, NC",
-            raw_start=START,
+            raw_start_datetime=START,
             source_url="",  # avoids fetch_page_text network call
             source_uid="direct-uid-greensboro",
         )

@@ -32,7 +32,7 @@ class DirectIngestTests(TestCase):
             raw_title="Raw Concert",
             raw_description="A show",
             raw_location="Cat's Cradle, Carrboro, NC",
-            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            raw_start_datetime=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # avoids fetch_page_text network call
             source_uid="direct-uid-1",
             raw_organizer="The MAKRS Society",
@@ -162,7 +162,7 @@ class DirectIngestOrphanPreventionTests(TestCase):
             raw_title="Raw Concert",
             raw_description="A show",
             raw_location="Cat's Cradle, Carrboro, NC",
-            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            raw_start_datetime=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # avoids fetch_page_text network call
             source_uid="direct-uid-orphan",
             raw_organizer="The MAKRS Society",
@@ -195,7 +195,7 @@ class DirectIngestOrphanPreventionTests(TestCase):
             description="d",
             location_name=self.STD_PAYLOAD["location_name"],
             town=self.STD_PAYLOAD["town"],
-            start_datetime=self.raw.raw_start,
+            start_datetime=self.raw.raw_start_datetime,
             status="published",
         )
 
@@ -259,7 +259,7 @@ class DirectIngestOrphanPreventionTests(TestCase):
             description="d",
             location_name=self.STD_PAYLOAD["location_name"],
             town=self.STD_PAYLOAD["town"],
-            start_datetime=self.raw.raw_start,
+            start_datetime=self.raw.raw_start_datetime,
             status="published",
         )
 

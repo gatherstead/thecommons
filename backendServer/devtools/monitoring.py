@@ -48,9 +48,23 @@ _RECENT_RUNS_PER_SOURCE = 5
 # alongside `inactive` (same value, not just "also near the end") — a
 # direct/push source is excluded from staleness alerting for the identical
 # reason an inactive one is: nothing ever polls it, so "stale" doesn't apply.
-# This dict is read by both `_worse()` and the results sort below; a level
-# missing from it is a `KeyError` that takes the whole page down (ticket 40.2).
-_HEALTH_RANK = {"error": 0, "warn": 1, "unknown": 2, "ok": 3, "inactive": 4, "push": 4}
+# `quarantined` (45.7) ranks just below `warn`: a source we already know is
+# blocked (vendor WAF on the prod egress IP) is still worth a glance above
+# `unknown`/`ok`, but it is an *expected* failure, not a new one, so it must
+# not compete with `error`/`warn` for attention the way a real regression
+# does — that competition (burying new failures under expected ones) is the
+# whole reason quarantine exists. This dict is read by both `_worse()` and
+# the results sort below; a level missing from it is a `KeyError` that takes
+# the whole page down (ticket 40.2).
+_HEALTH_RANK = {
+    "error": 0,
+    "warn": 1,
+    "quarantined": 2,
+    "unknown": 3,
+    "ok": 4,
+    "inactive": 5,
+    "push": 5,
+}
 
 # How readable `ingestion_sourcerun` is on a target database. A three-state
 # value rather than a bool because the three failure causes need different
@@ -264,14 +278,24 @@ def source_health(source_row, recent_runs, now):
     source. `now` is a datetime compared against `last_polled_dt` /
     `created_at`.
 
-    Returns {"level": "ok" | "unknown" | "warn" | "error" | "inactive" |
-    "push", "reasons": [str, ...]}. Every applicable rule is evaluated and its
-    reason collected; the most severe level (error > warn > unknown > ok)
-    wins. Inactive sources are excluded from alerting entirely and always
-    report "inactive", never "error". Direct/push sources (ticket 40.2) are
-    excluded the same way but report the distinct "push" level instead, since
-    `inactive` reads as "broken" for a source that is working exactly as
-    designed — pushed to by users, never polled.
+    Returns {"level": "ok" | "unknown" | "warn" | "error" | "quarantined" |
+    "inactive" | "push", "reasons": [str, ...]}. Every applicable rule is
+    evaluated and its reason collected; the most severe level (error > warn >
+    quarantined > unknown > ok) wins. Inactive sources are excluded from
+    alerting entirely and always report "inactive", never "error". Direct/push
+    sources (ticket 40.2) are excluded the same way but report the distinct
+    "push" level instead, since `inactive` reads as "broken" for a source that
+    is working exactly as designed — pushed to by users, never polled.
+
+    Quarantine (ticket 45.7, `EventSource.blocked_reason`) is evaluated last
+    and only ever downgrades: an otherwise-"error" result on a quarantined
+    source becomes "quarantined" instead, since a nightly failure from a
+    source we already know a vendor WAF blocks is expected, not a new
+    regression, and must not compete with real failures for attention (or
+    inflate the monitor's `error` tile). A quarantined source that clears
+    every other rule is still reported "ok" — quarantine never *adds*
+    severity, so the refused -> ok recovery signal (the one thing that
+    actually matters once the egress fix lands) is never masked.
     """
     # Direct-submission sources (ingestion/views.py:76-80) are deliberately
     # created `active=False` because they're pushed to by users, not polled —
@@ -321,6 +345,18 @@ def source_health(source_row, recent_runs, now):
             if source_row.get("published_all_time", 0) == 0:
                 reasons.append("raw events arriving but none published in window")
                 level = _worse(level, "warn")
+
+    # 45.7: quarantine only downgrades an "error" result, and only an "error"
+    # result -- a quarantined source that is merely "warn"/"unknown" is left
+    # alone, since those levels are already below `quarantined` in
+    # `_HEALTH_RANK` and downgrading further would bury a real (if lesser)
+    # signal. Checked last, after every other rule has had its say.
+    blocked_reason = source_row.get("blocked_reason")
+    if blocked_reason and level == "error":
+        blocked_since = source_row.get("blocked_since")
+        since_note = f" since {blocked_since}" if blocked_since else ""
+        reasons.insert(0, f"quarantined{since_note} — known-blocked: {blocked_reason}")
+        level = "quarantined"
 
     return {"level": level, "reasons": reasons}
 
@@ -401,6 +437,8 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             "last_polled",
             "poll_interval_hours",
             "created_at",
+            "blocked_reason",
+            "blocked_since",
         )
     )
     if not sources:
@@ -627,6 +665,12 @@ def _source_rows(db, start, end, source_type_filter, runs_state=None):
             "url": source["url"],
             "active": source["active"],
             "last_polled": _iso(source["last_polled"]),
+            # 45.7: known-blocked flag, surfaced on the row so the template can
+            # render it even when `health.level` isn't "quarantined" (e.g. a
+            # quarantined source that just came back "ok" still carries its
+            # blocked_reason until an operator clears it).
+            "blocked_reason": source["blocked_reason"],
+            "blocked_since": _iso(source["blocked_since"]),
             "raw_count": raw_in_window,
             # Un-windowed, so this template can tell "zero in this window" from
             # "zero ever" — see the query comment above. `raw_all_time` stays 0
@@ -768,8 +812,8 @@ def summarize_sources(rows: list[dict], now=None) -> dict:
     {
         "funnel": {"raw": int, "published": int, "held_for_review": int,
                    "duplicate": int, "no_town": int},
-        "health": {"error": int, "warn": int, "unknown": int, "ok": int,
-                   "inactive": int, "push": int},
+        "health": {"error": int, "warn": int, "quarantined": int, "unknown": int,
+                   "ok": int, "inactive": int, "push": int},
         "freshness": {"newest_raw_created_at": str | None,
                       "polled_last_24h": int},
     }

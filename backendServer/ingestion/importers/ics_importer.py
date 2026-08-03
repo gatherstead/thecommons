@@ -51,25 +51,25 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:  # noqa: C901  # ICS 
         if dtstart is None:
             continue
 
-        raw_start = dtstart.dt
-        raw_end = dtend.dt if dtend else None
+        raw_start_datetime = dtstart.dt
+        raw_end_datetime = dtend.dt if dtend else None
 
         # Convert date objects to datetime (all-day events)
-        if isinstance(raw_start, date) and not isinstance(raw_start, datetime):
-            raw_start = datetime.combine(raw_start, datetime.min.time())
-            raw_start = timezone.make_aware(raw_start)
-        elif timezone.is_naive(raw_start):
-            raw_start = timezone.make_aware(raw_start)
+        if isinstance(raw_start_datetime, date) and not isinstance(raw_start_datetime, datetime):
+            raw_start_datetime = datetime.combine(raw_start_datetime, datetime.min.time())
+            raw_start_datetime = timezone.make_aware(raw_start_datetime)
+        elif timezone.is_naive(raw_start_datetime):
+            raw_start_datetime = timezone.make_aware(raw_start_datetime)
 
-        if raw_end:
-            if isinstance(raw_end, date) and not isinstance(raw_end, datetime):
-                raw_end = datetime.combine(raw_end, datetime.min.time())
-                raw_end = timezone.make_aware(raw_end)
-            elif timezone.is_naive(raw_end):
-                raw_end = timezone.make_aware(raw_end)
+        if raw_end_datetime:
+            if isinstance(raw_end_datetime, date) and not isinstance(raw_end_datetime, datetime):
+                raw_end_datetime = datetime.combine(raw_end_datetime, datetime.min.time())
+                raw_end_datetime = timezone.make_aware(raw_end_datetime)
+            elif timezone.is_naive(raw_end_datetime):
+                raw_end_datetime = timezone.make_aware(raw_end_datetime)
 
         # Skip past events
-        if raw_start < timezone.now():
+        if raw_start_datetime < timezone.now():
             continue
 
         # Get URL: first try the ICS URL property, then extract from description
@@ -89,8 +89,8 @@ def fetch_ics_feed(source: EventSource) -> list[RawEvent]:  # noqa: C901  # ICS 
                 "raw_title": raw_title[:500],
                 "raw_description": raw_description,
                 "raw_location": raw_location[:500],
-                "raw_start": raw_start,
-                "raw_end": raw_end,
+                "raw_start_datetime": raw_start_datetime,
+                "raw_end_datetime": raw_end_datetime,
                 "source_url": source_url[:500] if source_url else "",
             },
         )

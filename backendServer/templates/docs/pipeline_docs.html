@@ -52,7 +52,7 @@ ICS Source URL
   <p>Runs automatically at the start of every pipeline run before any new events are fetched.</p>
   <ol>
     <li>Delete all <code>StagedEvent</code> records where <code>start_datetime</code> is in the past — <strong>except</strong> those with <code>status='approved'</code> and no <code>published_event</code> yet. <code>status='published'</code> rows are past-dated like any other and are not excepted — they've served their purpose as a dedupe anchor once their event date has passed.</li>
-    <li>Delete all <code>RawEvent</code> records where <code>raw_start</code> is in the past — <strong>except</strong> those still backing an approved+unpublished staged event.</li>
+    <li>Delete all <code>RawEvent</code> records where <code>raw_start_datetime</code> is in the past — <strong>except</strong> those still backing an approved+unpublished staged event.</li>
   </ol>
   <table>
     <tr><th>Preserved</th><th>Deleted</th></tr>

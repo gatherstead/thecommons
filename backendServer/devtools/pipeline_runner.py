@@ -78,7 +78,7 @@ def _run_fetch_stage(q, source, limit):
 
     fetch_records = list(
         RawEvent.objects.filter(source=source).values(
-            "id", "raw_title", "raw_location", "raw_start", "source_url", "source_uid"
+            "id", "raw_title", "raw_location", "raw_start_datetime", "source_url", "source_uid"
         )
     )
     q.put(("stage_data", {"stage": "fetch", "records": fetch_records}))

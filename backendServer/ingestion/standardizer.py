@@ -73,6 +73,13 @@ Additional context scraped from the event webpage (use this to find price, cost,
 {page_text}
 """
 
+# Matches "cancelled"/"canceled" (either spelling) anywhere in a title, so
+# *CANCELLED*, "Canceled – Fall Festival", and "CANCELED: Movie Night" all
+# hit — the surrounding asterisks/dashes/colons are just substring context,
+# not part of the pattern. Title only, deliberately: a description like "rain
+# date if cancelled" must not trip this (see standardize_event below).
+CANCELLED_TITLE_RE = re.compile(r"cancell?ed", re.IGNORECASE)
+
 
 def _coerce_str(value, fallback: str) -> str:
     """Return `value` as a string, falling back when it's null/missing/blank.
@@ -150,6 +157,36 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
     """
     Send a RawEvent through Gemini to produce a standardized StagedEvent.
     """
+    # Central chokepoint for the cancellation guard — every source passes
+    # through here, unlike the two per-scraper guards (morrisvillechamber,
+    # eventbriteraleigh) that only cover their own source. Checked against
+    # `raw_title` (pre-standardization) and placed before the Gemini call so a
+    # cancelled event never costs an API call — the title is already available
+    # off the RawEvent, so there's nothing gained by waiting for standardized
+    # output (which could even reword "CANCELLED" out of the title). Lands the
+    # row in the terminal `cancelled` status rather than deleting it or
+    # reusing `rejected`, mirroring the `skipped_no_town` precedent: visible
+    # in the monitor, and RawEvent is still marked processed so it isn't
+    # re-billed to Gemini on every subsequent run.
+    if CANCELLED_TITLE_RE.search(raw_event.raw_title or ""):
+        staged = StagedEvent.objects.create(
+            raw_event=raw_event,
+            title=raw_event.raw_title[:500],
+            description=raw_event.raw_description,
+            location_name=raw_event.raw_location[:255],
+            town="",
+            start_datetime=raw_event.raw_start_datetime,
+            end_datetime=raw_event.raw_end_datetime,
+            tags=[],
+            price=-1,
+            link=raw_event.source_url[:500] if raw_event.source_url else "",
+            status="cancelled",
+        )
+        raw_event.processed = True
+        raw_event.save(update_fields=["processed"])
+        logger.info(f"Cancelled (title match): {staged.title}")
+        return staged
+
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
     max_retries = 3
@@ -167,8 +204,10 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
         title=raw_event.raw_title,
         description=raw_event.raw_description,
         location=raw_event.raw_location,
-        start=raw_event.raw_start.isoformat(),
-        end=raw_event.raw_end.isoformat() if raw_event.raw_end else "Not specified",
+        start=raw_event.raw_start_datetime.isoformat(),
+        end=raw_event.raw_end_datetime.isoformat()
+        if raw_event.raw_end_datetime
+        else "Not specified",
         page_text=page_text or "No webpage available",
     )
     if prompt_suffix:
@@ -251,8 +290,8 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
         description=_coerce_str(data.get("description"), ""),
         location_name=_coerce_str(data.get("location_name"), raw_event.raw_location)[:255],
         town=_coerce_str(data.get("town"), "")[:100],
-        start_datetime=raw_event.raw_start,
-        end_datetime=raw_event.raw_end,
+        start_datetime=raw_event.raw_start_datetime,
+        end_datetime=raw_event.raw_end_datetime,
         tags=valid_tags,
         price=price,
         link=link[:500],

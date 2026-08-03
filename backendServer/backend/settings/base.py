@@ -83,7 +83,11 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# The product serves only America/New_York towns. USE_TZ=True keeps all
+# storage in UTC regardless of this setting — TIME_ZONE only controls how
+# aware datetimes localize for display (admin columns, {% now %}, and the
+# date/time template filters used by the digest emails).
+TIME_ZONE = "America/New_York"
 USE_I18N = True
 USE_TZ = True
 

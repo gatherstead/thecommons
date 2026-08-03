@@ -87,8 +87,8 @@ def _probe_dry_run_write(q, db, source, raw_events):
                     "raw_title": raw["raw_title"][:500],
                     "raw_description": raw["raw_description"],
                     "raw_location": raw["raw_location"][:500],
-                    "raw_start": raw["raw_start"],
-                    "raw_end": raw["raw_end"],
+                    "raw_start_datetime": raw["raw_start_datetime"],
+                    "raw_end_datetime": raw["raw_end_datetime"],
                     "source_url": raw["source_url"][:500] if raw["source_url"] else "",
                 },
             )
@@ -173,23 +173,23 @@ def _probe_ics(q, url, source, db):  # noqa: C901  # mirrors fetch_ics_feed's da
         if not uid:
             uid = hashlib.sha256(f"{raw_title}{dtstart.dt}".encode()).hexdigest()
 
-        raw_start = dtstart.dt
-        raw_end = dtend.dt if dtend else None
+        raw_start_datetime = dtstart.dt
+        raw_end_datetime = dtend.dt if dtend else None
 
-        if isinstance(raw_start, date) and not isinstance(raw_start, datetime):
-            raw_start = datetime.combine(raw_start, datetime.min.time())
-            raw_start = timezone.make_aware(raw_start)
-        elif timezone.is_naive(raw_start):
-            raw_start = timezone.make_aware(raw_start)
+        if isinstance(raw_start_datetime, date) and not isinstance(raw_start_datetime, datetime):
+            raw_start_datetime = datetime.combine(raw_start_datetime, datetime.min.time())
+            raw_start_datetime = timezone.make_aware(raw_start_datetime)
+        elif timezone.is_naive(raw_start_datetime):
+            raw_start_datetime = timezone.make_aware(raw_start_datetime)
 
-        if raw_end:
-            if isinstance(raw_end, date) and not isinstance(raw_end, datetime):
-                raw_end = datetime.combine(raw_end, datetime.min.time())
-                raw_end = timezone.make_aware(raw_end)
-            elif timezone.is_naive(raw_end):
-                raw_end = timezone.make_aware(raw_end)
+        if raw_end_datetime:
+            if isinstance(raw_end_datetime, date) and not isinstance(raw_end_datetime, datetime):
+                raw_end_datetime = datetime.combine(raw_end_datetime, datetime.min.time())
+                raw_end_datetime = timezone.make_aware(raw_end_datetime)
+            elif timezone.is_naive(raw_end_datetime):
+                raw_end_datetime = timezone.make_aware(raw_end_datetime)
 
-        if raw_start < timezone.now():
+        if raw_start_datetime < timezone.now():
             continue
 
         # Same URL fallback as fetch_ics_feed (ics_importer.py:76-82): prefer
@@ -208,8 +208,8 @@ def _probe_ics(q, url, source, db):  # noqa: C901  # mirrors fetch_ics_feed's da
                 "raw_title": raw_title,
                 "raw_description": raw_description,
                 "raw_location": raw_location,
-                "raw_start": raw_start,
-                "raw_end": raw_end,
+                "raw_start_datetime": raw_start_datetime,
+                "raw_end_datetime": raw_end_datetime,
                 "source_url": source_url,
             }
         )
@@ -301,8 +301,8 @@ def _probe_extract(q, scraper, html, source, db):
             "raw_title": item.title,
             "raw_description": item.description,
             "raw_location": item.location,
-            "raw_start": item.start,
-            "raw_end": item.end,
+            "raw_start_datetime": item.start,
+            "raw_end_datetime": item.end,
             "source_url": item.source_url,
         }
         for item in items

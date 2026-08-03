@@ -301,9 +301,93 @@ class SourceHealthTests(SimpleTestCase):
         # `_source_rows` — a level missing from it is a KeyError that takes
         # the whole page down (this is exactly how `push` was almost added:
         # ticket 40.2). `push` is ranked alongside `inactive`, at the end.
-        for level in ("error", "warn", "unknown", "ok", "inactive", "push"):
+        for level in ("error", "warn", "quarantined", "unknown", "ok", "inactive", "push"):
             self.assertIn(level, _HEALTH_RANK)
         self.assertEqual(_HEALTH_RANK["push"], _HEALTH_RANK["inactive"])
+
+
+@tag("fast")
+class QuarantineHealthTests(SimpleTestCase):
+    """45.7: `blocked_reason` downgrades an otherwise-"error" result to the
+    distinct "quarantined" level, so a known-blocked source's expected
+    nightly failure doesn't compete with real regressions for attention or
+    inflate the monitor's `error` tile.
+    """
+
+    def setUp(self):
+        env_without_shard = {k: v for k, v in os.environ.items() if k != "INGEST_SHARD_COUNT"}
+        patcher = mock.patch.dict(os.environ, env_without_shard, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_refused_run_on_a_quarantined_source_is_quarantined_not_error(self):
+        row = make_row()
+        row["blocked_reason"] = "vendor WAF blocks prod egress IP"
+        row["blocked_since"] = "2026-07-15"
+        runs = [make_run("refused", "empty_fetch"), make_run("refused", "empty_fetch")]
+        result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "quarantined")
+        self.assertTrue(any("known-blocked" in r for r in result["reasons"]))
+        self.assertTrue(any("vendor WAF blocks prod egress IP" in r for r in result["reasons"]))
+        # The underlying run-based reason is still recorded, not replaced —
+        # an operator inspecting the row can see both "why quarantined" and
+        # "what actually happened last night".
+        self.assertTrue(any("empty_fetch" in r for r in result["reasons"]))
+
+    def test_same_failures_without_blocked_reason_are_plain_error(self):
+        # Control: identical run history, no `blocked_reason` set -> the
+        # ordinary "error" path, unaffected by the quarantine check.
+        row = make_row()
+        runs = [make_run("refused", "empty_fetch"), make_run("refused", "empty_fetch")]
+        result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "error")
+
+    def test_quarantined_source_that_recovers_reports_ok_not_masked(self):
+        # The whole point of quarantine: once the source starts succeeding
+        # again, that must be visible as "ok", not hidden behind a permanent
+        # "quarantined" badge. This is the refused -> ok signal that tells an
+        # operator the egress fix landed.
+        row = make_row()
+        row["blocked_reason"] = "vendor WAF blocks prod egress IP"
+        result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "ok")
+
+    def test_quarantine_does_not_downgrade_a_warn_level_result(self):
+        # Quarantine only intercepts an "error" result. A quarantined source
+        # that is merely "warn" (e.g. zero raw events, no run-based failure)
+        # is left as "warn", not further muted to "quarantined".
+        row = make_row(raw_count=0, published=0)
+        row["blocked_reason"] = "vendor WAF blocks prod egress IP"
+        result = source_health(row, [make_run("ok")], NOW)
+        self.assertEqual(result["level"], "warn")
+
+    def test_quarantine_without_blocked_since_still_downgrades(self):
+        # blocked_since is informational only -- an absent value must not
+        # prevent the downgrade.
+        row = make_row()
+        row["blocked_reason"] = "vendor WAF blocks prod egress IP"
+        runs = [make_run("refused", "empty_fetch"), make_run("refused", "empty_fetch")]
+        result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "quarantined")
+
+    def test_blank_blocked_reason_does_not_quarantine(self):
+        # The model default (`blank=True, default=""`) must not accidentally
+        # quarantine every source.
+        row = make_row()
+        row["blocked_reason"] = ""
+        runs = [make_run("refused", "empty_fetch"), make_run("refused", "empty_fetch")]
+        result = source_health(row, runs, NOW)
+        self.assertEqual(result["level"], "error")
+
+    def test_inactive_quarantined_source_stays_inactive(self):
+        # The `active` gate is checked before any run-based evaluation, so a
+        # quarantined-but-inactive source still reports "inactive" — the
+        # quarantine downgrade never fires because level never reaches
+        # "error" in the first place.
+        row = make_row(active=False, last_polled_dt=None, raw_count=0, published=0)
+        row["blocked_reason"] = "vendor WAF blocks prod egress IP"
+        result = source_health(row, [make_run("failed", "boom")], NOW)
+        self.assertEqual(result["level"], "inactive")
 
 
 @tag("fast")
@@ -398,7 +482,15 @@ class SummarizeSourcesTests(SimpleTestCase):
         )
         self.assertEqual(
             result["health"],
-            {"error": 0, "warn": 0, "unknown": 0, "ok": 0, "inactive": 0, "push": 0},
+            {
+                "error": 0,
+                "warn": 0,
+                "quarantined": 0,
+                "unknown": 0,
+                "ok": 0,
+                "inactive": 0,
+                "push": 0,
+            },
         )
         self.assertIsNone(result["freshness"]["newest_raw_created_at"])
         self.assertEqual(result["freshness"]["polled_last_24h"], 0)
@@ -435,14 +527,37 @@ class SummarizeSourcesTests(SimpleTestCase):
             make_source_row(health_level="error"),
             make_source_row(health_level="error"),
             make_source_row(health_level="warn"),
+            make_source_row(health_level="quarantined"),
             make_source_row(health_level="ok"),
             make_source_row(health_level="push"),
         ]
         result = summarize_sources(rows, now=NOW)
         self.assertEqual(
             result["health"],
-            {"error": 2, "warn": 1, "unknown": 0, "ok": 1, "inactive": 0, "push": 1},
+            {
+                "error": 2,
+                "warn": 1,
+                "quarantined": 1,
+                "unknown": 0,
+                "ok": 1,
+                "inactive": 0,
+                "push": 1,
+            },
         )
+
+    def test_quarantined_sources_do_not_count_toward_the_error_bucket(self):
+        # 45.7's headline requirement: a page full of quarantined sources
+        # must not report overall pipeline health as degraded via the
+        # `error` count -- only genuinely erroring sources land there.
+        rows = [
+            make_source_row(health_level="quarantined"),
+            make_source_row(health_level="quarantined"),
+            make_source_row(health_level="quarantined"),
+            make_source_row(health_level="ok"),
+        ]
+        result = summarize_sources(rows, now=NOW)
+        self.assertEqual(result["health"]["error"], 0)
+        self.assertEqual(result["health"]["quarantined"], 3)
 
     def test_newest_raw_event_compares_real_datetimes_not_strings(self):
         # The whole point of parsing with fromisoformat instead of comparing

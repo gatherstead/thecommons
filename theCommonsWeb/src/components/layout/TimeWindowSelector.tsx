@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventWindow } from '../../hooks/useEvents';
 
-const WINDOW_OPTIONS: { id: EventWindow; label: string; short: string }[] = [
+export const WINDOW_OPTIONS: { id: EventWindow; label: string; short: string }[] = [
     { id: '3months', label: 'Next 3 Months', short: '3 Months' },
     { id: '6months', label: 'Next 6 Months', short: '6 Months' },
     { id: '12months', label: 'Next 12 Months', short: '12 Months' },

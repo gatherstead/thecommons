@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackendEvent, PaginatedBackendEvents } from '@/models/eventsModels';
 import { renderHookWithClient } from '../../../vitest.setup';
-import { useEvents } from '../useEvents';
+import { useEvents, type ViewMode } from '../useEvents';
 
 function backendEvent(over: Partial<BackendEvent>): BackendEvent {
     return {
@@ -84,5 +84,35 @@ describe('useEvents', () => {
             expect(eventUrls.length).toBeGreaterThan(initialCalls);
             expect(eventUrls.some(u => u.includes('window=past'))).toBe(true);
         });
+    });
+
+    it('preserves the selected window across a feed <-> calendar toggle', async () => {
+        const { result, rerender } = renderHookWithClient(
+            (viewMode: ViewMode) => useEvents(viewMode),
+            { initialProps: 'feed' },
+        );
+
+        await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
+
+        act(() => result.current.setWindow('12months'));
+        expect(result.current.currentWindow).toBe('12months');
+
+        rerender('calendar');
+        rerender('feed');
+
+        expect(result.current.currentWindow).toBe('12months');
+    });
+
+    it('changing category does not reset the selected window', async () => {
+        const { result } = renderHookWithClient(() => useEvents());
+
+        await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
+
+        act(() => result.current.setWindow('6months'));
+        expect(result.current.currentWindow).toBe('6months');
+
+        act(() => result.current.setCategory('music'));
+
+        expect(result.current.currentWindow).toBe('6months');
     });
 });

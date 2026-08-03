@@ -36,6 +36,15 @@ def events_list_key(query_params):
     return f"events:list:v{_events_list_version()}:{digest}"
 
 
+def events_facets_key(query_params):
+    """Deterministic key for a facet-count request. Shares the list version counter
+    with `events_list_key` so `invalidate_events_list()` invalidates both."""
+    items = sorted((k, v) for k in query_params for v in query_params.getlist(k))
+    raw = "&".join(f"{k}={v}" for k, v in items)
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return f"events:facets:v{_events_list_version()}:{digest}"
+
+
 def invalidate_events_list():
     """Bump the list version so all cached event-list pages are bypassed."""
     try:

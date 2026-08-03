@@ -83,6 +83,24 @@ export const getCategories = async (): Promise<CategoryOption[]> => {
     }
 };
 
+// --- GET FACET COUNTS (towns + tags, over the full filtered set) ---
+export interface EventFacets {
+    towns: Record<string, number>;
+    tags: Record<string, number>;
+}
+
+export const getFacets = async (params?: { window?: string; category?: string }): Promise<EventFacets> => {
+    const query = new URLSearchParams();
+    if (params?.window) query.set('window', params.window);
+    if (params?.category) query.set('category', params.category);
+    const qs = query.toString();
+    const url = `${API_BASE}/events/facets/${qs ? `?${qs}` : ''}`;
+
+    const response = await fetch(url);
+    if (!response.ok) throw await httpError('GET', url, response);
+    return await response.json();
+};
+
 // --- GET ALL EVENTS ---
 export const getEvents = async (params?: {
     after?: string;

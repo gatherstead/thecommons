@@ -27,7 +27,13 @@
     return false;
   }
 
+  // Terms from a select2_multi/react_select field that matched nothing in the
+  // destination vocabulary — surfaced in the review banner so a mis-mapped
+  // category never fails silently again (see suite 46.1).
+  const unmatchedTerms = [];
+
   async function runFill(recipe) {
+    unmatchedTerms.length = 0;
     const fields = recipe.fields || [];
     // Some forms render after page "complete"; adapters can specify a
     // ready_selector, otherwise we fall back to the first field.
@@ -42,6 +48,9 @@
       } catch (e) {
         console.warn("Commons Broadcast: field failed", field.selector, e);
       }
+    }
+    if (unmatchedTerms.length) {
+      console.warn("Commons Broadcast: unmatched category terms", unmatchedTerms);
     }
     showBanner(recipe);
     highlightTargets(recipe);
@@ -298,20 +307,47 @@
   }
 
   // select2 result labels sometimes carry a trailing count, e.g.
-  // "Music (12)" — strip it and collapse whitespace before comparing.
+  // "Music (12)" — strip it, normalize a few punctuation variants the verified
+  // vocabularies use (&, /, apostrophes, en-dashes), and collapse whitespace
+  // before comparing.
   function normalizeSelect2Label(text) {
     return (text || "")
       .replace(/\(\d+\)\s*$/, "")
+      .replace(/&/g, "and")
+      .replace(/[’']/g, "")
+      .replace(/[–—]/g, "-")
+      .replace(/\//g, " ")
       .trim()
       .toLowerCase()
       .replace(/\s+/g, " ");
   }
 
+  // Ranked match against a list of option elements: exact normalized match
+  // first, then a prefix match (candidate label starts with the search term).
+  // No substring/token-set fallback — with ABC11's slash-compounds and TW's 62
+  // terms that produces false positives (e.g. "Market" pulling in "Art Market
+  // and Exhibition"), and the corrected category maps make it unnecessary.
+  function bestLabelMatch(options, term, getLabel) {
+    const norm = normalizeSelect2Label(term);
+    if (!norm) return null;
+    let prefix = null;
+    for (const opt of options) {
+      const label = normalizeSelect2Label(getLabel(opt));
+      if (!label) continue;
+      if (label === norm) return opt;
+      if (!prefix && label.startsWith(norm)) prefix = opt;
+    }
+    return prefix;
+  }
+
   // Multi-taxonomy select2 driver (Tribe Events categories). field.value is a
-  // comma-separated list; a term is only chosen on an exact (normalized) label
-  // match — loose substring matching pulled in unrelated site terms (e.g.
-  // "Market" matching "Art Market and Exhibition"). Unmatched terms are
-  // skipped silently, leaving the widget untouched.
+  // comma-separated list; a term is chosen on an exact (normalized) label
+  // match, else a prefix match (see bestLabelMatch) — loose substring matching
+  // pulled in unrelated site terms (e.g. "Market" matching "Art Market and
+  // Exhibition"). The search box never actually filters the AJAX dropdown (it
+  // always renders the full ~62-term vocabulary), so we match against whatever
+  // renders rather than waiting on a query that never fires. Unmatched terms
+  // are reported via unmatchedTerms, never silently dropped.
   async function fillSelect2Multi(field) {
     const terms = (field.value || "")
       .split(",")
@@ -335,7 +371,9 @@
         setNativeValue(searchInput, term);
         searchInput.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
 
-        await sleep(1200);
+        // The typed term never actually filters this dropdown (bug A) — just
+        // wait for it to render, not for a query that won't fire.
+        await sleep(250);
 
         // The dropdown is body-appended.
         const options = [
@@ -343,19 +381,13 @@
             ".select2-dropdown li.select2-results__option:not(.select2-results__option--disabled)"
           ),
         ];
-        const norm = normalizeSelect2Label(term);
-        let match = null;
-        for (const opt of options) {
-          const label = normalizeSelect2Label(opt.textContent);
-          if (label && label === norm) {
-            match = match || opt;
-          }
-        }
+        const match = bestLabelMatch(options, term, (opt) => opt.textContent);
 
         if (match) {
           match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
           await sleep(300); // let select2 register the selection
         } else {
+          unmatchedTerms.push({ field: field.label || field.selector, term });
           document.dispatchEvent(
             new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
           );
@@ -369,9 +401,10 @@
   }
 
   // react-select typeahead driver (ABC11 Category). field.value is a comma-
-  // separated list; a term is only chosen on an exact (normalized) label
-  // match against the controlled vocabulary — unmatched terms are skipped
-  // silently, leaving the widget untouched.
+  // separated list; a term is chosen on an exact (normalized) label match,
+  // else a prefix match (see bestLabelMatch), against the controlled
+  // vocabulary. Unmatched terms are reported via unmatchedTerms, never
+  // silently dropped.
   async function fillReactSelect(field) {
     const terms = (field.value || "")
       .split(",")
@@ -393,13 +426,11 @@
           ...document.querySelectorAll(
             ".customSelect__option, [class*='__option']"
           ),
-        ].filter((o) => (o.textContent || "").trim());
-        const norm = normalizeSelect2Label(term);
-        const match = options.find(
+        ].filter(
           (o) =>
-            o.getAttribute("aria-disabled") !== "true" &&
-            normalizeSelect2Label(o.textContent) === norm
+            (o.textContent || "").trim() && o.getAttribute("aria-disabled") !== "true"
         );
+        const match = bestLabelMatch(options, term, (opt) => opt.textContent);
 
         if (match) {
           // react-select selects on mousedown.
@@ -407,6 +438,8 @@
           match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
           match.click();
           await sleep(300);
+        } else {
+          unmatchedTerms.push({ field: field.label || field.selector, term });
         }
         setNativeValue(input, "");
         await sleep(150);
@@ -463,8 +496,13 @@
     const captcha = recipe.captcha_hint
       ? ` Captcha: ${recipe.captcha_hint}.`
       : "";
+    const unmatched = unmatchedTerms.length
+      ? ` Not found in this site's category list — set manually: ${unmatchedTerms
+          .map((u) => u.term)
+          .join(", ")}.`
+      : "";
     bar.textContent =
-      `The Commons: fields filled.${captcha} Review, solve any captcha, then click Submit yourself.`;
+      `The Commons: fields filled.${captcha}${unmatched} Review, solve any captcha, then click Submit yourself.`;
     Object.assign(bar.style, {
       position: "fixed",
       top: "0",

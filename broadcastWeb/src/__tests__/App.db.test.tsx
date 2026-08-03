@@ -51,6 +51,8 @@ vi.mock("../services/broadcastApi", () => ({
       this.status = status;
     }
   },
+  SessionExpiredError: class SessionExpiredError extends Error {},
+  setTokenRefreshListener: vi.fn(),
   authHeaders: () => ({}),
   getAccess: getAccessMock,
   previewBroadcast: vi.fn(async () => ({ eligible: [], excluded: [] })),
@@ -368,5 +370,105 @@ describe("T8: hard reset", () => {
       configurable: true,
       value: originalLocation,
     });
+  });
+});
+
+describe("T9: reviewed-state lock and contact-info edit affordance", () => {
+  const draftFixture = {
+    draft_id: "d1",
+    title: "Test Event",
+    description: "Test description",
+    start_datetime: "2026-01-01T10:00",
+    end_datetime: "",
+    all_day: false,
+    venue_name: "Venue",
+    address_line1: "1 Main St",
+    state: "NC",
+    zip: "27701",
+    locality: ["durham"],
+    categories: ["music"],
+    event_url: "",
+    ticket_url: "",
+    price: "",
+    is_free: true,
+    image_url: "",
+    organizer_name: "Acme Org",
+    contact_email: "acme@example.com",
+    contact_phone: "919-555-0100",
+  };
+
+  const renderWithPreview = async () => {
+    localStorage.setItem(
+      "broadcast:draft:v2",
+      JSON.stringify({
+        draft: draftFixture,
+        preview: { eligible: [], excluded: [] },
+        selected: [],
+      }),
+    );
+    // The initial draft state spreads the persisted session's sticky contact
+    // fields *after* the persisted draft (see App.tsx), so the session copy
+    // must agree with the draft fixture or it silently blanks these fields.
+    localStorage.setItem(
+      "broadcast:session:v2",
+      JSON.stringify({
+        organizer_name: draftFixture.organizer_name,
+        contact_email: draftFixture.contact_email,
+        contact_phone: draftFixture.contact_phone,
+      }),
+    );
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "operator@thecommons.town" } },
+      isPending: false,
+    });
+    fetchJwtMock.mockResolvedValue("fake.jwt.token");
+    getAccessMock.mockResolvedValue({ tier: 2, is_trial: false, uses_remaining: null });
+    vi.resetModules();
+    const { default: FreshApp } = await import("../App");
+    return render(<FreshApp />);
+  };
+
+  it("dims the AI Autofill and Event form sections and names Make changes as the unlock", async () => {
+    await renderWithPreview();
+    await waitFor(() => {
+      expect(screen.getByText(/Acme Org/)).toBeInTheDocument();
+    });
+
+    const hints = screen.getAllByText(/Locked while.*reviewing this event/i);
+    expect(hints.length).toBe(2);
+    for (const hint of hints) {
+      expect(hint.textContent).toMatch(/Make changes/);
+    }
+
+    expect(screen.getByPlaceholderText(/Paste an event description/i)).toBeDisabled();
+  });
+
+  it("shows an Edit control on the collapsed contact summary that re-expands the fields in place", async () => {
+    await renderWithPreview();
+    await waitFor(() => {
+      expect(screen.getByText(/Acme Org/)).toBeInTheDocument();
+    });
+
+    // No affordance visible yet besides Edit — fields aren't rendered.
+    expect(screen.queryByLabelText(/Organizer \/ Organization Name/i)).toBeNull();
+
+    // clearDraft/clearSession aren't reset between tests in this file (unlike
+    // the other mocks in beforeEach), so snapshot call counts here rather than
+    // asserting "never called" across the whole suite run.
+    const clearDraftCallsBefore = vi.mocked(clearDraft).mock.calls.length;
+    const clearSessionCallsBefore = vi.mocked(clearSession).mock.calls.length;
+
+    const editButton = screen.getByRole("button", { name: /^Edit$/i });
+    editButton.click();
+
+    const nameInput = await screen.findByLabelText(/Organizer \/ Organization Name/i);
+    expect(nameInput).toHaveValue("Acme Org");
+    expect(nameInput).toBeEnabled();
+    expect(screen.getByLabelText(/Contact Email/i)).toHaveValue("acme@example.com");
+
+    // Reusing "Edit" must not touch the reset/sign-out path.
+    expect(vi.mocked(clearDraft).mock.calls.length).toBe(clearDraftCallsBefore);
+    expect(vi.mocked(clearSession).mock.calls.length).toBe(clearSessionCallsBefore);
+    expect(signOutMock).not.toHaveBeenCalled();
   });
 });

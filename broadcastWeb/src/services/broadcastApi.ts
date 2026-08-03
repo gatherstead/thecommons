@@ -1,7 +1,15 @@
 // Mirrors the house service pattern (theCommonsWeb/src/services/eventService.ts):
 // plain fetch per call, response.ok checks, no shared client wrapper.
 // Auth is passed per request via ApiAuth (Bearer JWT wins over access-code header).
+//
+// The SPA mints its JWT once on mount and holds it in memory for the whole
+// session (see App.tsx), so it eventually expires mid-session — the backend
+// then returns 401/403 (backendServer/broadcast/access.py deliberately does
+// NOT fall through to the access-code path for a present-but-invalid JWT).
+// authFetch() below transparently remints the token and retries once, so an
+// expired token never surfaces as a user-visible error.
 
+import { fetchJwt } from "../lib/authClient";
 import type { EventDraft, JobDetail, PreviewResult, Recipe } from "../models/broadcastModels";
 
 const RAW_BASE =
@@ -31,6 +39,18 @@ export class ApiError extends Error {
   }
 }
 
+// Distinguishable from ApiError so callers can branch on it (e.g. prompt the
+// user to sign in again) instead of rendering a raw backend error string.
+// Thrown only when a JWT-authenticated request fails auth and the follow-up
+// fetchJwt() also comes back empty — i.e. the Better Auth session itself is
+// gone, not just the in-memory token.
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Your session has expired. Please sign in again.");
+    this.name = "SessionExpiredError";
+  }
+}
+
 // Bearer JWT wins over the access-code header; neither = no auth header.
 export type ApiAuth = { jwt?: string; accessCode?: string };
 
@@ -38,6 +58,73 @@ export function authHeaders(auth: ApiAuth): Record<string, string> {
   if (auth.jwt) return { Authorization: `Bearer ${auth.jwt}` };
   if (auth.accessCode) return { "X-Broadcast-Access-Code": auth.accessCode };
   return {};
+}
+
+// App.tsx mints the JWT once on mount and holds it in state; when authFetch
+// remints a token behind the scenes, this lets App.tsx learn about it so the
+// *next* request doesn't immediately have to repeat the refresh dance. Purely
+// an optional hook — nothing here depends on it being registered.
+type TokenRefreshListener = (jwt: string) => void;
+let tokenRefreshListener: TokenRefreshListener | null = null;
+export function setTokenRefreshListener(listener: TokenRefreshListener | null): void {
+  tokenRefreshListener = listener;
+}
+
+// Single-flight: concurrent requests that all 401/403 together share one
+// in-flight fetchJwt() call instead of each minting their own token.
+let inFlightRefresh: Promise<string | null> | null = null;
+function refreshJwt(): Promise<string | null> {
+  if (!inFlightRefresh) {
+    inFlightRefresh = fetchJwt().finally(() => {
+      inFlightRefresh = null;
+    });
+  }
+  return inFlightRefresh;
+}
+
+// Wraps every authenticated fetch. On a 401/403 for a JWT-bearing request,
+// remints the token once and retries the same request; any other outcome
+// (access-code auth, non-auth-error status) passes through untouched. Retried
+// at most once — a failure on the retry is surfaced as-is by the caller.
+//
+// A 403 is ambiguous: the backend uses it both for a stale/invalid JWT (a
+// refresh fixes this) and for a legitimate business denial like an expired
+// access code (no refresh will ever fix this, and its `detail` message is
+// the whole point — see backendServer/broadcast/views.py:369-381). The
+// response body can't be trusted to tell those apart, but the token can:
+//   - refresh comes back with a DIFFERENT token → the token really was
+//     stale → retry once with the new token.
+//   - refresh comes back with the SAME token we just sent → the token was
+//     never the problem → leave the original response's error (status +
+//     backend detail) to surface as-is instead of masking it.
+//   - refresh comes back null → the Better Auth session itself is gone.
+//     For a 401 that's unambiguous (401 never carries business meaning on
+//     this backend — grep confirms it's never emitted), so it's reported as
+//     a session problem. A 403 is inherently ambiguous, though, and a failed
+//     refresh doesn't tell us *why* it failed — it never proves the 403 was
+//     a token issue, so the original response (with whatever business
+//     detail it carries) is left to surface rather than guessing.
+async function authFetch(url: string, init: RequestInit, auth: ApiAuth): Promise<Response> {
+  const response = await fetch(url, init);
+  if ((response.status !== 401 && response.status !== 403) || !auth.jwt) {
+    return response;
+  }
+  const sentJwt = auth.jwt;
+  const newJwt = await refreshJwt();
+  if (newJwt === null) {
+    if (response.status === 401) {
+      throw new SessionExpiredError();
+    }
+    return response;
+  }
+  if (newJwt === sentJwt) {
+    return response;
+  }
+  tokenRefreshListener?.(newJwt);
+  return fetch(url, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${newJwt}` },
+  });
 }
 
 const messageFor = (status: number, body: unknown): string => {
@@ -54,11 +141,15 @@ const messageFor = (status: number, body: unknown): string => {
 };
 
 async function post<T>(path: string, auth: ApiAuth, payload: object): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(auth) },
-    body: JSON.stringify(payload),
-  });
+  const response = await authFetch(
+    `${API_BASE}${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(auth) },
+      body: JSON.stringify(payload),
+    },
+    auth,
+  );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error(`POST ${path} failed:`, response.status, body);
@@ -70,9 +161,7 @@ async function post<T>(path: string, auth: ApiAuth, payload: object): Promise<T>
 export const getAccess = async (
   auth: ApiAuth,
 ): Promise<{ tier: 0 | 1 | 2; is_trial: boolean; uses_remaining: number | null }> => {
-  const response = await fetch(`${API_BASE}/broadcast/access`, {
-    headers: authHeaders(auth),
-  });
+  const response = await authFetch(`${API_BASE}/broadcast/access`, { headers: authHeaders(auth) }, auth);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error("GET /broadcast/access failed:", response.status, body);
@@ -110,9 +199,11 @@ export const getJob = async (
   auth: ApiAuth,
   jobId: string,
 ): Promise<JobDetail> => {
-  const response = await fetch(`${API_BASE}/broadcast/jobs/${jobId}`, {
-    headers: authHeaders(auth),
-  });
+  const response = await authFetch(
+    `${API_BASE}/broadcast/jobs/${jobId}`,
+    { headers: authHeaders(auth) },
+    auth,
+  );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error(`GET job ${jobId} failed:`, response.status);
@@ -162,11 +253,11 @@ export const uploadImage = async (
 ): Promise<{ url: string }> => {
   const formData = new FormData();
   formData.append("image", file);
-  const response = await fetch(`${API_BASE}/broadcast/upload-image`, {
-    method: "POST",
-    headers: authHeaders(auth),
-    body: formData,
-  });
+  const response = await authFetch(
+    `${API_BASE}/broadcast/upload-image`,
+    { method: "POST", headers: authHeaders(auth), body: formData },
+    auth,
+  );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error("POST /broadcast/upload-image failed:", response.status, body);
@@ -220,9 +311,10 @@ export const getManualRecipe = async (
   jobId: string,
   siteKey: string,
 ): Promise<Recipe> => {
-  const response = await fetch(
+  const response = await authFetch(
     `${API_BASE}/broadcast/jobs/${jobId}/manual/${siteKey}`,
     { headers: authHeaders(auth) },
+    auth,
   );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -238,9 +330,11 @@ export const openScreenshot = async (
   auth: ApiAuth,
   screenshotPath: string,
 ): Promise<void> => {
-  const response = await fetch(`${API_BASE}${screenshotPath}`, {
-    headers: authHeaders(auth),
-  });
+  const response = await authFetch(
+    `${API_BASE}${screenshotPath}`,
+    { headers: authHeaders(auth) },
+    auth,
+  );
   if (!response.ok) {
     console.error("screenshot fetch failed:", response.status);
     throw new ApiError(response.status, "Could not load the screenshot.");

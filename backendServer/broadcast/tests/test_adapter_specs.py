@@ -3,8 +3,10 @@ not the static recipe_fields list — otherwise event-dependent fields (e.g.
 ABC11's Duration, derived from start/end) are silently dropped on the headless
 path. No DB, no real browser — a stub Playwright page records fill() calls."""
 
+import dataclasses
 import tempfile
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from django.test import SimpleTestCase, tag
 
@@ -14,9 +16,9 @@ from broadcast.schema import CanonicalEvent
 
 
 class _StubLocator:
-    """Records fill() calls; everything else is inert so has_captcha()/
-    dismiss_consent()/_login_wall() (all wrapped in try/except in the
-    adapter/helpers) treat this as "nothing there" and move on."""
+    """Records fill()/set_input_files() calls; everything else is inert so
+    has_captcha()/dismiss_consent()/_login_wall() (all wrapped in try/except
+    in the adapter/helpers) treat this as "nothing there" and move on."""
 
     def __init__(self, page, selector):
         self._page = page
@@ -32,6 +34,9 @@ class _StubLocator:
     def fill(self, value, timeout=None):
         self._page.filled[self._selector] = value
 
+    def set_input_files(self, path, timeout=None):
+        self._page.files[self._selector] = path
+
     def click(self, timeout=None):
         self._page.clicked.append(self._selector)
 
@@ -42,6 +47,7 @@ class _StubPage:
 
     def __init__(self):
         self.filled: dict[str, str] = {}
+        self.files: dict[str, str] = {}
         self.clicked: list[str] = []
         self.url = "https://example.test/stub"
 
@@ -106,3 +112,41 @@ class Abc11FillUsesComputedSpecsTest(SimpleTestCase):
         self.assertIn("#eventDurationMinutes", page.filled)
         self.assertEqual(page.filled["#eventDurationHours"], "2")
         self.assertEqual(page.filled["#eventDurationMinutes"], "30")
+
+    def test_image_is_downloaded_and_set_on_the_file_input(self):
+        """46.8: an event with an image_url must reach the file input via
+        set_input_files — the adapter used to emit no image field at all."""
+        adapter = Abc11CommunityAdapter()
+        ev = dataclasses.replace(_make_event(), image_url="https://example.com/photo.jpg")
+        page = _StubPage()
+
+        with tempfile.TemporaryDirectory() as shots, tempfile.TemporaryDirectory() as dl:
+            ctx = RunContext(
+                dry_run=True, screenshot_dir=shots, download_dir=dl, submission_id="test"
+            )
+            with patch(
+                "broadcast.adapters.abc11_community.h.download_image",
+                return_value="/tmp/fake-photo.jpg",
+            ) as mock_download:
+                result = adapter.fill_and_submit(page, ev, ctx)
+
+        self.assertEqual(result.status, "succeeded")
+        mock_download.assert_called_once_with("https://example.com/photo.jpg", dl)
+        self.assertEqual(page.files.get(".image-field-esf input[type=file]"), "/tmp/fake-photo.jpg")
+
+    def test_no_image_field_touched_when_event_has_no_image(self):
+        adapter = Abc11CommunityAdapter()
+        ev = _make_event()
+        self.assertEqual(ev.image_url, "")
+        page = _StubPage()
+
+        with tempfile.TemporaryDirectory() as shots, tempfile.TemporaryDirectory() as dl:
+            ctx = RunContext(
+                dry_run=True, screenshot_dir=shots, download_dir=dl, submission_id="test"
+            )
+            with patch("broadcast.adapters.abc11_community.h.download_image") as mock_download:
+                result = adapter.fill_and_submit(page, ev, ctx)
+
+        self.assertEqual(result.status, "succeeded")
+        mock_download.assert_not_called()
+        self.assertNotIn(".image-field-esf input[type=file]", page.files)

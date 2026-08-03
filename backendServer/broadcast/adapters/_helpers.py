@@ -110,6 +110,41 @@ def full_address(ev) -> str:
     return f"{ev.address_line1}, {mid}{ev.state} {ev.zip}"
 
 
+_FREE_TEXT_RE = re.compile(r"\bfree\b", re.I)
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def format_cost(is_free: bool, price: str) -> str:
+    """Normalize a free-text cost into the plain number destination forms expect.
+
+    Destination sites (Triangle Weekender, ABC11) want a bare number in their
+    Cost field, not the free-text the submitter typed on The Commons — a range
+    like "5-10" gets rejected or mis-rendered. This normalizes at the adapter
+    boundary only; the raw string on CanonicalEvent is never touched.
+
+    Rules (decided by the ticket owner, 46.5):
+    - `is_free` flag, or the word "free" anywhere in the text -> "0"
+    - a range ("5-10", "$5 - $10", "5–10" en dash) -> the low value, e.g. "5"
+    - a single value ("$12", "12") -> the bare number, "12"
+    - empty input -> "" (nothing to normalize; caller's required/optional
+      handling decides what happens next)
+    - non-numeric junk with no digits at all (e.g. "TBD", "call for pricing")
+      -> passed through unchanged. We never invent a number, and forwarding
+      the original text is safer than silently dropping it.
+    """
+    if is_free:
+        return "0"
+    text = (price or "").strip()
+    if not text:
+        return ""
+    if _FREE_TEXT_RE.search(text):
+        return "0"
+    match = _NUMBER_RE.search(text)
+    if not match:
+        return text
+    return match.group(0)
+
+
 def apply_specs(page, specs, ev, timeout_ms) -> list[str]:
     """Fill the Playwright-fillable specs; return descriptors of missing required.
 

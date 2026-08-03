@@ -13,13 +13,21 @@ class EventSourceAdmin(ModelAdmin):
         "source_type",
         "active",
         "last_polled",
+        "default_town",
+        "blocked_reason_preview",
+        "blocked_since",
         "event_count",
         "prompt_suffix_preview",
     ]
-    list_filter = ["source_type", "active"]
+    list_filter = ["source_type", "active", "default_town"]
     search_fields = ["name", "url"]
     readonly_fields = ["last_polled", "created_at", "updated_at"]
     actions = ["run_ingestion_pipeline"]
+
+    def blocked_reason_preview(self, obj):
+        return obj.blocked_reason[:40] if obj.blocked_reason else "—"
+
+    blocked_reason_preview.short_description = "Blocked"  # type: ignore[attr-defined]
 
     def event_count(self, obj):
         return obj.raw_events.count()
@@ -68,7 +76,7 @@ class SourceRunAdmin(ModelAdmin):
 
 @admin.register(RawEvent)
 class RawEventAdmin(ModelAdmin):
-    list_display = ["raw_title", "source", "raw_start", "processed", "created_at"]
+    list_display = ["raw_title", "source", "raw_start_datetime", "processed", "created_at"]
     list_filter = ["processed", "source"]
     search_fields = ["raw_title", "raw_description"]
     readonly_fields = ["created_at"]

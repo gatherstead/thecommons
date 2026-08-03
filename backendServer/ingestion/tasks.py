@@ -8,6 +8,7 @@ from django.core.management import call_command
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.importers.scraper_importer import poll_all_scraper_sources
+from ingestion.prompt_dispatch import run_batch_per_source
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import (
     auto_publish_safe_events,
@@ -76,7 +77,10 @@ def run_ingestion_pipeline(self):
     if new_count is not None:
         logger.info("run_ingestion_pipeline: %s new raw events", new_count)
 
-    std_count = step("standardize", standardize_all_unprocessed)
+    std_count = step(
+        "standardize",
+        lambda: run_batch_per_source(standardize_all_unprocessed, step_name="standardize"),
+    )
     if std_count is not None:
         logger.info("run_ingestion_pipeline: %s events standardized", std_count)
 
@@ -84,7 +88,10 @@ def run_ingestion_pipeline(self):
     if dupe_count is not None:
         logger.info("run_ingestion_pipeline: %s duplicates found", dupe_count)
 
-    scored_count = step("safety", score_all_unscored)
+    scored_count = step(
+        "safety",
+        lambda: run_batch_per_source(score_all_unscored, step_name="safety"),
+    )
     if scored_count is not None:
         logger.info("run_ingestion_pipeline: %s events scored", scored_count)
 
@@ -108,13 +115,16 @@ def scrape_all_sources_task(self):
     """Poll `http`- and `scraper`-type EventSources. Routed to the dedicated
     `scrape` queue so headless-browser memory stays off the default worker.
 
-    Despite the queue name, most of the critical path here is NOT a browser:
-    `poll_all_scraper_sources` covers both `http` and `scraper` source types,
-    and `http` sources are fetched with plain `requests` (no Chromium at all —
-    see `_fetch_via_http` in scraper_importer.py). Only `scraper`-type sources
-    render headless Chromium. Both current production sources in this task's
-    remit (Visit Pittsboro, The Plant NC) are `http`, so Chromium isn't in
-    their path; don't assume it is when debugging a stall here.
+    `poll_all_scraper_sources` covers both `http` and `scraper` source types.
+    `http` sources are fetched with plain `requests` and never touch a
+    browser (see `_fetch_via_http` in `ingestion/importers/scraper_importer.py`).
+    `scraper`-type sources render headless Chromium. Which type dominates the
+    source roster changes over time — don't assume from the queue name (or
+    from a source count you saw once) whether Chromium is or isn't on the
+    critical path; check each source's `source_type` instead. Because
+    Chromium can be in play, manual ingest runs (`manage.py ingest_events`)
+    must run in the `scrape-worker` container, not `backend` — the `app`
+    image has no Chromium installed.
 
     Retries on any exception, up to 3 times with a 5-min backoff, matching
     run_ingestion_pipeline — this task previously had no retry at all, so a

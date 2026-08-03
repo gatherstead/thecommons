@@ -137,8 +137,8 @@ def _ingest_with_scraper(
                 "raw_title": item.title[:500],
                 "raw_description": item.description,
                 "raw_location": item.location[:500],
-                "raw_start": item.start,
-                "raw_end": item.end,
+                "raw_start_datetime": item.start,
+                "raw_end_datetime": item.end,
                 "source_url": item.source_url[:500] if item.source_url else "",
             },
         )

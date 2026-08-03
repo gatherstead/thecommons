@@ -75,7 +75,7 @@ class BroadcastDedupeTests(TestCase):
             source_uid=f"draft-{self._uid}",
             raw_title=raw_title if raw_title is not None else title,
             raw_location=raw_location if raw_location is not None else location,
-            raw_start=start,
+            raw_start_datetime=start,
             processed=True,
         )
         return StagedEvent.objects.create(

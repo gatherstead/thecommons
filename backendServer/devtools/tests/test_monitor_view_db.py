@@ -41,7 +41,7 @@ class MonitorViewTests(TestCase):
             url="https://monitor.example.com/feed.ics",
         )
         raw = RawEvent.objects.create(
-            source=self.source, raw_title="Test Raw", raw_start=self.now, source_uid="mt1"
+            source=self.source, raw_title="Test Raw", raw_start_datetime=self.now, source_uid="mt1"
         )
         event = make_event(title="Monitor Published Event")
         StagedEvent.objects.create(
@@ -133,7 +133,9 @@ class MonitorViewTests(TestCase):
             active=True,
         )
         old = self.now - timedelta(days=75)
-        RawEvent.objects.create(source=source, raw_title="Old", raw_start=old, source_uid="old1")
+        RawEvent.objects.create(
+            source=source, raw_title="Old", raw_start_datetime=old, source_uid="old1"
+        )
         RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=old)
 
         content = monitor(self._get("/devtools/monitor", {"window": "30d"})).content.decode()
@@ -273,7 +275,7 @@ class MonitorViewTests(TestCase):
             raw = RawEvent.objects.create(
                 source=self.source,
                 raw_title=f"Extra {i}",
-                raw_start=self.now,
+                raw_start_datetime=self.now,
                 source_uid=f"extra{i}",
             )
             RawEvent.objects.filter(pk=raw.pk).update(created_at=self.now - timedelta(minutes=i))
@@ -327,7 +329,7 @@ class MonitorViewTests(TestCase):
             url="https://other.example.com/events",
         )
         RawEvent.objects.create(
-            source=other, raw_title="Other Raw", raw_start=self.now, source_uid="other1"
+            source=other, raw_title="Other Raw", raw_start_datetime=self.now, source_uid="other1"
         )
         resp = monitor_data(
             self._get("/devtools/monitor/data", {"kind": "collector", "key": "", "window": "30d"})
@@ -347,7 +349,10 @@ class MonitorViewTests(TestCase):
             active=False,
         )
         RawEvent.objects.create(
-            source=direct_source, raw_title="Direct Raw", raw_start=self.now, source_uid="direct1"
+            source=direct_source,
+            raw_title="Direct Raw",
+            raw_start_datetime=self.now,
+            source_uid="direct1",
         )
         resp = monitor_data(
             self._get("/devtools/monitor/data", {"kind": "inbound", "key": "", "window": "30d"})
@@ -462,7 +467,7 @@ class MonitorViewTests(TestCase):
         old_raw = RawEvent.objects.create(
             source=self.source,
             raw_title="Old Raw",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             source_uid="old1",
         )
         RawEvent.objects.filter(pk=old_raw.pk).update(created_at=self.now - timedelta(days=60))

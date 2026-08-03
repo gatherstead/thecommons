@@ -19,7 +19,7 @@ class StandardizerTests(TestCase):
             raw_title="raw concert",
             raw_description="a show",
             raw_location="somewhere",
-            raw_start=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            raw_start_datetime=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
             source_url="",  # empty avoids fetch_page_text making a network call
             source_uid="uid-1",
         )
@@ -177,3 +177,92 @@ class StandardizerTests(TestCase):
             staged = standardize_event(self.raw)
 
         self.assertEqual(staged.price, -1)
+
+
+@tag("db")
+class CancelledTitleGuardTests(TestCase):
+    """45.3: a cancelled title must land in the terminal `cancelled` status
+    from *any* source, without ever spending a Gemini call — and the guard
+    must only ever look at the title, never the description."""
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Test Feed", source_type="ics", url="https://feed.test/cal.ics"
+        )
+
+    def _raw(self, title, description="a show", uid="uid-1"):
+        return RawEvent.objects.create(
+            source=self.source,
+            raw_title=title,
+            raw_description=description,
+            raw_location="somewhere",
+            raw_start_datetime=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            source_url="",
+            source_uid=uid,
+        )
+
+    def test_asterisk_wrapped_title_is_cancelled_without_gemini_call(self):
+        raw = self._raw("*CANCELLED* Fall Festival")
+        client = mock.Mock()
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.status, "cancelled")
+        self.assertEqual(staged.title, "*CANCELLED* Fall Festival")
+        client.models.generate_content.assert_not_called()
+        raw.refresh_from_db()
+        self.assertTrue(raw.processed)
+
+    def test_en_dash_title_is_cancelled(self):
+        raw = self._raw("Canceled – Movie Night")
+        client = mock.Mock()
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.status, "cancelled")
+        client.models.generate_content.assert_not_called()
+
+    def test_colon_title_is_cancelled(self):
+        raw = self._raw("CANCELED: Movie Night")
+        client = mock.Mock()
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.status, "cancelled")
+        client.models.generate_content.assert_not_called()
+
+    def test_description_only_cancellation_still_publishes_normally(self):
+        """A clean title with 'cancelled' only in the description ("rain date
+        if cancelled") must NOT trip the guard — it should go through Gemini
+        and land `pending`, exactly like any other event."""
+        raw = self._raw(
+            "Fall Festival on the Green",
+            description="Rain date if cancelled: same time next Saturday.",
+        )
+        payload = {
+            "title": "Fall Festival on the Green",
+            "description": "A festival on the green.",
+            "location_name": "Town Green",
+            "town": "Carrboro",
+            "tags": [],
+            "price": 0,
+        }
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(text=json.dumps(payload))
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.status, "pending")
+        client.models.generate_content.assert_called_once()
+
+    def test_cancelled_row_never_reprocessed(self):
+        """RawEvent.processed=True means `standardize_all_unprocessed` skips it
+        on the next run — no repeat Gemini billing for an already-cancelled row."""
+        raw = self._raw("Event Cancelled")
+        client = mock.Mock()
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            standardize_event(raw)
+
+        raw.refresh_from_db()
+        self.assertTrue(raw.processed)
+        self.assertEqual(StagedEvent.objects.filter(raw_event=raw, status="cancelled").count(), 1)

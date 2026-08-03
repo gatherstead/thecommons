@@ -52,13 +52,13 @@ class MonitoringQueryServiceTests(TestCase):
         # Collector A: 7 raw events, one per funnel bucket.
         # a1: unprocessed (standardizer never reached it / errored)
         RawEvent.objects.create(
-            source=self.collector_a, raw_title="A1", raw_start=self.now, source_uid="a1"
+            source=self.collector_a, raw_title="A1", raw_start_datetime=self.now, source_uid="a1"
         )
         # a2: processed but no staged row (silent standardizer failure)
         RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A2",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a2",
         )
@@ -66,7 +66,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw_a3 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A3",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a3",
         )
@@ -83,7 +83,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw_a4 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A4",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a4",
         )
@@ -101,7 +101,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw_a5 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A5",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a5",
         )
@@ -118,7 +118,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw_a6 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A6",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a6",
         )
@@ -136,7 +136,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw_a7 = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="A7",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="a7",
         )
@@ -153,14 +153,14 @@ class MonitoringQueryServiceTests(TestCase):
 
         # Collector B: 1 raw event, no staged row yet
         RawEvent.objects.create(
-            source=self.collector_b, raw_title="B1", raw_start=self.now, source_uid="b1"
+            source=self.collector_b, raw_title="B1", raw_start_datetime=self.now, source_uid="b1"
         )
 
         # Direct source: 1 raw event, duplicate status
         raw_d1 = RawEvent.objects.create(
             source=self.direct_source,
             raw_title="D1",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="d1",
         )
@@ -315,7 +315,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="No Matching Town",
-            raw_start=self.start + timedelta(hours=1),
+            raw_start_datetime=self.start + timedelta(hours=1),
             processed=True,
         )
         StagedEvent.objects.create(
@@ -349,7 +349,7 @@ class MonitoringQueryServiceTests(TestCase):
             raw_title="Approved With Event",
             raw_description="d",
             raw_location="Venue",
-            raw_start=self.start + timedelta(hours=1),
+            raw_start_datetime=self.start + timedelta(hours=1),
             processed=True,
         )
         event = make_event(title="Approved With Event")
@@ -382,7 +382,7 @@ class MonitoringQueryServiceTests(TestCase):
         raw = RawEvent.objects.create(
             source=self.collector_a,
             raw_title="Duplicate With Prior Event",
-            raw_start=self.start + timedelta(hours=1),
+            raw_start_datetime=self.start + timedelta(hours=1),
             processed=True,
         )
         prior_event = make_event(title="Prior Live Event")
@@ -860,7 +860,11 @@ class SourceHealthIntegrationTests(TestCase):
             status="ok",
         )
         raw = RawEvent.objects.create(
-            source=source, raw_title="T1", raw_start=self.now, source_uid="t1", processed=True
+            source=source,
+            raw_title="T1",
+            raw_start_datetime=self.now,
+            source_uid="t1",
+            processed=True,
         )
         published_event = make_event(title="Published via Throttled")
         StagedEvent.objects.create(
@@ -913,7 +917,7 @@ class SourceHealthIntegrationTests(TestCase):
         RawEvent.objects.create(
             source=source,
             raw_title="Raw With No Surviving Anchor",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="carrboro-1",
         )
@@ -946,7 +950,7 @@ class SourceHealthIntegrationTests(TestCase):
         RawEvent.objects.create(
             source=source,
             raw_title="Raw With Nothing Downstream",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="never-1",
         )
@@ -1069,12 +1073,12 @@ class RawZeroDisambiguationTests(TestCase):
         )
         newest = self.now - timedelta(days=75)
         RawEvent.objects.create(
-            source=source, raw_title="Old 1", raw_start=newest, source_uid="old1"
+            source=source, raw_title="Old 1", raw_start_datetime=newest, source_uid="old1"
         )
         RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=newest)
         older = newest - timedelta(days=5)
         RawEvent.objects.create(
-            source=source, raw_title="Old 2", raw_start=older, source_uid="old2"
+            source=source, raw_title="Old 2", raw_start_datetime=older, source_uid="old2"
         )
         RawEvent.objects.filter(source=source, source_uid="old2").update(created_at=older)
 
@@ -1109,7 +1113,7 @@ class RawZeroDisambiguationTests(TestCase):
             active=True,
         )
         RawEvent.objects.create(
-            source=source, raw_title="Fresh", raw_start=self.now, source_uid="fresh1"
+            source=source, raw_title="Fresh", raw_start_datetime=self.now, source_uid="fresh1"
         )
         rows = collector_summary("default", self.start, self.end)
         row = next(r for r in rows if r["name"] == "Healthy Source")
@@ -1126,11 +1130,11 @@ class RawZeroDisambiguationTests(TestCase):
             active=True,
         )
         RawEvent.objects.create(
-            source=source, raw_title="In window", raw_start=self.now, source_uid="new1"
+            source=source, raw_title="In window", raw_start_datetime=self.now, source_uid="new1"
         )
         old = self.now - timedelta(days=90)
         RawEvent.objects.create(
-            source=source, raw_title="Out of window", raw_start=old, source_uid="old1"
+            source=source, raw_title="Out of window", raw_start_datetime=old, source_uid="old1"
         )
         RawEvent.objects.filter(source=source, source_uid="old1").update(created_at=old)
 
@@ -1173,7 +1177,7 @@ class SourceRowSortOrderTests(TestCase):
         ok_raw = RawEvent.objects.create(
             source=EventSource.objects.get(name="A Ok Source"),
             raw_title="raw",
-            raw_start=self.now,
+            raw_start_datetime=self.now,
             processed=True,
             source_uid="ok1",
         )

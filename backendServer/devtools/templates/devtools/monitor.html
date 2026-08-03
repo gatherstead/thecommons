@@ -112,6 +112,11 @@
   /* `push` (ticket 40.2): direct/inbound sources are pushed to, never
      polled — same muted treatment as `inactive` so neither reads as broken. */
   .monitor .badge.health-push { background: #e5e7eb; color: #6b7280; }
+  /* `quarantined` (ticket 45.7): a known-blocked source's nightly refusal is
+     an expected failure, not a new regression — a distinct blue/violet so it
+     never reads as the same alarm as `error` (red) or `warn` (amber), while
+     still standing out from the muted `unknown`/`inactive`/`push` grays. */
+  .monitor .badge.health-quarantined { background: #ede9fe; color: #5b21b6; }
 
   /* Ticket 40.6: persistent, paginated "Recent events" panel per section —
      replaces the old click-a-row-to-expand drilldown as the primary path to
@@ -338,6 +343,11 @@
       <div class="tile-row">
         <div class="tile health-tile"><span class="badge health-error">{{ summary.health.error }}</span>error</div>
         <div class="tile health-tile"><span class="badge health-warn">{{ summary.health.warn }}</span>warn</div>
+        <!-- 45.7: quarantined (known-blocked) sources get their own tile,
+             separate from `error` -- an expected nightly refusal from a
+             source we already know a vendor WAF blocks must not read as a
+             pipeline regression here. -->
+        <div class="tile health-tile"><span class="badge health-quarantined">{{ summary.health.quarantined }}</span>quarantined</div>
         <div class="tile health-tile"><span class="badge health-unknown">{{ summary.health.unknown }}</span>unknown</div>
         <div class="tile health-tile"><span class="badge health-ok">{{ summary.health.ok }}</span>ok</div>
         <div class="tile health-tile"><span class="badge health-inactive">{{ summary.health.inactive }}</span>inactive</div>
@@ -368,9 +378,10 @@
   </div>
 
   <p class="description">
-    Sources below are sorted worst-first by health (error &rarr; warn &rarr; unknown &rarr; ok
-    &rarr; inactive/push) &mdash; <code>_source_rows</code> already sorts them that way, so this
-    page doesn't re-sort client-side. Recent events for each section paginate beneath its table.
+    Sources below are sorted worst-first by health (error &rarr; warn &rarr; quarantined &rarr;
+    unknown &rarr; ok &rarr; inactive/push) &mdash; <code>_source_rows</code> already sorts them
+    that way, so this page doesn't re-sort client-side. Recent events for each section paginate
+    beneath its table.
   </p>
 
   <h2>Collectors</h2>

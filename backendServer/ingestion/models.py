@@ -22,6 +22,26 @@ class EventSource(models.Model):
     prompt_suffix = models.TextField(blank=True, default="")
     scraper_key = models.CharField(max_length=100, blank=True, default="")
 
+    # 45.4: per-source fallback town, read by `resolve_town` in services.py
+    # when Gemini returns a blank per-event town guess. Fallback-not-override
+    # — see `resolve_town`'s docstring. Not backfilled here; setting it on
+    # existing prod sources is a separate ops step (`reopen_skipped_towns`).
+    default_town = models.ForeignKey(
+        "events.Town",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="default_for_sources",
+    )
+
+    # 45.7: quarantine flag for sources whose nightly `refused` failures are
+    # expected (vendor WAF blocks the prod egress IP) rather than a new
+    # regression. Kept polling regardless — see `devtools/monitoring.py`'s
+    # `source_health`, which downgrades an otherwise-`error` quarantined
+    # source to the distinct `quarantined` level instead of skipping it.
+    blocked_reason = models.TextField(blank=True, default="")
+    blocked_since = models.DateField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -77,8 +97,8 @@ class RawEvent(models.Model):
     raw_title = models.CharField(max_length=500)
     raw_description = models.TextField(blank=True)
     raw_location = models.CharField(max_length=500, blank=True)
-    raw_start = models.DateTimeField()
-    raw_end = models.DateTimeField(null=True, blank=True)
+    raw_start_datetime = models.DateTimeField()
+    raw_end_datetime = models.DateTimeField(null=True, blank=True)
     source_url = models.URLField(max_length=500, blank=True)
     source_uid = models.CharField(max_length=500, blank=True)
 
@@ -98,7 +118,21 @@ class RawEvent(models.Model):
 
 
 class StagedEvent(models.Model):
-    """Events after LLM standardization, waiting for admin review."""
+    """Events after LLM standardization, waiting for admin review.
+
+    Naming boundary (45.10): the ingestion pipeline uses one consistent name for
+    an event's timing as it moves from raw scrape to standardized staging row —
+    `RawEvent.raw_start_datetime`/`raw_end_datetime` become
+    `StagedEvent.start_datetime`/`end_datetime` via `ingestion/standardizer.py`.
+    On publish (`ingestion/admin.py`'s `approve_events`, `ingestion/services.py`'s
+    `auto_publish_safe_events`), `StagedEvent.start_datetime` becomes the public
+    `events.Event.date` field. That third name is a *deliberate* public-API
+    boundary, not an oversight or a naming inconsistency to "fix" — `Event.date`
+    is serialized to the frontend and to external consumers, so renaming it is
+    API-breaking and out of scope for internal cleanups. If you're chasing a bug
+    across the pipeline: `raw_start_datetime` → `start_datetime` → `date`, and
+    only that last hop changes name.
+    """
 
     STATUS_CHOICES = [
         ("pending", "Pending Review"),
@@ -107,6 +141,7 @@ class StagedEvent(models.Model):
         ("duplicate", "Duplicate"),
         ("published", "Published"),
         ("skipped_no_town", "Skipped — No Matching Town"),
+        ("cancelled", "Cancelled"),
     ]
 
     raw_event = models.OneToOneField(

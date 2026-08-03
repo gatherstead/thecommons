@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from ingestion.deduplicator import dedup_all_pending
 from ingestion.importers.ics_importer import poll_all_ics_sources
 from ingestion.importers.scraper_importer import poll_all_scraper_sources
+from ingestion.prompt_dispatch import run_batch_per_source
 from ingestion.safety_scorer import score_all_unscored
 from ingestion.services import auto_publish_safe_events
 from ingestion.standardizer import standardize_all_unprocessed
@@ -122,7 +123,9 @@ class Command(BaseCommand):
         if not options["skip_standardize"]:
             self.stdout.write("Step 2: Standardizing with Gemini...")
             try:
-                std_count = standardize_all_unprocessed()
+                std_count = run_batch_per_source(
+                    standardize_all_unprocessed, step_name="standardize"
+                )
                 self.stdout.write(self.style.SUCCESS(f"  → {std_count} events standardized\n"))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))
@@ -144,7 +147,7 @@ class Command(BaseCommand):
         if not options["skip_safety"]:
             self.stdout.write("Step 4: Safety scoring with Gemini...")
             try:
-                scored_count = score_all_unscored()
+                scored_count = run_batch_per_source(score_all_unscored, step_name="safety")
                 self.stdout.write(self.style.SUCCESS(f"  → {scored_count} events scored\n"))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  → Error: {e}\n"))

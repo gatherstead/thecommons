@@ -30,7 +30,7 @@ class Command(BaseCommand):
 
         # 2. Delete past raw events — but keep those still backing
         #    an approved+unpublished staged event
-        raw_qs = RawEvent.objects.filter(raw_start__lt=now).exclude(
+        raw_qs = RawEvent.objects.filter(raw_start_datetime__lt=now).exclude(
             staged__status="approved", staged__published_event__isnull=True
         )
         raw_deleted, _ = raw_qs.delete()

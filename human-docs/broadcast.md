@@ -1,19 +1,48 @@
 # Broadcast — Pushing Events Out
 
-Written 2026-08-01 against commit `5fe7a45`. This is the human-facing companion to
-[`docs/broadcast.md`](../docs/broadcast.md), which stays the system of record — the exact
-model fields, every API endpoint's rate limit, the full adapter list, environment variables,
-and management commands all live there in more detail than belongs here. Read this first for
-orientation, then go to `docs/broadcast.md` for anything precise. Where the two disagree, the
-code (and `docs/broadcast.md`, which was re-verified against it) wins — this doc calls out the
-one place that matters below.
+> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+
+This is the human-facing companion to [`docs/broadcast.md`](../docs/broadcast.md), which stays
+the system of record — the exact model fields, every API endpoint's rate limit, the full
+adapter list, environment variables, and management commands all live there in more detail than
+belongs here. Read this first for orientation, then go to `docs/broadcast.md` for anything
+precise. Where the two disagree, the code (and `docs/broadcast.md`, which was re-verified
+against it) wins — this doc calls out the one place that matters below.
 
 Audience: someone inheriting this codebase who has never touched the broadcast subsystem and
 needs to understand what it is before the deep-dive doc makes sense.
 
+## Overview
+
+- **What it is:** Broadcast is the reverse of ingestion. Ingestion pulls other towns' events
+  *into* The Commons; broadcast pushes a single event *out* onto several other towns' calendar
+  websites, so a partner can list an event once and have it land on half a dozen third-party
+  sites instead of retyping it into six forms.
+- **Who uses it:** Not residents browsing the main site — partner organizations and event hosts,
+  working through a separate console (`broadcastWeb`) gated behind an access code or login. If
+  broadcast is down, the main site (`theCommonsWeb`) is unaffected; only a partner's distribution
+  workflow breaks.
+- **The one or two facts that matter most:** (1) Broadcast is architecturally walled off from
+  `events`/`ingestion` — a real AST-parsing test enforces zero imports from either app, so it has
+  its own copy of event fields, its own locality/category vocabulary, and its own access control.
+  (2) There are two submission paths in the code, but only one is actually reachable today: the
+  extension-driven "recipe" flow (a human clicks Submit) is live; a second, complete
+  Playwright-headless server-side path exists, is tested, but nothing in the current SPA UI can
+  trigger it — don't trust `ARCHITECTURE.md`'s framing of this, it's stale (see Deep Dive §4).
+- **Where to go for what:**
+  - Who runs it and how access/tiers work → Deep Dive §2
+  - The live extension-based submission flow → Deep Dive §3
+  - The dormant headless/Playwright path → Deep Dive §4
+  - Celery worker concurrency and why it's pinned to one → Deep Dive §5
+  - Access codes (trial vs. upgrade) → Deep Dive §6
+  - Gotchas that bite newcomers → Deep Dive §7
+  - What this doc couldn't independently verify → Deep Dive §8
+
 ---
 
-## 1. What this is and who depends on it
+## Deep Dive
+
+### 1. What this is and who depends on it
 
 Ingestion (see `ingestion.md`) pulls events *in* — it polls other towns' calendars and pulls
 their events onto The Commons. Broadcast does the reverse: it takes a single event and pushes
@@ -52,7 +81,7 @@ watching the `events` app would think to check for.
 
 ---
 
-## 2. Who operates it, and how
+### 2. Who operates it, and how
 
 Three pieces work together:
 
@@ -68,7 +97,7 @@ Three pieces work together:
   fills in, gates all of this behind an access-tier system, and also contains a second,
   currently-unused submission path described in §4.
 
-### Signing in and getting access
+#### Signing in and getting access
 
 There's no separate broadcast account system — signing in uses the same Better Auth identity
 as the main site (see `auth.md`), via the shared cookie domain across `thecommons.town`
@@ -96,7 +125,7 @@ tier table and every metering rule.
 
 ---
 
-## 3. How an event actually gets onto another town's calendar
+### 3. How an event actually gets onto another town's calendar
 
 This is the live flow — the one a partner uses today.
 
@@ -153,7 +182,7 @@ sequenceDiagram
    carry no recipe at all, and `SitePicker` in the SPA greys them out with "coming soon" instead
    of letting a partner select them.
 
-### The adapter pattern
+#### The adapter pattern
 
 Each third-party calendar has its own **adapter** — a small Python class in
 `broadcast/adapters/` (`abc11_community.py`, `triangle_on_the_cheap.py`, `visit_raleigh.py`,
@@ -178,7 +207,7 @@ report them as "eligible, but not automatable") but return no recipe.
 
 ---
 
-## 4. The other path: server-side headless submission (disabled today)
+### 4. The other path: server-side headless submission (disabled today)
 
 The `broadcast` app also contains a complete, independent second way of doing this, built
 first and still fully present in the code: a database-backed job queue, a Playwright-driven
@@ -224,7 +253,7 @@ duplicating the per-site form logic, since both paths are adapter methods on the
 
 ---
 
-## 5. The worker, and why its concurrency is fixed at one
+### 5. The worker, and why its concurrency is fixed at one
 
 Both the headless path's queue-drain and its crash-recovery sweep run as real Celery tasks
 (`broadcast.tasks.process_broadcast_queue` and `broadcast.tasks.recover_broadcast_orphans`),
@@ -259,7 +288,7 @@ section is scoped to what's specific to broadcast.
 
 ---
 
-## 6. Access codes, briefly
+### 6. Access codes, briefly
 
 Access codes are managed entirely through the database — there is no environment-variable code
 list to update on deploy. Codes are generated from the Django admin (self-serve, shows the raw
@@ -276,7 +305,7 @@ someone a working code.
 
 ---
 
-## 7. Sharp edges
+### 7. Sharp edges
 
 1. **Isolation from `events`/`ingestion` is enforced by a real test, and it's easy to break
    without noticing.** `broadcast/tests/test_isolation.py` parses every `.py` file in the app
@@ -328,7 +357,7 @@ someone a working code.
 
 ---
 
-## 8. Not independently verified
+### 8. Not independently verified
 
 - Whether the extension has actually been submitted to and approved on the Chrome Web Store, or
   is still distributed as a load-unpacked developer build to partners. `broadcastWeb/.env` has

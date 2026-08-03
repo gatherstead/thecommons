@@ -1,18 +1,44 @@
 # Testing & Local Development
 
-Written 2026-08-01 against commit `5fe7a45`. This is the human-facing walkthrough that
-complements [`backendServer/AGENTS.md`](../backendServer/AGENTS.md)'s Testing section, which
-stays the agent-facing reference for exact tags, settings names, and management-command flags.
-Where the two disagree, trust `backendServer/AGENTS.md` and the code underneath it — this doc
-exists to be *followed*, not to be the source of truth.
+> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+
+This is the human-facing walkthrough that complements
+[`backendServer/AGENTS.md`](../backendServer/AGENTS.md)'s Testing section, which stays the
+agent-facing reference for exact tags, settings names, and management-command flags. Where the
+two disagree, trust `backendServer/AGENTS.md` and the code underneath it — this doc exists to be
+*followed*, not to be the source of truth.
 
 Audience: someone with a fresh clone of this repo, general web-dev skill, and zero context on
 The Commons specifically. Every command below was checked against the repo's actual scripts and
 `--help` output at this commit, not assumed.
 
+## Overview
+
+- This doc gets a fresh clone of The Commons running locally and explains how its test suites
+  are organized. It covers three toolchains: `uv` for the Django backend, `pnpm` for two
+  independent frontends (`theCommonsWeb` and `broadcastWeb`), and a local Redis needed to *run*
+  the app (not to test it). It does not cover architecture or any subsystem in depth — see
+  [`overview.md`](overview.md) and [`async-jobs.md`](async-jobs.md) for that.
+- Both backend and frontend tests are split into two tiers by explicit tags, not filenames:
+  `fast` (no database) and `db` (needs Postgres, or `jsdom` on the frontend side). The backend's
+  `db` tier runs against a **real Postgres test database on Neon**, not SQLite and not an
+  ephemeral container — that's a locked decision.
+- The single biggest thing to know before running anything: the Neon test database is shared
+  infrastructure. If your `DATABASE_URL` points at the same Neon branch as any other terminal,
+  session, or agent running `--tag=db` tests at the same time, both runs can race to
+  create/drop/write the same literal database — and the dangerous failure mode is a **silent
+  false-green**, not a crash. Always run `--tag=db` (and full `manage.py test`) suites serially,
+  with `--noinput` and `pipefail`. Full detail in Deep Dive §4.
+- Quick map by task: first-time setup → §2; understanding backend test tiers/tags → §3; hit a
+  "database is being accessed by other users" error → §4 and §5; frontend Vitest tiers → §6; do
+  I need Redis running to test? (no) → §7; full command cheat sheet → §8; what CI actually runs →
+  §9; known doc drift → §10.
+
+## Deep Dive
+
 ---
 
-## 1. What this covers, and who it's for
+### 1. What this covers, and who it's for
 
 Getting this repo running locally touches three separate toolchains — `uv` for the Django
 backend, `pnpm` for two independent frontends (`theCommonsWeb` and `broadcastWeb`), and a local
@@ -34,9 +60,9 @@ audience).
 
 ---
 
-## 2. First run: clone to a running system
+### 2. First run: clone to a running system
 
-### 2.1 Backend
+#### 2.1 Backend
 
 ```bash
 git clone <repo-url> thecommons && cd thecommons/backendServer
@@ -73,7 +99,7 @@ To also process background jobs (digests, ingestion, broadcast) rather than just
 run a worker alongside `runserver` — see [`async-jobs.md`](async-jobs.md) for the full queue
 topology and which worker command to use for which queue.
 
-### 2.2 Frontend — theCommonsWeb (the public site)
+#### 2.2 Frontend — theCommonsWeb (the public site)
 
 ```bash
 cd theCommonsWeb
@@ -92,7 +118,7 @@ Auth and Django share one Postgres database) plus `BETTER_AUTH_SECRET`. Then:
 pnpm dev
 ```
 
-### 2.3 Frontend — broadcastWeb (optional, partner-facing SPA)
+#### 2.3 Frontend — broadcastWeb (optional, partner-facing SPA)
 
 ```bash
 cd broadcastWeb
@@ -104,7 +130,7 @@ pnpm dev
 Only needed if you're working on the broadcast/syndication side; the public site and its tests
 don't depend on it.
 
-### 2.4 Verify you have a green suite
+#### 2.4 Verify you have a green suite
 
 Once the backend `.env` has a working `DATABASE_URL`, confirm the full picture before doing
 anything else, in this order (why this order matters is §4):
@@ -125,7 +151,7 @@ loop. §8 has the full command table, including `broadcastWeb` and lint.
 
 ---
 
-## 3. Backend tests: tiers, tags, and the Postgres test database
+### 3. Backend tests: tiers, tags, and the Postgres test database
 
 Backend tests always run under a dedicated settings module, **never** the same `dev`/`prod`
 settings the app itself uses:
@@ -184,7 +210,7 @@ sense of scale, not independently re-measured for this doc (see §11).
 
 ---
 
-## 4. The shared Neon test database — read this before running two things at once
+### 4. The shared Neon test database — read this before running two things at once
 
 This is the sharp edge most likely to waste your afternoon, so it gets its own section instead
 of a bullet point.
@@ -250,7 +276,7 @@ human at the keyboard.
 
 ---
 
-## 5. Stale Neon sessions blocking teardown
+### 5. Stale Neon sessions blocking teardown
 
 A related but distinct failure: even with no genuine concurrent run, a Neon test-DB session can
 occasionally outlive the process that opened it (a killed test run, a crashed connection pool)
@@ -271,7 +297,7 @@ database between runs (Django still applies any new migrations to it first).
 
 ---
 
-## 6. Frontend tests: Vitest fast/db tiers
+### 6. Frontend tests: Vitest fast/db tiers
 
 Both `theCommonsWeb` and `broadcastWeb` use the same two-project Vitest layout, deliberately
 mirroring the backend's `fast`/`db` naming — but **the frontend `db` tier does not touch any
@@ -302,7 +328,7 @@ build` for broadcastWeb) is the type-check gate for both, and is what CI runs.
 
 ---
 
-## 7. Local Redis — required to run the app, not to run its tests
+### 7. Local Redis — required to run the app, not to run its tests
 
 Worth stating plainly, because it's easy to assume otherwise coming from §2's setup:
 `backend/settings/test.py` sets `CELERY_TASK_ALWAYS_EAGER = True` and unconditionally swaps
@@ -336,7 +362,7 @@ native process's `REDIS_URL` at.
 
 ---
 
-## 8. Command reference
+### 8. Command reference
 
 | Command | Runs | Needs | Roughly |
 |---|---|---|---|
@@ -360,7 +386,7 @@ matching files changed) — no test suite runs in pre-commit, only lint/format/t
 
 ---
 
-## 9. What CI runs
+### 9. What CI runs
 
 `.github/workflows/ci.yml` triggers on every push to `main` and every pull request into `main`; a
 newer push to the same branch cancels an in-flight run for it.
@@ -405,7 +431,7 @@ A few specifics worth knowing:
 
 ---
 
-## 10. Known gaps and doc drift
+### 10. Known gaps and doc drift
 
 - **`docs/redis-celery-handoff.md`'s Testing section is stale** on which settings the suite runs
   under and which way `CELERY_TASK_ALWAYS_EAGER` is set — covered in full in §7, and also

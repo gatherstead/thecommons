@@ -1,12 +1,30 @@
 # Design System
 
-*Reflects commit `5fe7a45`, 2026-08-01. Every token, class, and component below was read out of `theCommonsWeb/src/app/globals.css` and `theCommonsWeb/src/components/ui/` directly — not inferred from prose. Where `CODING_STYLE.md` (the repo's canonical style statement, which this doc complements and does not replace) disagrees with the stylesheet, both are stated and the disagreement is called out. For the Next.js routing/data-fetching layer these components sit inside, see `frontend.md`; for the product as a whole, see `overview.md`.*
+> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. Every token, class, and component in the Deep Dive was read out of `theCommonsWeb/src/app/globals.css` and `theCommonsWeb/src/components/ui/` directly — not inferred from prose. Where `CODING_STYLE.md` (the repo's canonical style statement, which this doc complements and does not replace) disagrees with the stylesheet, both are stated and the disagreement is called out. For the Next.js routing/data-fetching layer these components sit inside, see `frontend.md`; for the product as a whole, see `overview.md`.
 
-## 1. What this is, in one paragraph
+## Overview
+
+- **What it is:** The Commons is styled to look like a broadsheet newspaper's classifieds page crossed with early Craigslist — serif type, cream newsprint background, black ink, hairline/thick column rules doing the separation work that cards and shadows do in most modern products, and a bias toward density over whitespace. This is the whole visual vocabulary, not a retro skin on a normal SaaS layout.
+- **Why it's this way:** The Commons is a local events bulletin for three small towns, not a venture-backed platform. It wants to read like a community notice board a neighbor posted, not a pitch deck — so density, rules, and serifs are load-bearing for trust, not decoration.
+- **Who depends on it:** Every component under `theCommonsWeb/src/components/ui/` and the layout components (`Header.tsx`, `Sidebar.tsx`, `Footer.tsx`, `EventFeed.tsx`, etc.) consume the same small set of CSS custom properties defined once in `globals.css`. There is no Tailwind config file and no `@theme` block — Tailwind v4 is used with its bare default scale plus these tokens.
+- **The one or two facts that matter most:** (1) There are exactly four separation devices — hairline rule, standard rule, thick rule, and one specific hard-edged "print" shadow — and no soft/blurred shadows or `border-radius` anywhere except a handful of sub-20px decorative dots and skeleton blocks. (2) There's only one serif stack (Georgia) used for all headlines and body copy, and one sans-serif stack reserved strictly for button/chrome labels, never for content.
+- **Known live bug:** `--color-ink` is referenced in two components but never defined anywhere in the stylesheet — see Deep Dive §2 and §8.
+- **Where to jump for a given task:**
+  - Adding/changing a color or font → Deep Dive §2 (Tokens)
+  - Sizing text → Deep Dive §3 (Type scale)
+  - Laying out a page or section → Deep Dive §4 (Spacing and layout)
+  - Deciding between a border, a rule, or a shadow → Deep Dive §5
+  - Reusing or extending a `ui/` component → Deep Dive §6
+  - Checking whether something you're about to write is disallowed → Deep Dive §7 (Banned)
+  - Known inconsistencies and open gaps → Deep Dive §8
+
+## Deep Dive
+
+### 1. What this is, in one paragraph
 
 The Commons is styled to look like a broadsheet newspaper's classifieds page had a baby with early Craigslist: serif type, cream newsprint, black ink, hairline and thick column rules doing the job cards and shadows do everywhere else, and a bias toward packing information in rather than giving it room to breathe. This isn't a retro skin bolted onto a normal SaaS layout — it's the whole vocabulary. A contributor who reaches for a rounded card with a soft shadow because that's what every other product looks like is not making a small stylistic choice; they're building the wrong product. The reason it matters: The Commons is a *local* events bulletin for three small towns, not a venture-backed platform, and it wants to read like a community notice board someone would trust a neighbor posted to — not like a pitch deck. Density, rules, and serifs are load-bearing for that trust, not decoration.
 
-## 2. Tokens
+### 2. Tokens
 
 All color and font values are CSS custom properties declared once, on `:root`, in `globals.css`. **Nothing else defines colors or fonts** — Tailwind v4 is configured with a bare `@import "tailwindcss";` at the top of that same file and no `@theme` block, no `tailwind.config.js`/`.ts` anywhere in the repo. Components consume the tokens either as Tailwind arbitrary values (`bg-[var(--color-bg)]`) or the newer Tailwind v4 shorthand (`border-(--color-border)`) — both forms are in active use side by side; neither is preferred over the other in the current code.
 
@@ -33,7 +51,7 @@ All color and font values are CSS custom properties declared once, on `:root`, i
 
 **A token that's referenced but doesn't exist:** `TimeWindowSelector.tsx` and `SectionSelector.tsx` both reference `var(--color-ink)` (e.g. `text-[var(--color-ink)]`). There is no `--color-ink` custom property defined anywhere in `globals.css` or any other stylesheet in the repo — it isn't a synonym that resolves elsewhere. An undefined CSS custom property used without a fallback makes the property using it invalid at computed-value time, which for `color` means it falls back to the inherited value rather than doing anything the author intended. In practice this makes the inactive state of the time-window and section dropdowns render in whatever color they'd inherit rather than the near-black ink the rest of the system uses. This is a live bug, not a stylistic choice — the fix is renaming both usages to `--color-text`.
 
-## 3. Type scale
+### 3. Type scale
 
 There is no declared type scale (no `@theme` font-size tokens, no Tailwind config extending `fontSize`). What exists is the Tailwind v4 default scale (`text-xs` through `text-6xl`) plus a lot of arbitrary pixel values and `clamp()` expressions for display headlines that need to be fluid. Reading across `Header.tsx`, `EventFeed.tsx`, `EventRow.tsx`, `Sidebar.tsx`, `Footer.tsx`, and `MiniCalendar.tsx`, the sizes actually in use settle into these bands:
 
@@ -50,7 +68,7 @@ There is no declared type scale (no `@theme` font-size tokens, no Tailwind confi
 
 The pattern to copy: headlines are large and fluid via `clamp()` set inline (`style={{ fontSize: '...' }}`), everything else is small, uppercase, and letter-spaced when it's a label rather than content. There is no `text-4xl`/`text-5xl`/`text-6xl` Tailwind class in use anywhere — display sizes are handled by `clamp()`, not the static scale, because they need to shrink on mobile without a breakpoint ladder.
 
-## 4. Spacing and layout
+### 4. Spacing and layout
 
 No custom spacing scale — Tailwind's default spacing scale (the `p-1`, `px-4`, `gap-6`, etc. system) is used directly, no `@theme` override. Two layout constants recur:
 
@@ -61,7 +79,7 @@ The sidebar/content split (`PageLayout.tsx`) is a 4-column CSS grid, sidebar tak
 
 Density in practice: `Sidebar.tsx` stacks a dozen-plus distinct blocks (post button, date, calendar, view toggle, social link, tag filters, clear-filters, count, digest box) separated only by `<hr>` hairlines with no card wrapper around any of them. That's the intended texture — a long, rule-divided column, not a stack of padded cards.
 
-## 5. Rules, borders, and the one shadow that's allowed
+### 5. Rules, borders, and the one shadow that's allowed
 
 This is the section that replaces "cards with shadows for elevation." The system has exactly four separation devices, and reaching for anything outside this list should be treated as a smell.
 
@@ -76,7 +94,7 @@ That fourth row is the one to read carefully, because "no drop shadows" (the ban
 
 **Decision procedure:** reaching for a shadow to create separation between a block and its background? First ask whether a rule (row 1–3) does the job — it almost always does, since most separation here is "this is a distinct row/section," not "this is floating above the page." If the block genuinely needs to read as a card sitting on top of the page (a modal, a featured/pinned item), use the exact hard-shadow value above, never a new blurred one.
 
-## 6. Component inventory — `src/components/ui/`
+### 6. Component inventory — `src/components/ui/`
 
 Eight components, seven exported from `index.ts` (`Banner.tsx` exists in the directory but is not re-exported — import it directly from `../ui/Banner` if needed, or add it to the barrel if this omission isn't intentional; nothing else in the tree currently imports it that way, so it's unclear whether the omission was deliberate).
 
@@ -95,7 +113,7 @@ Eight components, seven exported from `index.ts` (`Banner.tsx` exists in the dir
 
 **When to reuse vs. add a new component:** if what you need is a differently-colored button, a differently-sized input, or a badge with a third state, that's a prop on the existing component, not a new file — none of the existing `ui/` components take a `variant` prop that isn't exhaustive of what's actually used elsewhere in the app. Add a new component only when the *shape* is new (nothing here is a modal-with-a-form, a toast, a tooltip, a dropdown-menu-as-a-primitive — `TimeWindowSelector.tsx` and `SectionSelector.tsx` in `layout/` each hand-roll their own dropdown rather than sharing one, which is itself worth noticing as duplication if you're about to build a third one).
 
-## 7. Banned — enforceable in code review
+### 7. Banned — enforceable in code review
 
 If a diff introduces any of the following, it doesn't match this system regardless of how good it looks in isolation:
 
@@ -137,7 +155,7 @@ If a diff introduces any of the following, it doesn't match this system regardle
 </div>
 ```
 
-## 8. Known drift and gaps
+### 8. Known drift and gaps
 
 - **`--color-ink` is used but never defined** (§2) — a live bug in `TimeWindowSelector.tsx` and `SectionSelector.tsx`, not a documented token. Fix by renaming both usages to `--color-text`.
 - **`Banner.tsx` is not exported from `src/components/ui/index.ts`** — every other `ui/` component is. Unclear whether this is intentional; flagged rather than silently fixed since fixing it is a code change outside this doc's scope.

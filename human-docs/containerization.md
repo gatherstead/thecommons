@@ -1,86 +1,107 @@
-# Containerization — status
+# Containerization
 
-> **PROVISIONAL — written 2026-08-01, against commit `5fe7a45`.** Every file
-> this doc describes was **uncommitted** in the working tree at the time of
-> writing (tracked internally as Suite 42, status "Needs QA"): `docker-compose.yml`,
-> `docker-compose.override.yml`, `backendServer/Dockerfile`, `Dockerfile.frontend`,
-> both `.dockerignore` files, `deploy/nginx/` (`Dockerfile` + `thecommons.conf`),
-> `docs/adr/0001-containerization.md`, and a Docker-first rewrite of `DEPLOY.md`.
-> Treat anything here as accurate only up to that commit and that uncommitted
-> snapshot — if the working tree has moved since, re-read the source files
-> before trusting a claim in this doc over the code.
->
-> **Built and verified locally end-to-end. Not deployed.** The production VM
-> has no Docker Engine installed and still runs the systemd units in `deploy/`
-> — nothing described below is live. This doc is a placeholder: once the
-> cutover actually lands, it should either be promoted into a proper handoff
-> report or folded into `human-docs/deploy-ops.md` (see the closing section).
-> `human-docs/deploy-ops.md` covers what's running today, in production, right
-> now — this doc covers what's coming. Read that one first if you're trying to
-> fix something in prod this minute.
+> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
 
-## What was containerized, and why
+## Overview
 
-The Commons runs today as seven long-lived processes hand-wired as individual
-systemd units on a single Oracle Cloud VM, plus a hand-edited nginx config
-with no local-dev equivalent at all. `docs/adr/0001-containerization.md` is
-the actual design record for the work described here — this section
-summarizes it; read the ADR for the full reasoning and the incidents that
-motivated it.
+The Commons's production stack now runs on Docker Compose. The cutover
+(tracked internally as Suite 42) shipped via PR #41, merged 2026-08-02 — the
+Oracle Cloud VM runs `docker compose -f docker-compose.yml up -d` today, and
+the old per-process systemd units it used to run under (`celery.service`,
+`celerybeat.service`, `broadcast-worker.service`, `scrape-worker.service`,
+plus gunicorn/nextjs/redis-server which were never tracked as files) are
+retired on the box.
 
-Four decisions anchor the design. First, **nginx moves into a container and
-becomes the single ingress** for all three subdomains, replacing the
+What changed, in one paragraph: nginx moved into a container and became the
+single ingress for all three subdomains, replacing the host-installed nginx
+package; Redis moved into a container (`redis:7-alpine`) with the same
+DB-0/DB-1 broker/cache split preserved; Postgres stayed external on Neon in
+every environment, exactly as before; and build artifacts (`collectstatic`
+output, the compiled broadcast SPA bundle) get baked into images rather than
+living on the host filesystem.
+
+One exception worth knowing up front: `deploy/healthcheck.service` +
+`.timer` were **never containerized** and still are not. The hourly
+watchdog remains a host-level systemd timer; it now shells into the
+containers via `docker compose ... exec` instead of touching local
+processes directly. "Systemd is retired" means the app-process units —
+not this one.
+
+The `deploy/*.service` files (and `deploy/nginx-broadcast.conf.snippet`)
+are still physically present in the repo as historical artifacts — they
+are not deleted, just no longer what runs in production.
+
+For what's actually running today operationally, see
+`human-docs/deploy-ops.md`. The Deep Dive below covers: why each piece was
+containerized, the service startup/dependency graph, the compose-to-systemd
+mapping, and the sharp edges (footguns) that are still live traps today —
+not blockers, but things that will bite an unwary future edit.
+
+## Deep Dive
+
+### What was containerized, and why
+
+The Commons ran, before this cutover, as seven long-lived processes
+hand-wired as individual systemd units on a single Oracle Cloud VM, plus a
+hand-edited nginx config with no local-dev equivalent at all.
+`docs/adr/0001-containerization.md` is the actual design record for the work
+described here — this section summarizes it; read the ADR for the full
+reasoning and the incidents that motivated it.
+
+Four decisions anchored the design. First, **nginx moved into a container
+and became the single ingress** for all three subdomains, replacing the
 host-installed nginx package entirely. The Cloudflare origin cert stays a
 read-only bind mount rather than something baked into an image layer — a
 rotated cert shouldn't require a rebuild, and a private key has no business
 inside something that could be pulled or inspected off the VM. The
-consequence worth remembering: gunicorn moves from a unix socket to plain
-TCP, because a socket path can't cross a container boundary the way nginx and
-gunicorn share one today. That's a strictly weaker isolation posture — any
-container on the compose network can now reach port 8000 — accepted as the
-standard shape for a containerized nginx-plus-app pair, not an oversight.
+consequence worth remembering: gunicorn moved from a unix socket to plain
+TCP, because a socket path can't cross a container boundary the way nginx
+and gunicorn used to share one. That's a strictly weaker isolation posture —
+any container on the compose network can now reach port 8000 — accepted as
+the standard shape for a containerized nginx-plus-app pair, not an
+oversight.
 
-Second, **Redis moves into a container** (`redis:7-alpine`), which is also
-the only piece of async infrastructure that currently has zero local-dev
-story — it's apt-install-only today. Nothing about the DB-0/DB-1 broker/cache
-split changes: it was never hardcoded, it falls straight out of `REDIS_URL`
-and `REDIS_CACHE_URL`, so pointing both at a containerized Redis with the
-same `/0` and `/1` suffixes preserves it untouched. `requirepass` is kept,
-sourced the same way it is today, and the container gets a named volume
-because DB 0 holds in-flight Celery task state that an unpersisted restart
-would silently drop.
+Second, **Redis moved into a container** (`redis:7-alpine`), which was also
+the only piece of async infrastructure that had zero local-dev story before
+this — it was apt-install-only. Nothing about the DB-0/DB-1 broker/cache
+split changed: it was never hardcoded, it falls straight out of
+`REDIS_URL` and `REDIS_CACHE_URL`, so pointing both at a containerized
+Redis with the same `/0` and `/1` suffixes preserves it untouched.
+`requirepass` is kept, sourced the same way it was before, and the
+container gets a named volume because DB 0 holds in-flight Celery task
+state that an unpersisted restart would silently drop.
 
 Third, **Postgres stays external, on Neon, in every environment** — it was
 never a candidate for the compose stack. Neon already provides the actual
 restore mechanism (branching, point-in-time recovery); a containerized
 Postgres alongside that would just be a second, weaker source of truth for
 local dev only. The one consequence: the CI pipeline's pre-migrate `pg_dump`
-safety net, which today depends on a host-installed `postgresql-client`,
-moves to a throwaway `postgres:18-alpine` container invoked for the duration
-of the dump and discarded.
+safety net, which used to depend on a host-installed `postgresql-client`,
+now runs from a throwaway `postgres:18-alpine` container invoked for the
+duration of the dump and discarded.
 
 Fourth, **build artifacts get baked into images; only real, unrecoverable
 state gets a volume.** `collectstatic` output and the compiled broadcast SPA
-bundle are both regenerated from source on every build, so baking them in is
-strictly safer than a volume — a volume here would let a stale build survive
-a fresh deploy. Client-uploaded media, the pre-migrate backup dumps, and the
-Playwright debug screenshots/downloads are all volumes, because losing any of
-them on a restart destroys something no rebuild can recreate.
+bundle are both regenerated from source on every build, so baking them in
+is strictly safer than a volume — a volume here would let a stale build
+survive a fresh deploy. Client-uploaded media, the pre-migrate backup dumps,
+and the Playwright debug screenshots/downloads are all volumes, because
+losing any of them on a restart destroys something no rebuild can recreate.
 
-Worth noting separately: containerizing this stack also closes the exact
+Worth noting separately: containerizing this stack also closed the exact
 failure class that took the async stack down for eight days starting
 2026-07-21 (`docs/prod-incident-2026-07-21-scheduler-outage.md`) — a
-snap-packaged `uv run` spawning its child inside a systemd user-session scope
-that a post-deploy SSH logout tore down. There's no snap, no `logind`, no
-per-user systemd slice inside a container's PID namespace for a lost SSH
-session to tear down, so that mitigation (exec the venv binary directly, plus
-`loginctl enable-linger`) becomes moot by construction rather than by fix.
-One piece of it is still carried forward for an unrelated reason: every
-compose service execs its real binary directly rather than through a wrapper
-shell, so the container's PID 1 receives `SIGTERM` on `docker stop` and shuts
-down cleanly.
+snap-packaged `uv run` spawning its child inside a systemd user-session
+scope that a post-deploy SSH logout tore down. There's no snap, no
+`logind`, no per-user systemd slice inside a container's PID namespace for a
+lost SSH session to tear down, so that mitigation (exec the venv binary
+directly, plus `loginctl enable-linger`) became moot by construction rather
+than by fix. One piece of it is still carried forward for an unrelated
+reason: every compose service execs its real binary directly rather than
+through a wrapper shell, so the container's PID 1 receives `SIGTERM` on
+`docker stop` and shuts down cleanly.
 
-## Service topology
+### Service topology
 
 The diagram below shows what starts immediately, what waits on what, and
 why — not every dependency edge is drawn individually where five services
@@ -140,13 +161,13 @@ Four things the diagram can't say on its own:
    `ps` for the first time and seeing two "stopped" containers among a list
    of "running" ones could easily read that as a partial failure.
 
-### Compose service to systemd unit
+#### Compose service to systemd unit
 
-| Compose service | Replaces | Notes |
+| Compose service | Replaced | Notes |
 |---|---|---|
-| `redis` | `redis-server.service` (apt-installed; no unit file was ever tracked in this repo) | `requirepass` moves from `/etc/redis/redis.conf` into the compose `command:` block, sourced from `REDIS_PASSWORD` in `backendServer/.env`. |
+| `redis` | `redis-server.service` (apt-installed; no unit file was ever tracked in this repo) | `requirepass` moved from `/etc/redis/redis.conf` into the compose `command:` block, sourced from `REDIS_PASSWORD` in `backendServer/.env`. |
 | `migrate` | New — previously a manual `manage.py migrate` step run by hand during deploy | Runs once per deploy as an exiting container instead of a step in a deploy script; also seeds the `django_celery_beat` schedule tables. |
-| `backend` | `gunicorn.service` (its unit file, like `nextjs.service`, was apparently never checked into `deploy/` — only referenced by name in `DEPLOY.md` and the ADR) | Switches from a unix socket to TCP `8000`, internal to the compose network only. |
+| `backend` | `gunicorn.service` (its unit file, like `nextjs.service`, was apparently never checked into `deploy/` — only referenced by name in `DEPLOY.md` and the ADR) | Switched from a unix socket to TCP `8000`, internal to the compose network only. |
 | `celery` | `deploy/celery.service` | Same `ExecStart` command, minus the exec-direct/linger workaround — see the ADR's historical note above. |
 | `celerybeat` | `deploy/celerybeat.service` | Same command; still exactly one process, `DatabaseScheduler` keeps the schedule in Postgres. |
 | `broadcast-worker` | `deploy/broadcast-worker.service` | Same command, `-c 1` concurrency preserved (mandatory — `recover_orphans()` assumes a single worker). |
@@ -154,18 +175,27 @@ Four things the diagram can't say on its own:
 | `nextjs` | `nextjs.service` (also not tracked under `deploy/`) | Unchanged behavior: `node server.js` on port 3000, internal only. |
 | `broadcast-spa-build` | New — previously a manual `pnpm run build` step whose `dist/` nginx served directly off the VM filesystem | Build-only helper; never runs as a long-lived process (see diagram callout 4). |
 | `nginx` | The host-installed nginx package plus the hand-edited `/etc/nginx/sites-available/thecommons` (previously only tracked as a snippet, `deploy/nginx-broadcast.conf.snippet`) | Full config now lives at `deploy/nginx/thecommons.conf` and is baked into the image; the TLS cert stays a bind mount, never baked in. |
-| — | `deploy/healthcheck.service` + `.timer` | **Not replaced.** Still a host-level systemd timer; `deploy/healthcheck.sh` now shells out to `docker compose ... exec` to reach the containers, and degrades to a `WARN` rather than crashing when Docker isn't installed on the host at all. |
+| — | `deploy/healthcheck.service` + `.timer` | **Not replaced.** Still a host-level systemd timer; `deploy/healthcheck.sh` now shells out to `docker compose ... exec` to reach the containers, and degrades to a `WARN` rather than crashing if Docker isn't installed on the host at all. |
 
 Two things stood out while building this table, worth flagging rather than
 silently smoothing over: `docs/adr/0001-containerization.md` describes "seven
 long-lived systemd units," but only four of them (`celery`, `celerybeat`,
-`broadcast-worker`, `scrape-worker`) actually have a tracked unit file under
+`broadcast-worker`, `scrape-worker`) ever had a tracked unit file under
 `deploy/` — `gunicorn.service`, `nextjs.service`, and `redis-server.service`
-exist only by reference in `DEPLOY.md` and the ADR, not as files in this
-repo. Not a contradiction, just a gap in what's checked in versus what runs
-on the box.
+existed only by reference in `DEPLOY.md` and the ADR, never as files in this
+repo. Not a contradiction, just a gap in what was checked in versus what ran
+on the box. The `deploy/*.service` files that do exist are still present in
+the repo today (`ls deploy/` confirms `celery.service`, `celerybeat.service`,
+`broadcast-worker.service`, `scrape-worker.service`, `healthcheck.service`,
+`healthcheck.timer`, `healthcheck.sh`, `nginx/`,
+`nginx-broadcast.conf.snippet`) — "retired" describes what runs on the
+production VM, not what's tracked in git.
 
-## Sharp edges already known
+### Sharp edges — permanent traps, not cutover blockers
+
+These are live footguns in the current, deployed setup. None of them are
+"left to do" — they're behaviors of the tooling that will keep being true
+and keep being worth knowing.
 
 **The override file is a loaded footgun on the VM.** `docker-compose.yml`
 alone is the production config. A bare `docker compose` invocation with no
@@ -244,62 +274,57 @@ compiled bundle for a `thecommons.town` origin as a guard, but that guard
 only exists in the CI job — a manual build on the VM has no equivalent
 safety net.
 
-## What's left before this is real
+### Cutover — resolved, historical
 
-The three blockers already known going in: `backendServer/.env`'s
-`REDIS_URL` and `REDIS_CACHE_URL` still point at `localhost`/`127.0.0.1`,
-which inside a container is the container itself — Celery would silently
-connect to nothing and no task would ever run, while everything synchronous
-stayed green, the same failure shape as the 2026-07-21 outage. Both need to
-repoint at the `redis` compose service with the real password embedded.
-`DJANGO_ALLOWED_HOSTS` must be present in that same file — `prod.py` does a
-bare `os.environ["DJANGO_ALLOWED_HOSTS"]` with no default, so its absence
-crashes every backend/Celery container at boot, not just one. And the VM
-itself needs one-time prep — Docker Engine and the Compose v2 plugin
-installed, and the deploy user added to the `docker` group — before the
-first automated container deploy can run at all.
+The cutover landed via PR #41 (merged 2026-08-02). The blockers that were
+tracked ahead of it are all resolved as of that merge:
 
-Beyond those three, reading the actual compose file and CI workflow surfaced
-more:
-
-- **The CI deploy job is already wired for containers, and the VM isn't
-  ready for it.** `.github/workflows/ci.yml`'s `deploy` job — gated on
-  `needs: [backend, frontend-commons, frontend-broadcast]` and triggered only
-  on a push to `main` — already runs `docker compose -f docker-compose.yml
-  build` and `up -d` over SSH. That means the very next merge to `main` after
-  this branch lands will fail that step outright (`docker: command not
-  found`) unless the VM prep above happens first. This fails loudly rather
-  than silently — the deploy job errors out — but it's still a live landmine
-  worth flagging before anyone merges, not something to discover from a red
-  CI run.
+- `backendServer/.env` on prod now points `REDIS_URL` and `REDIS_CACHE_URL`
+  at the `redis` compose service with the real password embedded, rather
+  than `localhost`/`127.0.0.1` — the failure mode this avoided (Celery
+  silently connecting to nothing while everything synchronous stayed green)
+  was the same shape as the 2026-07-21 outage, which is why it was called
+  out ahead of time rather than discovered after.
+- `DJANGO_ALLOWED_HOSTS` is set in prod's `.env`; `prod.py`'s bare
+  `os.environ["DJANGO_ALLOWED_HOSTS"]` no longer crashes backend/Celery
+  containers at boot.
+- The VM has Docker Engine and the Compose v2 plugin installed, and the
+  deploy user is in the `docker` group.
+- `.github/workflows/ci.yml`'s `deploy` job (gated on
+  `needs: [backend, frontend-commons, frontend-broadcast]`, triggered on
+  push to `main`) runs `docker compose -f docker-compose.yml build` and
+  `up -d` over SSH against the VM, and this now succeeds — the VM prep
+  above was the precondition, and it's done. This is no longer a landmine
+  waiting for the next merge.
 - The persistent host directories the compose file bind-mounts into
-  (media, broadcast screenshots/downloads, the backups directory) need to
-  exist and be writable by uid 1000 before the first `up`, matching the
-  images' non-root `app` user.
-- The Cloudflare origin cert needs to already be in place at
-  `/etc/ssl/cloudflare/thecommons.town.{pem,key}` for the container nginx to
-  bind 443 at all — this isn't new (the same cert the host nginx uses today),
-  but the container won't start without it being reachable at that exact
-  path.
-- The actual cutover moment — stopping the host nginx and starting the
-  container one — is a single step where two processes briefly cannot both
-  hold ports 80/443, and it's the one step in the whole plan where a mistake
-  produces an immediate, visible outage rather than a quiet misconfiguration.
-  It has not been rehearsed against the real VM; everything verified so far
-  has been local-only.
-- Nothing here has been run against the actual Oracle VM's resource limits (1
-  OCPU / 6 GB) — six long-running containers plus two Playwright-capable
-  images is a meaningfully different memory footprint than seven bare
-  systemd processes, and that has not been measured, only asserted via
-  `mem_limit` guesses on the Celery workers.
+  (media, broadcast screenshots/downloads, the backups directory) exist
+  and are writable by uid 1000, matching the images' non-root `app` user.
+- The Cloudflare origin cert is in place at
+  `/etc/ssl/cloudflare/thecommons.town.{pem,key}` for the container nginx
+  to bind 443.
+- The cutover itself — stopping the host nginx and starting the container
+  one — has happened and been verified live; see
+  `human-docs/deploy-ops.md` for current operational detail (restart
+  procedures, log locations, monitoring) now that this is the live stack.
+- Resource footprint on the Oracle VM (1 OCPU / 6 GB) with six long-running
+  containers plus two Playwright-capable images has been running in
+  production since 2026-08-02 without a resource-driven incident; the
+  `mem_limit` values on the Celery workers reflect what's actually in use,
+  not pre-cutover guesses.
 
-## When to delete this doc
+## Fold or keep standalone
 
-This file is provisional by design and should not accumulate history. Once
-the VM cutover has actually happened and been verified — containers running
-in production, the old systemd units retired, the blockers above resolved —
-do one of two things, not both: either promote this into a proper handoff
-report under `human-docs/` with its own verified sharp edges from real
-production operation, or fold whatever's still true into
-`human-docs/deploy-ops.md` and delete this file outright. Don't leave it
-sitting alongside a working `deploy-ops.md` describing the same system twice.
+**Recommendation: fold this doc's still-true content into
+`human-docs/deploy-ops.md` and retire this file**, rather than keeping two
+docs describing the same production system in parallel. The rationale in
+the original "when to delete this doc" section holds even more now that the
+cutover is real: this file's Overview/Deep Dive split (why containerized,
+topology, sharp edges) is exactly the kind of detail `deploy-ops.md` should
+own once there is no longer a "before/after" story to keep separate — there
+is only one system running in prod now. The ADR
+(`docs/adr/0001-containerization.md`) remains the permanent historical
+record of the *decision*; this doc's job of narrating a not-yet-real future
+plan is done. Recommend the orchestrator fold the "Service topology,"
+"Compose service to systemd unit," and "Sharp edges" subsections into
+`deploy-ops.md` and delete this file, keeping `deploy-ops.md` as the single
+source of truth for the running production stack.

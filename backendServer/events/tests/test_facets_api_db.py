@@ -67,8 +67,9 @@ class EventFacetsTests(TestCase):
         self.assertEqual(resp.data["towns"], {"carrboro": 1})
 
     def test_category_filter_narrows_counts_consistently_with_list(self):
-        music = Category.objects.create(slug="music", display_name="Music")
-        art = Category.objects.create(slug="art", display_name="Art")
+        # Migration 0012 already seeds these slugs, so fetch rather than create.
+        music, _ = Category.objects.get_or_create(slug="music", defaults={"display_name": "Music"})
+        art, _ = Category.objects.get_or_create(slug="art", defaults={"display_name": "Art"})
 
         music_event = make_event("Music Show", town=self.carrboro, days_offset=1)
         music_event.categories.add(music)

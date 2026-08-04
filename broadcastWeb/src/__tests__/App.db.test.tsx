@@ -373,7 +373,7 @@ describe("T8: hard reset", () => {
   });
 });
 
-describe("T9: reviewed-state lock and contact-info edit affordance", () => {
+describe("T9: reviewed-state lock", () => {
   const draftFixture = {
     draft_id: "d1",
     title: "Test Event",
@@ -431,7 +431,7 @@ describe("T9: reviewed-state lock and contact-info edit affordance", () => {
   it("dims the AI Autofill and Event form sections and names Make changes as the unlock", async () => {
     await renderWithPreview();
     await waitFor(() => {
-      expect(screen.getByText(/Acme Org/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Acme Org")).toBeInTheDocument();
     });
 
     const hints = screen.getAllByText(/Locked while.*reviewing this event/i);
@@ -443,32 +443,25 @@ describe("T9: reviewed-state lock and contact-info edit affordance", () => {
     expect(screen.getByPlaceholderText(/Paste an event description/i)).toBeDisabled();
   });
 
-  it("shows an Edit control on the collapsed contact summary that re-expands the fields in place", async () => {
+  // 48.10: organizer/contact fields moved out of the Access panel's collapsible
+  // step-3 summary and into the main event form, alongside the other fields —
+  // there is no more separate "Edit" affordance; "Make changes" (which unlocks
+  // the whole form) is the only unlock path now.
+  it("keeps organizer/contact fields in the main event form, disabled while locked", async () => {
     await renderWithPreview();
     await waitFor(() => {
-      expect(screen.getByText(/Acme Org/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Acme Org")).toBeInTheDocument();
     });
 
-    // No affordance visible yet besides Edit — fields aren't rendered.
-    expect(screen.queryByLabelText(/Organizer \/ Organization Name/i)).toBeNull();
-
-    // clearDraft/clearSession aren't reset between tests in this file (unlike
-    // the other mocks in beforeEach), so snapshot call counts here rather than
-    // asserting "never called" across the whole suite run.
-    const clearDraftCallsBefore = vi.mocked(clearDraft).mock.calls.length;
-    const clearSessionCallsBefore = vi.mocked(clearSession).mock.calls.length;
-
-    const editButton = screen.getByRole("button", { name: /^Edit$/i });
-    editButton.click();
-
-    const nameInput = await screen.findByLabelText(/Organizer \/ Organization Name/i);
+    const nameInput = screen.getByLabelText(/Organizer \/ Organization Name/i);
     expect(nameInput).toHaveValue("Acme Org");
-    expect(nameInput).toBeEnabled();
-    expect(screen.getByLabelText(/Contact Email/i)).toHaveValue("acme@example.com");
+    expect(nameInput).toBeDisabled();
 
-    // Reusing "Edit" must not touch the reset/sign-out path.
-    expect(vi.mocked(clearDraft).mock.calls.length).toBe(clearDraftCallsBefore);
-    expect(vi.mocked(clearSession).mock.calls.length).toBe(clearSessionCallsBefore);
-    expect(signOutMock).not.toHaveBeenCalled();
+    const emailInput = screen.getByLabelText(/Contact Email/i);
+    expect(emailInput).toHaveValue("acme@example.com");
+    expect(emailInput).toBeDisabled();
+
+    expect(screen.getByLabelText(/Contact Phone/i)).toHaveValue("919-555-0100");
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).toBeNull();
   });
 });

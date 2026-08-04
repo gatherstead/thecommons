@@ -4,6 +4,23 @@ import type { BackendEvent, PaginatedBackendEvents } from '@/models/eventsModels
 import { renderHookWithClient } from '../../../vitest.setup';
 import { useEvents, type ViewMode } from '../useEvents';
 
+// useEvents reads/writes the URL via next/navigation (48.13). There's no real
+// App Router context in vitest, so stub it: useSearchParams reflects a
+// mutable module-level URLSearchParams (set per test via setUrlSearchParams),
+// router.replace is a spy tests can assert against, and pathname is fixed at '/'.
+let currentSearchParams = new URLSearchParams();
+const routerReplace = vi.fn();
+
+vi.mock('next/navigation', () => ({
+    useRouter: () => ({ replace: routerReplace }),
+    usePathname: () => '/',
+    useSearchParams: () => currentSearchParams,
+}));
+
+function setUrlSearchParams(qs: string) {
+    currentSearchParams = new URLSearchParams(qs);
+}
+
 function backendEvent(over: Partial<BackendEvent>): BackendEvent {
     return {
         uuid: 'e1',
@@ -37,6 +54,8 @@ const eventUrls: string[] = [];
 
 beforeEach(() => {
     eventUrls.length = 0;
+    currentSearchParams = new URLSearchParams();
+    routerReplace.mockClear();
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes('/events/towns/')) {
@@ -47,7 +66,17 @@ beforeEach(() => {
         }
         if (url.includes('/events')) {
             eventUrls.push(url);
-            return { ok: true, json: async () => page(EVENTS) } as Response;
+            // Town/tag filtering is server-side now — mimic the backend's
+            // ?town=&tag= narrowing so tests can assert on the filtered result.
+            const params = new URL(url, 'http://localhost').searchParams;
+            const towns = params.getAll('town');
+            const tags = params.getAll('tag');
+            const filtered = EVENTS.filter(e => {
+                if (towns.length > 0 && !towns.includes(e.town)) return false;
+                if (tags.length > 0 && !tags.every(t => (e.tag_names ?? []).includes(t))) return false;
+                return true;
+            });
+            return { ok: true, json: async () => page(filtered) } as Response;
         }
         throw new Error(`Unmocked fetch: ${url}`);
     });
@@ -60,15 +89,19 @@ afterEach(() => {
 });
 
 describe('useEvents', () => {
-    it('toggling a town filters the rendered list client-side', async () => {
+    it('toggling a town refetches server-side filtered by ?town=', async () => {
         const { result } = renderHookWithClient(() => useEvents());
 
         await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
 
         act(() => result.current.toggleTown('Carrboro'));
 
-        expect(result.current.filteredEvents).toHaveLength(1);
+        await waitFor(() => {
+            expect(eventUrls.some(u => u.includes('town=Carrboro'))).toBe(true);
+        });
+        await waitFor(() => expect(result.current.filteredEvents).toHaveLength(1));
         expect(result.current.filteredEvents[0].town).toBe('Carrboro');
+        expect(result.current.totalCount).toBe(1);
     });
 
     it('switching to the past window refetches with a changed query', async () => {
@@ -114,5 +147,102 @@ describe('useEvents', () => {
         act(() => result.current.setCategory('music'));
 
         expect(result.current.currentWindow).toBe('6months');
+    });
+
+    describe('URL round-tripping (48.13)', () => {
+        it('seeds filter state from a pasted URL on first render', async () => {
+            setUrlSearchParams('tag=weekends&tag=evenings&town=Carrboro&category=music&window=12months');
+            const { result } = renderHookWithClient(() => useEvents());
+
+            expect(result.current.selectedTags).toEqual(['weekends', 'evenings']);
+            expect(result.current.selectedTowns).toEqual(['Carrboro']);
+            expect(result.current.selectedCategory).toBe('music');
+            expect(result.current.currentWindow).toBe('12months');
+
+            await waitFor(() => expect(eventUrls.length).toBeGreaterThan(0));
+            const url = eventUrls[0];
+            expect(url).toContain('tag=weekends');
+            expect(url).toContain('tag=evenings');
+            expect(url).toContain('town=Carrboro');
+            expect(url).toContain('category=music');
+            // '12months' is expressed as a `before=` cutoff by fetchForWindow, not
+            // a literal window= param (only 'past' passes window= through) — the
+            // state itself is what we're asserting here.
+            expect(url).toContain('before=');
+        });
+
+        it('writes filter changes back to the URL with router.replace (shallow), not push', async () => {
+            const { result } = renderHookWithClient(() => useEvents());
+            await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
+            routerReplace.mockClear();
+
+            act(() => result.current.toggleTown('Carrboro'));
+
+            await waitFor(() => expect(routerReplace).toHaveBeenCalled());
+            const [lastUrl, lastOpts] = routerReplace.mock.calls.at(-1) ?? [];
+            expect(lastUrl).toBe('/?town=Carrboro');
+            expect(lastOpts).toEqual({ scroll: false });
+        });
+
+        it('omits default-valued filters from the URL', async () => {
+            const { result } = renderHookWithClient(() => useEvents());
+            await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
+
+            // No filters applied yet -> the bare path, not e.g. "/?window=3months".
+            expect(routerReplace).toHaveBeenLastCalledWith('/', { scroll: false });
+        });
+
+        it('clearFilters clears the URL back to the bare path', async () => {
+            setUrlSearchParams('town=Carrboro&category=music&window=12months');
+            const { result } = renderHookWithClient(() => useEvents());
+            await waitFor(() => expect(result.current.selectedTowns).toEqual(['Carrboro']));
+
+            act(() => result.current.clearFilters());
+
+            await waitFor(() => expect(routerReplace).toHaveBeenLastCalledWith('/', { scroll: false }));
+            expect(result.current.selectedTowns).toEqual([]);
+            expect(result.current.selectedCategory).toBeNull();
+            expect(result.current.currentWindow).toBe('3months');
+        });
+
+        it('restores a page > 1 found in the URL by walking forward from page 1', async () => {
+            const localFetch = vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (url.includes('/events/towns/') || url.includes('/events/categories/')) {
+                    return { ok: true, json: async () => [] } as Response;
+                }
+                const params = new URL(url, 'http://localhost').searchParams;
+                const page = params.get('page') ? Number(params.get('page')) : 1;
+                if (page < 2) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            count: 2,
+                            next: 'http://localhost/events/?page=2',
+                            previous: null,
+                            results: [EVENTS[0]],
+                        }),
+                    } as Response;
+                }
+                return {
+                    ok: true,
+                    json: async () => ({
+                        count: 2,
+                        next: null,
+                        previous: 'http://localhost/events/?page=1',
+                        results: [EVENTS[1]],
+                    }),
+                } as Response;
+            });
+            vi.stubGlobal('fetch', localFetch);
+
+            setUrlSearchParams('page=2');
+            const { result } = renderHookWithClient(() => useEvents());
+
+            await waitFor(() => expect(result.current.currentPage).toBe(2));
+            await waitFor(() =>
+                expect(result.current.filteredEvents.some(e => e.id === EVENTS[1].uuid)).toBe(true),
+            );
+        });
     });
 });

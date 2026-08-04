@@ -9,15 +9,15 @@ const FOOTER_LINKS = {
         { label: 'FAQ', href: '/about#faq' },
     ],
     Contribute: [
-        { label: 'Post an Event', href: '#' },
-        { label: 'Event Guidelines', href: '#' },
-        { label: 'Submit a Correction', href: '#' },
-        { label: 'Advertise With Us', href: '#' },
+        { label: 'Post an Event', href: '/post' },
+        { label: 'Event Guidelines', href: '/event-guidelines' },
+        { label: 'Submit a Correction', href: '/submit-correction' },
+        { label: 'Advertise With Us', href: '/advertise' },
     ],
     Connect: [
         { label: 'Instagram', href: 'https://instagram.com' },
-        { label: 'Contact Us', href: '#' },
-        { label: 'Feedback', href: '#' },
+        { label: 'Contact Us', href: '/contact' },
+        { label: 'Feedback', href: '/feedback' },
     ],
 };
 
@@ -45,14 +45,6 @@ export function Footer() {
                             aria-label="Instagram"
                         >
                             Instagram
-                        </a>
-                        <span className="text-(--color-border-light) text-xs" aria-hidden="true">/</span>
-                        <a
-                            href="#"
-                            className="text-[11px] uppercase tracking-wider no-underline hover:text-(--color-accent) transition-colors"
-                            aria-label="Facebook"
-                        >
-                            Facebook
                         </a>
                     </div>
                     <span className="flex-1 border-t border-(--color-border-light)" aria-hidden="true" />

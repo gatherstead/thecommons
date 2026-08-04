@@ -27,14 +27,26 @@ export function PortalShell({
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 min-h-screen">
-            {/* ── Left panel: landscape image (fallback while asset is pending) ── */}
-            <div className="hidden md:block relative bg-[var(--color-bg-alt)]">
-                {/* TODO: portal-landscape.jpg — once the asset lands, render it with
-                    object-cover w-full h-full over this fallback panel. */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="border border-[var(--color-border)] px-10 py-8">
-                        <span className="text-xs uppercase tracking-[0.35em] text-[var(--color-text-muted)]">
-                            The Commons
+            {/* ── Left panel: masthead ────────────────────────────────────────── */}
+            <div className="hidden md:flex md:items-center md:justify-center relative bg-[var(--color-bg-alt)] border-r border-[var(--color-border)] px-12">
+                <div className="max-w-sm">
+                    <span className="block text-xs uppercase tracking-[0.35em] text-[var(--color-text-muted)] mb-6">
+                        Est. 2026
+                    </span>
+                    <h2
+                        className="font-black leading-[0.95] mb-6"
+                        style={{ fontSize: 'clamp(2.5rem, 6vw, 4rem)', fontFamily: 'var(--font-headline)' }}
+                    >
+                        The Commons
+                    </h2>
+                    <div className="border-t-2 border-[var(--color-border)] pt-6">
+                        <p className="font-[var(--font-headline)] italic text-lg leading-relaxed text-[var(--color-text-muted)]">
+                            &ldquo;Find your next excuse to stay local.&rdquo;
+                        </p>
+                    </div>
+                    <div className="border-t border-[var(--color-border-light)] mt-8 pt-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                            Your town&rsquo;s digital gathering place
                         </span>
                     </div>
                 </div>

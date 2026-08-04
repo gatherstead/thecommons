@@ -32,28 +32,91 @@
   // category never fails silently again (see suite 46.1).
   const unmatchedTerms = [];
 
+  // select2 "Create or Find" widgets (venue/organizer) where we reused an
+  // existing option instead of creating a new one — surfaced as a
+  // non-blocking note in the review banner (suite 48.6) so a human can catch
+  // a bad reuse before submitting.
+  const venueMatchNotes = [];
+
+  // Image upload outcome (see fillFile) — surfaced in the completion ack so
+  // the SPA never reports FILLED when the image silently fell back to the
+  // manual hint (suite 48.2).
+  let imageAttempted = false;
+  let imageOk = false;
+
   async function runFill(recipe) {
     unmatchedTerms.length = 0;
-    const fields = recipe.fields || [];
-    // Some forms render after page "complete"; adapters can specify a
-    // ready_selector, otherwise we fall back to the first field.
-    const readySel = recipe.ready_selector || (fields[0] && fields[0].selector);
-    if (readySel) {
-      await waitFor(() => document.querySelector(readySel), 15000);
-    }
-    for (const field of fields) {
-      const handler = HANDLERS[field.type] || HANDLERS.manual_widget;
-      try {
-        await handler(field);
-      } catch (e) {
-        console.warn("Commons Broadcast: field failed", field.selector, e);
+    venueMatchNotes.length = 0;
+    imageAttempted = false;
+    imageOk = false;
+
+    let fieldsTotal = 0;
+    let fieldsFailed = 0;
+    let ranOk = true;
+    let errorMessage;
+
+    // The banner is one completion signal for the human at the keyboard; the
+    // ack below is the completion signal for the SPA (ticket 48.2) — status
+    // there must never be inferred from "the fill was dispatched" the way it
+    // used to be. Both must render/send even if a field handler hangs or
+    // throws unexpectedly, so a partial fill is never mistaken for a
+    // complete one (suite 48.1 / 48.2).
+    try {
+      const fields = recipe.fields || [];
+      fieldsTotal = fields.length;
+      // Some forms render after page "complete"; adapters can specify a
+      // ready_selector, otherwise we fall back to the first field.
+      const readySel = recipe.ready_selector || (fields[0] && fields[0].selector);
+      if (readySel) {
+        await waitFor(() => document.querySelector(readySel), 15000);
       }
+      for (const field of fields) {
+        const handler = HANDLERS[field.type] || HANDLERS.manual_widget;
+        try {
+          await handler(field);
+        } catch (e) {
+          fieldsFailed += 1;
+          console.warn("Commons Broadcast: field failed", field.selector, e);
+        }
+      }
+      if (unmatchedTerms.length) {
+        console.warn("Commons Broadcast: unmatched category terms", unmatchedTerms);
+      }
+    } catch (e) {
+      // A field handler catches its own errors above — this only fires for
+      // something breaking runFill itself (e.g. the ready_selector wait
+      // throwing). Recorded, not rethrown, so the finally block below still
+      // runs and the SPA still gets a definitive ack instead of hanging.
+      ranOk = false;
+      errorMessage = String((e && e.message) || e);
+      console.error("Commons Broadcast:", e);
+    } finally {
+      showBanner(recipe);
+      highlightTargets(recipe);
+      sendCompletionAck({
+        ok: ranOk && fieldsFailed === 0,
+        error: errorMessage,
+        fieldsTotal,
+        fieldsFailed,
+        unmatchedTerms: unmatchedTerms.slice(),
+        venueMatchNotes: venueMatchNotes.slice(),
+        imageAttempted,
+        imageOk,
+      });
     }
-    if (unmatchedTerms.length) {
-      console.warn("Commons Broadcast: unmatched category terms", unmatchedTerms);
+  }
+
+  // Fire-and-forget to the background worker — it forwards this to whatever
+  // SPA tab is waiting on a "fill" port (see background.js). No response is
+  // expected; if the message can't be delivered (e.g. no listener because
+  // this fill was dispatched via the older one-shot sendFill), that's fine —
+  // the SPA-side timeout is the backstop for a missing ack either way.
+  function sendCompletionAck(summary) {
+    try {
+      chrome.runtime.sendMessage({ type: "commons-fill-complete", summary });
+    } catch (e) {
+      console.warn("Commons Broadcast: could not send completion ack", e);
     }
-    showBanner(recipe);
-    highlightTargets(recipe);
   }
 
   // --- value setters -------------------------------------------------------
@@ -111,6 +174,15 @@
     setNativeValue(el, field.value);
   }
 
+  // Destinations reformat date/time values on commit (e.g. "4:00 pm" ->
+  // "4:00pm"), so a strict === against what we wrote never matches — compare
+  // through this normalizer instead.
+  function normalizeFieldValue(v) {
+    return String(v == null ? "" : v)
+      .toLowerCase()
+      .replace(/\s+/g, "");
+  }
+
   // date/time fields on some forms (e.g. ABC11's Trumba/Fluent UI widgets)
   // self-populate with a near-current default shortly after load, racing our
   // write. Re-read after a short wait and retry if a later default clobbered
@@ -123,13 +195,16 @@
 
     const attempts = 3;
     const delaysMs = [250, 500, 900];
+    const wanted = normalizeFieldValue(field.value);
     for (let i = 0; i < attempts; i++) {
       setNativeValue(el, field.value);
       await sleep(delaysMs[i] || delaysMs[delaysMs.length - 1]);
 
-      if (el.value === field.value) return; // stuck — done
+      // Success — value committed. Destinations reformat what we write (e.g.
+      // "4:00 pm" -> "4:00pm"), so compare loosely rather than by ===.
+      if (normalizeFieldValue(el.value) === wanted) return;
 
-      if (el.value !== field.value) {
+      if (normalizeFieldValue(el.value) !== wanted) {
         // Value was accepted by the DOM but a controlled React component may
         // not have committed it to state — nudge it with Enter + blur.
         el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -137,7 +212,7 @@
         el.dispatchEvent(new Event("blur", { bubbles: true }));
         el.dispatchEvent(new Event("focusout", { bubbles: true }));
         await sleep(100);
-        if (el.value === field.value) return;
+        if (normalizeFieldValue(el.value) === wanted) return;
       }
     }
     console.warn(
@@ -198,6 +273,66 @@
     }
   }
 
+  // Round-trip a message to the background worker over a long-lived port
+  // instead of one-shot sendMessage. The open port keeps the service worker
+  // alive for the duration of the async work on the other end, and its
+  // onDisconnect fires if the worker is torn down mid-flight anyway — turning
+  // a silent "message channel closed" failure into an observable rejection.
+  // A timeout guards against a hang with no error at all (worker wedged
+  // without ever disconnecting the port).
+  function sendPortMessageWithTimeout(portName, message, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let port;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          port && port.disconnect();
+        } catch (_) {
+          /* already gone */
+        }
+        reject(new Error(`timed out waiting for "${portName}" response`));
+      }, timeoutMs);
+
+      try {
+        port = chrome.runtime.connect({ name: portName });
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e);
+        return;
+      }
+
+      port.onMessage.addListener((response) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          port.disconnect();
+        } catch (_) {
+          /* already gone */
+        }
+        resolve(response);
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const err = chrome.runtime.lastError;
+        reject(
+          new Error(
+            "background worker disconnected before responding" +
+              (err ? `: ${err.message}` : "")
+          )
+        );
+      });
+
+      port.postMessage(message);
+    });
+  }
+
   // Fetch image through the background worker (CORS bypass) and assign via
   // DataTransfer. Falls back to a visual hint on error.
   async function fillFile(field) {
@@ -205,11 +340,13 @@
     const el = document.querySelector(field.selector);
     if (!el) return; // no file input found — nothing to highlight either
 
+    imageAttempted = true;
     try {
-      const resp = await chrome.runtime.sendMessage({
-        type: "fetch-image",
-        url: field.value,
-      });
+      const resp = await sendPortMessageWithTimeout(
+        "fetch-image",
+        { type: "fetch-image", url: field.value },
+        15000
+      );
       if (!resp || !resp.ok || !resp.dataUrl) {
         throw new Error(resp ? resp.error : "no response from background");
       }
@@ -229,6 +366,7 @@
       el.files = dt.files;
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.scrollIntoView({ block: "center" });
+      imageOk = true;
       return; // success — no fallback needed
     } catch (e) {
       console.warn("Commons Broadcast: image auto-upload failed, falling back to hint:", e);
@@ -257,8 +395,91 @@
     outline(el, "#c0392b");
   }
 
-  // Hardcoded select2 driver (Triangle Weekender venue/organizer). Fragile by
-  // design — fix on break.
+  // Bounded poll for a select2 dropdown's results to actually be ready — its
+  // option list (and, for AJAX widgets, a re-filtered list after typing)
+  // loads asynchronously and renders nothing in the interim, so a fixed sleep
+  // races it (suite 48.4/48.6). "Ready" = at least one non-loading result.
+  function waitForSelect2Ready(timeoutMs) {
+    return waitFor(() => {
+      const opts = document.querySelectorAll(".select2-dropdown li.select2-results__option");
+      if (!opts.length) return false;
+      for (const o of opts) {
+        if (/searching|loading/i.test(o.textContent || "")) return false;
+      }
+      return true;
+    }, timeoutMs);
+  }
+
+  // select2 result labels sometimes carry a trailing count (see
+  // normalizeSelect2Label below) and Weekender's venue vocabulary carries
+  // address-suffixed duplicates of the same place, e.g. "Durham Central Park"
+  // vs "Durham Central Park @ 501 Foster St" — strip that suffix too before
+  // comparing.
+  function normalizeVenueLabel(text) {
+    return (text || "")
+      .replace(/\(\d+\)\s*$/, "")
+      .replace(/\s*@\s*.+$/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[’']/g, "")
+      .replace(/[–—]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function venueTokenSet(text) {
+    return new Set(
+      normalizeVenueLabel(text)
+        .replace(/[^\w\s-]/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+    );
+  }
+
+  function sameTokenSet(a, b) {
+    if (a.size !== b.size) return false;
+    for (const t of a) if (!b.has(t)) return false;
+    return true;
+  }
+
+  // Ranked matcher for the venue/organizer "Create or Find" widgets (suite
+  // 48.6). Tiers: exact normalized match, then prefix, then a normalized
+  // token-set match — never plain substring, keeping suite 46's anchoring
+  // discipline. Ties within a tier prefer the shortest label (the bare venue
+  // name over an address-suffixed variant).
+  function rankedVenueMatch(options, query, getLabel) {
+    const normQuery = normalizeVenueLabel(query);
+    if (!normQuery) return null;
+    const queryTokens = venueTokenSet(query);
+
+    const exact = [];
+    const prefix = [];
+    const token = [];
+    for (const opt of options) {
+      const rawLabel = (getLabel(opt) || "").trim();
+      const normLabel = normalizeVenueLabel(rawLabel);
+      if (!normLabel) continue;
+      if (normLabel === normQuery) exact.push({ opt, rawLabel });
+      else if (normLabel.startsWith(normQuery)) prefix.push({ opt, rawLabel });
+      else if (sameTokenSet(venueTokenSet(rawLabel), queryTokens)) token.push({ opt, rawLabel });
+    }
+    for (const tier of [exact, prefix, token]) {
+      if (tier.length) {
+        tier.sort((a, b) => a.rawLabel.length - b.rawLabel.length);
+        return tier[0];
+      }
+    }
+    return null;
+  }
+
+  // Hardcoded select2 driver (Triangle Weekender/Chatham Arts "Create or
+  // Find" venue/organizer widgets). Fragile by design — fix on break. Reuses
+  // an existing option on a ranked match (see rankedVenueMatch) instead of
+  // always falling through to "Create: <text>" — the live vocabularies are
+  // huge (~1653 venues, ~1959 organizers) and every unmatched reuse creates a
+  // duplicate on a public calendar. Never invents an option: the "Create"
+  // sentinel (-1 OrganizerID) is preserved as the fallback path.
   async function fillSelect2(field) {
     if (!field.value) return;
     const id = field.selector.replace(/^#/, "");
@@ -279,30 +500,33 @@
         : null;
       if (container) container.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     }
-    await sleep(400);
+    await waitForSelect2Ready(4000);
     const search = document.querySelector(".select2-dropdown .select2-search__field");
     if (!search) return;
     setNativeValue(search, field.value);
     search.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
-    await sleep(1000);
+    // AJAX-backed widget — typing re-queries the server, so wait again for a
+    // ready (non-loading) result set rather than a fixed sleep.
+    await waitForSelect2Ready(3000);
 
     const options = [
       ...document.querySelectorAll(".select2-dropdown li.select2-results__option"),
     ];
-    const norm = field.value.trim().toLowerCase();
-    let match = null;
     let create = null;
+    const candidates = [];
     for (const opt of options) {
-      const label = (opt.textContent || "").trim().toLowerCase();
-      if (label.startsWith("create")) {
+      const label = (opt.textContent || "").trim();
+      if (label.toLowerCase().startsWith("create")) {
         create = opt;
         continue;
       }
-      if (label && (label.includes(norm) || norm.includes(label))) {
-        match = match || opt;
-      }
+      candidates.push(opt);
     }
-    const chosen = match || create || options[0];
+    const ranked = rankedVenueMatch(candidates, field.value, (opt) => opt.textContent);
+    const chosen = ranked ? ranked.opt : create || options[0];
+    if (ranked) {
+      venueMatchNotes.push({ field: field.label || field.selector, matched: ranked.rawLabel });
+    }
     if (chosen) chosen.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   }
 
@@ -348,6 +572,19 @@
   // always renders the full ~62-term vocabulary), so we match against whatever
   // renders rather than waiting on a query that never fires. Unmatched terms
   // are reported via unmatchedTerms, never silently dropped.
+  //
+  // suite 48.4: the same event filled 3x produced 12/0/4 matched terms. The
+  // options list here (like the venue/organizer list above) loads
+  // asynchronously and renders nothing until the dropdown actually opens —
+  // the old code assumed a single click was enough and then raced that load
+  // with a fixed 250ms sleep. When the open+render happened to land inside
+  // that window every term matched (12); when it landed late for the *first*
+  // term the query ran against zero rendered options and every term in that
+  // run failed (0); a load that finished mid-loop explains the partial (4).
+  // Nothing here points at the matcher itself (bestLabelMatch) — it's a pure
+  // function over whatever options are handed to it. Fix: replace the fixed
+  // sleep with a bounded poll on a real readiness condition (waitForSelect2Ready,
+  // shared with fillSelect2 above) before reading the option list.
   async function fillSelect2Multi(field) {
     const terms = (field.value || "")
       .split(",")
@@ -362,40 +599,61 @@
     if (!container || !container.classList.contains("select2-container")) return;
 
     for (const term of terms) {
+      let resolved = false; // set once this term is either matched or explicitly recorded as unmatched
       try {
         const searchInput = container.querySelector(".select2-search__field");
         if (!searchInput) continue;
 
         searchInput.click();
-        await sleep(100);
+        // The full ~62-term vocabulary loads asynchronously and renders
+        // nothing until the widget opens — poll for real readiness instead of
+        // a fixed sleep (see the 48.4 note above).
+        const ready = await waitForSelect2Ready(4000);
+        if (!ready) {
+          // Kept (not temporary): distinguishes "widget never finished
+          // loading" from "term genuinely absent from the vocabulary" — both
+          // land in unmatchedTerms below, but only this one means the site
+          // was slow/unresponsive rather than the category map being wrong.
+          console.warn("Commons Broadcast: select2 options never became ready for term", term);
+        }
+
         setNativeValue(searchInput, term);
         searchInput.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
 
-        // The typed term never actually filters this dropdown (bug A) — just
-        // wait for it to render, not for a query that won't fire.
-        await sleep(250);
-
-        // The dropdown is body-appended.
-        const options = [
-          ...document.querySelectorAll(
-            ".select2-dropdown li.select2-results__option:not(.select2-results__option--disabled)"
-          ),
-        ];
+        // The typed term never actually filters this dropdown (bug A) — the
+        // options polled for above are already the full list, so no further
+        // wait is needed once `ready` is true.
+        const options = ready
+          ? [
+              ...document.querySelectorAll(
+                ".select2-dropdown li.select2-results__option:not(.select2-results__option--disabled)"
+              ),
+            ]
+          : [];
         const match = bestLabelMatch(options, term, (opt) => opt.textContent);
 
         if (match) {
           match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
           await sleep(300); // let select2 register the selection
+          resolved = true;
         } else {
           unmatchedTerms.push({ field: field.label || field.selector, term });
+          resolved = true;
           document.dispatchEvent(
             new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
           );
           setNativeValue(searchInput, "");
           await sleep(150);
         }
-      } catch (_) {
-        // Never throw out of the term loop — skip and continue.
+      } catch (e) {
+        // Never throw out of the term loop — but never let a term vanish
+        // silently either (that was the core defect, suite 48.4). Record it
+        // as unmatched below if the try block didn't already resolve it.
+        console.warn("Commons Broadcast: category term errored", term, e);
+      } finally {
+        if (!resolved) {
+          unmatchedTerms.push({ field: field.label || field.selector, term });
+        }
       }
     }
   }
@@ -497,12 +755,17 @@
       ? ` Captcha: ${recipe.captcha_hint}.`
       : "";
     const unmatched = unmatchedTerms.length
-      ? ` Not found in this site's category list — set manually: ${unmatchedTerms
+      ? ` Not applied — not found in this site's list, set manually: ${unmatchedTerms
           .map((u) => u.term)
           .join(", ")}.`
       : "";
+    const venueNotes = venueMatchNotes.length
+      ? ` ${venueMatchNotes
+          .map((n) => `${n.field} matched to existing "${n.matched}"`)
+          .join("; ")}.`
+      : "";
     bar.textContent =
-      `The Commons: fields filled.${captcha}${unmatched} Review, solve any captcha, then click Submit yourself.`;
+      `The Commons: fields filled.${captcha}${unmatched}${venueNotes} Review, solve any captcha, then click Submit yourself.`;
     Object.assign(bar.style, {
       position: "fixed",
       top: "0",

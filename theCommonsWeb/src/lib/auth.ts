@@ -132,6 +132,10 @@ export const auth = betterAuth({
                     // guards duplicate mirror rows; the try/catch guards everything
                     // else (schema/column drift, etc). A user may transiently exist
                     // without an events_userprofile row until backfilled — acceptable.
+                    // NB: `events_userprofile` is correct despite UserProfile now living
+                    // in the `accounts` app — suite 41 moved it with SeparateDatabaseAndState
+                    // (state-only), so backendServer/accounts/models.py:143-144 still pins
+                    // `db_table = "events_userprofile"`. The physical table was never renamed.
                     try {
                         await db.execute(sql`
                             INSERT INTO public.events_userprofile (uuid, user_id, user_type, primary_city, address, email_preference)

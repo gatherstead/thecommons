@@ -100,7 +100,7 @@ class Eligibility:
 
 
 def eligible_targets(ev: CanonicalEvent, enabled_adapters):
-    """Split adapters into (eligible, excluded-with-reason) for this event."""
+    """Split adapters into (eligible, excluded-with-name-and-reason) for this event."""
     eligible = []
     excluded = []
     for adapter in enabled_adapters:
@@ -108,5 +108,5 @@ def eligible_targets(ev: CanonicalEvent, enabled_adapters):
         if ok:
             eligible.append(adapter)
         else:
-            excluded.append((adapter.key, reason))
+            excluded.append((adapter.key, adapter.name, reason))
     return eligible, excluded

@@ -6,7 +6,7 @@ import { Footer } from './Footer';
 import { MessageStackBanner } from './MessageStackBanner';
 import { DigestCTAPusher } from './DigestCTAPusher';
 
-const PORTAL_PATHS = ['/signin', '/join', '/forgot-password'];
+const PORTAL_PATHS = ['/signin', '/join', '/forgot-password', '/reset-password'];
 
 export function SiteChrome({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();

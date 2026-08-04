@@ -543,6 +543,9 @@ button.verify.is-verified {
 .target-status.error { background: var(--color-accent); border-color: var(--color-accent); color: white; }
 .target-status.needs_manual { background: var(--color-warning-bg); border-color: var(--color-warning-border); color: var(--color-warning-fg); }
 .target-status.unavailable { background: var(--color-warning-bg); border-color: var(--color-warning-border); color: var(--color-warning-fg); }
+/* Deliberately distinct from both submitted (filled) and failed/unavailable —
+   we genuinely don't know the outcome, so it shouldn't read as either. */
+.target-status.unconfirmed { background: var(--color-bg); border: 1px dashed var(--color-warning-border); color: var(--color-warning-fg); }
 .target-status.in_progress { background: white; }
 .target-status.pending { background: white; color: var(--color-text-muted); border-color: var(--color-border-light); }
 .target-status.skipped { background: white; color: var(--color-text-muted); border-color: var(--color-border-light); }

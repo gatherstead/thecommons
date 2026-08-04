@@ -6,13 +6,21 @@ import { useSearchParams } from 'next/navigation';
 import { authClient } from '../../lib/auth-client';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
+import { PortalShell } from '../(portal)/PortalShell';
 
 const MIN_PASSWORD_LENGTH = 8;
 
 // Public, login-free page reached via the reset link in the password-reset
 // email (see sendResetPassword in lib/auth.ts). The token in the query
 // string IS the credential — no session/auth gate here.
-export function ResetPasswordForm() {
+//
+// initialTokenValid comes from a server-side check (page.tsx) against the
+// verification table: null = no token in the URL at all, false = a token is
+// present but is missing/expired, true = it looked valid at request time.
+// It's a mount-time check only — resetPassword() below remains the source
+// of truth and still surfaces its own error if the token goes stale (e.g.
+// gets consumed by a concurrent request) between that check and submission.
+export function ResetPasswordForm({ initialTokenValid }: { initialTokenValid: boolean | null }) {
     const searchParams = useSearchParams();
     const token = searchParams.get('token');
 
@@ -61,21 +69,9 @@ export function ResetPasswordForm() {
         }
     }
 
-    return (
-        <main id="main-content" className="max-w-[480px] mx-auto px-4 py-12">
-            <header className="mb-8 border-b-2 border-[var(--color-border)] pb-4">
-                <h1
-                    className="font-black tracking-tight leading-none mb-1"
-                    style={{ fontSize: 'clamp(2rem, 5vw, 3rem)', fontFamily: 'var(--font-headline)' }}
-                >
-                    Reset Password
-                </h1>
-                <p className="text-sm italic text-[var(--color-text-muted)]">
-                    Choose a new password for your account.
-                </p>
-            </header>
-
-            {!token ? (
+    if (!token) {
+        return (
+            <PortalShell heading="Reset Password" subheading="Choose a new password for your account.">
                 <div className="border-2 border-[var(--color-border)] p-6 text-center">
                     <p className="font-bold mb-2">Missing reset link.</p>
                     <p className="text-sm text-[var(--color-text-muted)] mb-4">
@@ -88,53 +84,77 @@ export function ResetPasswordForm() {
                         &larr; Request a Reset Link
                     </Link>
                 </div>
-            ) : (
-                <>
-                    {error && (
-                        <div
-                            className="mb-6 p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
-                            role="alert"
-                        >
-                            {error}
-                        </div>
-                    )}
-                    {done && (
-                        <div
-                            className="mb-6 p-2 border border-[var(--color-border)] bg-[var(--color-bg-alt)] text-sm"
-                            role="status"
-                        >
-                            Password updated. Redirecting to sign in&hellip;
-                        </div>
-                    )}
+            </PortalShell>
+        );
+    }
 
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <Input
-                            label="New Password"
-                            type="password"
-                            autoComplete="new-password"
-                            required
-                            autoFocus
-                            minLength={MIN_PASSWORD_LENGTH}
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                        />
-                        <Input
-                            label="Confirm New Password"
-                            type="password"
-                            autoComplete="new-password"
-                            required
-                            minLength={MIN_PASSWORD_LENGTH}
-                            value={confirm}
-                            onChange={e => setConfirm(e.target.value)}
-                        />
-                        <div className="flex justify-end items-center pt-2">
-                            <Button type="submit" variant="primary" disabled={isLoading}>
-                                {isLoading ? 'Please wait…' : 'Set New Password'}
-                            </Button>
-                        </div>
-                    </form>
-                </>
+    if (initialTokenValid === false) {
+        return (
+            <PortalShell heading="Reset Password" subheading="Choose a new password for your account.">
+                <div className="border-2 border-[var(--color-accent)] p-6 text-center">
+                    <p className="font-bold text-[var(--color-accent)] mb-2">
+                        This link has expired or is invalid.
+                    </p>
+                    <p className="text-sm text-[var(--color-text-muted)] mb-4">
+                        Password reset links can only be used once and expire after an hour.
+                        Request a new one below.
+                    </p>
+                    <Link
+                        href="/forgot-password"
+                        className="text-xs uppercase tracking-wider font-bold hover:text-[var(--color-accent)] transition-colors"
+                    >
+                        &larr; Request a Reset Link
+                    </Link>
+                </div>
+            </PortalShell>
+        );
+    }
+
+    return (
+        <PortalShell heading="Reset Password" subheading="Choose a new password for your account.">
+            {error && (
+                <div
+                    className="mb-6 p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
+                    role="alert"
+                >
+                    {error}
+                </div>
             )}
-        </main>
+            {done && (
+                <div
+                    className="mb-6 p-2 border border-[var(--color-border)] bg-[var(--color-bg-alt)] text-sm"
+                    role="status"
+                >
+                    Password updated. Redirecting to sign in&hellip;
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+                <Input
+                    label="New Password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    autoFocus
+                    minLength={MIN_PASSWORD_LENGTH}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                />
+                <Input
+                    label="Confirm New Password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={MIN_PASSWORD_LENGTH}
+                    value={confirm}
+                    onChange={e => setConfirm(e.target.value)}
+                />
+                <div className="flex justify-end items-center pt-2">
+                    <Button type="submit" variant="primary" disabled={isLoading}>
+                        {isLoading ? 'Please wait…' : 'Set New Password'}
+                    </Button>
+                </div>
+            </form>
+        </PortalShell>
     );
 }

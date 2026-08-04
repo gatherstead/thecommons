@@ -75,7 +75,7 @@ def preview(request):
     return Response(
         {
             "eligible": [{"site_key": a.key, "name": a.name} for a in eligible],
-            "excluded": [{"site_key": k, "reason": r} for k, r in excluded],
+            "excluded": [{"site_key": k, "name": n, "reason": r} for k, n, r in excluded],
         }
     )
 

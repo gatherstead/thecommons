@@ -48,6 +48,12 @@ export interface EventDraft {
   contact_phone?: string;
 }
 
+export function contactEmailError(email: string | undefined): string {
+  const v = (email ?? "").trim();
+  if (!v) return "";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "" : "Enter a valid email address.";
+}
+
 export interface EligibleSite {
   site_key: string;
   name: string;
@@ -55,6 +61,9 @@ export interface EligibleSite {
 
 export interface ExcludedSite {
   site_key: string;
+  // Optional so an older backend payload (pre-48.8) degrades to the raw
+  // site_key instead of rendering "undefined" — see SitePicker.
+  name?: string;
   reason: string;
 }
 

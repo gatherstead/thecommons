@@ -1,12 +1,16 @@
 import { useRef, useState } from "react";
 
 import type { EventDraft } from "../models/broadcastModels";
-import { CATEGORIES, LOCALITIES } from "../models/broadcastModels";
+import { CATEGORIES, LOCALITIES, contactEmailError } from "../models/broadcastModels";
 import { type ApiAuth, ApiError, uploadImage } from "../services/broadcastApi";
 
 interface Props {
   draft: EventDraft;
-  onChange: (draft: EventDraft) => void;
+  // Functional updater — the parent merges against its own current state, not
+  // whatever `draft` this component closed over at render time. Required
+  // because `handleImageSelect` awaits an upload; spreading a stale `draft`
+  // after that await would silently revert any edit made mid-upload (48.3).
+  onChange: (updater: (prev: EventDraft) => EventDraft) => void;
   disabled: boolean;
   auth: ApiAuth;
 }
@@ -63,7 +67,7 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const set = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) =>
-    onChange({ ...draft, [key]: value });
+    onChange((prev) => ({ ...prev, [key]: value }));
 
   const toggleCategory = (value: string) => {
     const has = draft.categories.includes(value);
@@ -82,14 +86,17 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
   };
 
   const handlePriceChange = (value: string) => {
-    const updates: Partial<EventDraft> = { price: value };
-    const num = parseFloat(value.trim());
-    if (!isNaN(num) && num > 0) updates.is_free = false;
-    onChange({ ...draft, ...updates });
+    onChange((prev) => {
+      const updates: Partial<EventDraft> = { price: value };
+      const num = parseFloat(value.trim());
+      if (!isNaN(num) && num > 0) updates.is_free = false;
+      return { ...prev, ...updates };
+    });
   };
 
   const priceErr = priceError(draft.price);
   const timeErr = timeError(draft.start_datetime, draft.end_datetime);
+  const contactEmailErr = contactEmailError(draft.contact_email);
 
   const handleImageSelect = async (file: File | undefined) => {
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -251,6 +258,49 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
         />
       </div>
 
+      <div className="field">
+        <label htmlFor="contact-name">
+          Organizer / Organization Name <span className="required-mark">*</span>
+        </label>
+        <input
+          id="contact-name"
+          type="text"
+          value={draft.organizer_name ?? ""}
+          onChange={(e) => set("organizer_name", e.target.value)}
+          disabled={disabled}
+          maxLength={200}
+        />
+      </div>
+
+      <div className="field">
+        <label htmlFor="contact-email">
+          Contact Email <span className="required-mark">*</span>
+        </label>
+        <input
+          id="contact-email"
+          type="email"
+          value={draft.contact_email ?? ""}
+          onChange={(e) => set("contact_email", e.target.value)}
+          disabled={disabled}
+        />
+        {contactEmailErr && <p className="field-error">{contactEmailErr}</p>}
+      </div>
+
+      <div className="field">
+        <label htmlFor="contact-phone">
+          Contact Phone <span className="required-mark">*</span>
+        </label>
+        <input
+          id="contact-phone"
+          type="tel"
+          value={draft.contact_phone ?? ""}
+          onChange={(e) => set("contact_phone", e.target.value)}
+          disabled={disabled}
+          maxLength={40}
+        />
+        <p className="hint">Remembered on this device, so you only enter these once.</p>
+      </div>
+
       <div className="field span-2">
         <fieldset className="category-set">
           <legend>
@@ -339,7 +389,7 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
           checked={draft.is_free}
           onChange={(e) => {
             const checked = e.target.checked;
-            onChange({ ...draft, is_free: checked, price: checked ? "0.00" : draft.price });
+            onChange((prev) => ({ ...prev, is_free: checked, price: checked ? "0.00" : prev.price }));
           }}
           disabled={disabled}
         />

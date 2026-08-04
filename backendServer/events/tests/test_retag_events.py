@@ -182,6 +182,4 @@ class DeleteRetiredTagsMigrationTests(TestCase):
     def test_idempotent_on_second_run(self):
         migration_0025.delete_retired_tags(global_apps, None)
         migration_0025.delete_retired_tags(global_apps, None)  # should not raise
-        self.assertEqual(
-            Tag.objects.filter(name__in=migration_0025.RETIRED_TAG_NAMES).count(), 0
-        )
+        self.assertEqual(Tag.objects.filter(name__in=migration_0025.RETIRED_TAG_NAMES).count(), 0)

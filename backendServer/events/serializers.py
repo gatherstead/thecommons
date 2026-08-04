@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from .models import Category, Event, Tag, Town
+from .models import Category, Event, Town
+from .tagging import apply_tags
 
 
 class EventSerializer(serializers.ModelSerializer):
@@ -57,10 +58,7 @@ class EventSerializer(serializers.ModelSerializer):
 
         event = Event.objects.create(**validated_data)
 
-        for tag_name in tags_data:
-            tag_clean = tag_name.strip().lower()
-            tag_obj, _ = Tag.objects.get_or_create(name=tag_clean)
-            event.tags.add(tag_obj)
+        apply_tags(event, tags_data)
 
         for slug in categories_data:
             try:

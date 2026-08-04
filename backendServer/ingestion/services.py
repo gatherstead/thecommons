@@ -3,7 +3,8 @@ import logging
 from django.db import transaction
 
 from accounts.models import BetterAuthUser
-from events.models import Category, Event, Tag, Town
+from events.models import Category, Event, Town
+from events.tagging import apply_tags
 from ingestion.deduplicator import (
     BROADCAST_LOCATION_SIMILARITY_THRESHOLD,
     BROADCAST_TIME_WINDOW_HOURS,
@@ -122,9 +123,7 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
                     source_name=source_name,
                     is_verified=is_verified,
                 )
-                for tag_name in staged.tags:
-                    tag_obj, _ = Tag.objects.get_or_create(name=tag_name.strip().lower())
-                    event.tags.add(tag_obj)
+                apply_tags(event, staged.tags)
                 if staged.category:
                     cat = Category.objects.filter(slug=staged.category).first()
                     if cat:
@@ -271,10 +270,6 @@ def ingest_direct_submission(raw_event_id, user_id):
             f"Direct submission by {organizer}" if organizer else "Direct submission by host"
         )
 
-        tags = []
-        for t in staged.tags:
-            tag_obj, _ = Tag.objects.get_or_create(name=t.strip().lower())
-            tags.append(tag_obj)
         category_obj = (
             Category.objects.filter(slug=staged.category).first() if staged.category else None
         )
@@ -292,7 +287,7 @@ def ingest_direct_submission(raw_event_id, user_id):
             event.source_name = source_name
             event.is_verified = is_verified
             event.save()
-            event.tags.set(tags)
+            apply_tags(event, staged.tags)
             event.categories.clear()
             if category_obj:
                 event.categories.add(category_obj)
@@ -310,7 +305,7 @@ def ingest_direct_submission(raw_event_id, user_id):
                 source_name=source_name,
                 is_verified=is_verified,
             )
-            event.tags.set(tags)
+            apply_tags(event, staged.tags)
             if category_obj:
                 event.categories.add(category_obj)
             staged.published_event = event

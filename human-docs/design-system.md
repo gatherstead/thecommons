@@ -1,6 +1,6 @@
 # Design System
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. Every token, class, and component in the Deep Dive was read out of `theCommonsWeb/src/app/globals.css` and `theCommonsWeb/src/components/ui/` directly — not inferred from prose. Where `CODING_STYLE.md` (the repo's canonical style statement, which this doc complements and does not replace) disagrees with the stylesheet, both are stated and the disagreement is called out. For the Next.js routing/data-fetching layer these components sit inside, see `frontend.md`; for the product as a whole, see `overview.md`.
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. Every token, class, and component in the Deep Dive was read out of `theCommonsWeb/src/app/globals.css` and `theCommonsWeb/src/components/ui/` directly — not inferred from prose. Where `CODING_STYLE.md` (the repo's canonical style statement, which this doc complements and does not replace) disagrees with the stylesheet, both are stated and the disagreement is called out. For the Next.js routing/data-fetching layer these components sit inside, see `frontend.md`; for the product as a whole, see `overview.md`.
 
 ## Overview
 

@@ -25,8 +25,8 @@ still to be written.
 | [broadcast.md](broadcast.md) | Syndicating events out to other towns' calendars: adapters, extension autofill, access codes | 2026-08-01 |
 | [newsletter.md](newsletter.md) | Subscription lifecycle, recipient resolution, and the weekly/monthly digest engine | 2026-08-01 |
 | [async-jobs.md](async-jobs.md) | Redis layout, the three Celery queues and who drains each, beat scheduling and its lag trap | 2026-08-01 |
-| [deploy-ops.md](deploy-ops.md) | Production mental model: the VM, systemd units, deploys, and the sharp edges that cause outages | 2026-08-01 |
-| [containerization.md](containerization.md) | **Provisional** — the in-flight Docker cutover: built and locally verified, not yet deployed | 2026-08-01 |
+| [deploy-ops.md](deploy-ops.md) | Production mental model: the VM, the Docker Compose stack, deploys, and the sharp edges that cause outages | 2026-08-03 |
+| [containerization.md](containerization.md) | Why and how the stack is containerized: service topology, the retired-systemd mapping, and the live footguns | 2026-08-03 |
 | [frontend.md](frontend.md) | Main site: App Router routes, the TanStack Query data layer, Better Auth on the client | 2026-08-01 |
 | [design-system.md](design-system.md) | The digital-newspaper aesthetic as an enforceable spec — tokens, type scale, the banned list | 2026-08-01 |
 | [testing.md](testing.md) | Local setup, the backend test tiers, the shared-test-DB hazard, and what CI runs | 2026-08-01 |

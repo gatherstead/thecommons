@@ -1,6 +1,6 @@
 # Deployment & Operations
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
 
 ## Overview
 
@@ -242,14 +242,19 @@ fix — execing `.venv/bin/celery` directly — removed the snap-scope mechanism
 which was the actual fix; `loginctl enable-linger ubuntu` and `Restart=always` were
 defense-in-depth layered on top, not substitutes for it.
 
-**One deliberate exception, and it was not a contradiction:** `healthcheck.service` still
-uses `/snap/bin/uv` (`Environment=UV_BIN=/snap/bin/uv`, `ExecStart=... bash
-deploy/healthcheck.sh`) and that is fine — this unit is still live today (§3). It's
-`Type=oneshot` — the process starts, runs the health report to completion in a few
-seconds, and exits on its own, well before any SSH session it happened to be triggered
-near could tear down. The failure mode above only bites a process still running at the
-moment a user slice gets torn down; a oneshot that's already finished has nothing left to
-kill.
+**The one still-live unit, `healthcheck.service`, was never exposed to this:** it is
+`Type=oneshot` with `ExecStart=/usr/bin/env bash
+/home/ubuntu/thecommons/deploy/healthcheck.sh --no-color` — no snap, no `uv`, no
+`UV_BIN` anywhere in the unit. (An earlier revision of this doc claimed it still ran
+through `/snap/bin/uv`; that is not what the file says — verified against
+`deploy/healthcheck.service` at commit `9a38379`.) Two independent reasons the outage
+class can't reach it: the process starts, runs the health report to completion in a few
+seconds, and exits on its own, so there's nothing still running when a user slice gets
+torn down; and it never enters a snap scope in the first place. Its own header comment
+makes the same point. What it *does* need from the host is `docker` reachable by
+`User=ubuntu` — i.e. `ubuntu` in the `docker` group — since the script now works by
+shelling into the containers (`docker compose ps` / `docker inspect` /
+`docker compose exec -T`) rather than running `manage.py` natively.
 
 ### 5. Environment selection: `DJANGO_ENV` and how failure got narrower
 

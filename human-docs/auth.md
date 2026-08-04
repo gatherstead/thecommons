@@ -1,7 +1,8 @@
 # The Auth Bridge — Better Auth and Django
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. Previously reflected commit
-> `5fe7a45` (2026-08-01), written by reading `backendServer/accounts/` (models, admin, urls,
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. Previously
+> reflected commit `d66b059` (branch `main`, 2026-08-03), which itself succeeded commit `5fe7a45`
+> (2026-08-01). Originally written by reading `backendServer/accounts/` (models, admin, urls,
 > views, migrations), `backendServer/backend/jwt_auth.py`, `backendServer/backend/permissions.py`,
 > `backendServer/backend/settings/` (`__init__.py`, `base.py`, `dev.py`, `prod.py`),
 > `theCommonsWeb/src/lib/auth.ts`, `auth-schema.ts`, `auth-client.ts`, `db.ts`,

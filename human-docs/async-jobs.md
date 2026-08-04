@@ -1,7 +1,6 @@
 # Async: Redis + Celery
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. Originally written
-> 2026-08-01 against commit `5fe7a45`.
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
 
 This is the human-facing companion to
 [`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) (the agent-facing deep

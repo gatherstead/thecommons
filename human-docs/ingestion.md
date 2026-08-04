@@ -1,7 +1,7 @@
 # The Ingestion Pipeline
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. This is the human-facing
-> companion to [`docs/ingestion-pipeline.md`](../docs/ingestion-pipeline.md) (the
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. This
+> is the human-facing companion to [`docs/ingestion-pipeline.md`](../docs/ingestion-pipeline.md) (the
 > agent-facing deep dive — stays the system of record for exact request/response shapes)
 > and [`docs/safety-scoring.md`](../docs/safety-scoring.md) /
 > [`docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) (the `/devtools/monitor`

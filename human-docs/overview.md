@@ -1,6 +1,6 @@
 # Overview
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`. Written by reading `backendServer/ingestion/`, `backendServer/events/models.py`, `backendServer/newsletter/`, `backendServer/broadcast/`, `AGENTS.md`, `ARCHITECTURE.md`, and `docs/broadcast.md`. If anything here contradicts the code, trust the code.
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. Written by reading `backendServer/ingestion/`, `backendServer/events/models.py`, `backendServer/newsletter/`, `backendServer/broadcast/`, `AGENTS.md`, `ARCHITECTURE.md`, and `docs/broadcast.md`. If anything here contradicts the code, trust the code.
 
 ## Overview
 

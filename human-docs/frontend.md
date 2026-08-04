@@ -1,6 +1,6 @@
 # The Main Site (theCommonsWeb)
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
 
 ## Overview
 

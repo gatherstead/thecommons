@@ -1,6 +1,6 @@
 # Data Model Reference
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
 > Grounded in each app's `models.py` and `migrations/` (`accounts`, `events`, `newsletter`,
 > `ingestion`, `broadcast`), plus `theCommonsWeb/src/lib/auth-schema.ts` for the Better Auth
 > side. If anything here contradicts the code, trust the code — a couple of places where

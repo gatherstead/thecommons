@@ -1,6 +1,6 @@
 # The Newsletter (`newsletter` app)
 
-> **Last updated:** 2026-08-03, commit `d66b059`, branch `main`
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
 >
 > Originally written by reading `backendServer/newsletter/` in full (models, views, urls,
 > `email_service.py`, `tasks.py`, `admin.py`, the digest management commands, migrations, and

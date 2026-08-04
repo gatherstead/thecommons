@@ -15,15 +15,10 @@ from ingestion.scraping.browser import render_page
 logger = logging.getLogger(__name__)
 
 VALID_TAGS = [
-    "weekends-only",
-    "evenings-only",
-    "daytime-only",
     "free",
     "family-friendly",
     "nature",
     "small-business",
-    "lgbtq-friendly",
-    "speaks-spanish",
     "wheelchair-accessible",
     "live-music",
     "food-and-drink",
@@ -58,7 +53,6 @@ Given the following raw event data, produce a JSON object with these fields:
 Rules:
 - Only use tags from the provided list. Choose all that apply.
 - If the event is free or price is 0, include "free" in tags.
-- If the event time is evening (after 5pm), include "evenings-only". If daytime (before 5pm), include "daytime-only".
 - Keep descriptions factual — don't invent details that aren't in the raw data.
 - Respond with ONLY the JSON object. No markdown, no backticks, no explanation.
 

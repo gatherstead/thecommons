@@ -4,7 +4,7 @@ interface TopBarProps {
     towns: TownOption[];
     selectedTowns: string[];
     onTownToggle: (townId: string) => void;
-    onClearFilters: () => void;
+    onClearTowns: () => void;
 }
 
 // TODO: Replace this hardcoded list with towns from the database.
@@ -27,7 +27,7 @@ const PLACEHOLDER_TOWN_NAMES = [
     'Alamance County',
 ];
 
-export function TopBar({ towns, selectedTowns, onTownToggle, onClearFilters }: TopBarProps) {
+export function TopBar({ towns, selectedTowns, onTownToggle, onClearTowns }: TopBarProps) {
     const hasSelection = selectedTowns.length > 0;
 
     // Filter out placeholder towns that already exist in the active DB list
@@ -48,7 +48,7 @@ export function TopBar({ towns, selectedTowns, onTownToggle, onClearFilters }: T
 
                 {/* All — deselects town filter */}
                 <button
-                    onClick={onClearFilters}
+                    onClick={onClearTowns}
                     aria-pressed={!hasSelection}
                     className={`text-xs uppercase tracking-wider shrink-0 cursor-pointer bg-transparent border-none transition-colors ${
                         !hasSelection

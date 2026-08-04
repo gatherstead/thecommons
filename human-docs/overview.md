@@ -1,10 +1,34 @@
 # Overview
 
-*Reflects commit `5fe7a45`, 2026-08-01. If anything here contradicts the code, trust the code — this doc was written by reading `backendServer/ingestion/`, `backendServer/events/models.py`, `backendServer/newsletter/`, `backendServer/broadcast/`, `AGENTS.md`, `ARCHITECTURE.md`, and `docs/broadcast.md`, and a few of the drifts found along the way are called out below.*
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. Written by reading `backendServer/ingestion/`, `backendServer/events/models.py`, `backendServer/newsletter/`, `backendServer/broadcast/`, `AGENTS.md`, `ARCHITECTURE.md`, and `docs/broadcast.md`. If anything here contradicts the code, trust the code.
+
+## Overview
+
+The Commons is a local events aggregator for three small North Carolina towns — Chapel Hill, Carrboro, and Pittsboro — built with a deliberate "digital newspaper" look (serif type, ink on cream, no gradients or pill buttons) rather than a typical startup aesthetic.
+
+It does three jobs under the hood:
+
+- **Ingests events automatically** from town/community calendar sources, cleans them up with an LLM (Gemini), screens them for safety, and auto-publishes the ones that pass.
+- **Accepts direct submissions** from residents (public site) and partner hosts (the "broadcast" console), the latter of which can also *push* one event out to other towns' calendars via browser automation.
+- **Runs a newsletter** — a token-based (no-login) mailing list with a weekly/monthly digest.
+
+The two audiences that matter most: **residents** browsing the public site (`theCommonsWeb`), and **event hosts/partners** using the broadcast console (`broadcastWeb`) to distribute one listing across several towns' calendars at once.
+
+The single most important architectural fact: **Better Auth (inside the `theCommonsWeb` Next.js app), not Django, is the identity source of truth** — Django only verifies a JWT, it never issues its own login/session. The second: `ingestion/` and `broadcast/` are two genuinely separate subsystems, walled off from each other by both convention and isolation tests.
+
+Where to jump in the Deep Dive below, by task:
+- Understanding the event lifecycle (scrape → standardize → dedupe → score → publish) → **§3**
+- The broadcast/syndication subsystem → **§5**
+- The newsletter/digest → **§6**
+- Background jobs, Celery/Redis layout → **§7**
+- The overall architecture diagram → **§8**
+- Known doc drift as of this writing → **§10**
+
+## Deep Dive
 
 This is the map. Read it first, then follow the pointers — `docs/` is the agent-facing system of record and stays canonical for line-by-line detail; this doc exists to orient a human who has never opened the repo.
 
-## 1. What this is
+### 1. What this is
 
 The Commons is a local events aggregator for three small North Carolina towns — Chapel Hill, Carrboro, and Pittsboro. It is not a startup product. The intended feel, enforced throughout the frontend's CSS tokens, is a **digital newspaper**: Georgia serif, ink on cream newsprint, column rules instead of cards and shadows, density over whitespace, no gradients, no pill buttons. That aesthetic choice shows up as a real constraint on the codebase — a new UI component that reaches for a shadow or a rounded badge is fighting the design system, not extending it.
 
@@ -12,7 +36,7 @@ Under the hood it does three jobs. First, it finds events other people posted el
 
 The two audiences that matter: **residents**, who browse the public site (`theCommonsWeb`) for what's happening nearby, and **event hosts / partner organizations**, who use the broadcast console (`broadcastWeb`) to get one event listing distributed across several towns' calendars at once. A third, much smaller audience is whoever is running the ingestion pipeline day to day — the Django admin and a dev-only monitoring dashboard exist for exactly that.
 
-## 2. The monorepo, piece by piece
+### 2. The monorepo, piece by piece
 
 ```
 thecommons/
@@ -36,7 +60,7 @@ thecommons/
 
 **`docs/`** is not for people — it's the agent-facing system of record that Claude Code (and any future coding agent) reads before touching this repo. It stays canonical for exact endpoint lists, adapter registries, and settings values; this human-docs tree exists alongside it so a person doesn't have to read agent-oriented prose to get oriented.
 
-## 3. How a single event moves through the system
+### 3. How a single event moves through the system
 
 An event's life has three possible starting points and one of four possible endings. The common path — a scraped event that gets auto-published — looks like this:
 
@@ -73,25 +97,25 @@ flowchart TD
 
 The pipeline runs automatically once a day via Celery beat, and can be triggered manually via a cron-secret-protected endpoint or a management command. It's built from independently-named steps — poll, standardize, dedupe, score, publish — that mirror the diagram above one-to-one; the exact functions and a walkthrough of tuning the safety threshold live in `ingestion.md` and `safety-scoring.md`.
 
-## 4. Publishing and the public site
+### 4. Publishing and the public site
 
 Once an `Event` row exists, it's just data — read by the public API (`GET /events/...`, cached in Redis and invalidated on writes) and rendered by `theCommonsWeb`'s home feed, calendar view, and event-detail pages. There's no separate "publish" step beyond the `StagedEvent → Event` promotion described above; an `Event` row existing *is* what "published" means, which is also why a published event can't currently be unpublished or soft-deleted — only its owner can hard-delete it. The frontend's data layer, routes, and component conventions are covered in `frontend.md`; the visual system in `design-system.md`.
 
-## 5. Broadcast — pushing an event the other direction
+### 5. Broadcast — pushing an event the other direction
 
 Ingestion pulls events *in*. Broadcast pushes a single event *out* to other towns' community calendars — Chapel Hill/Carrboro/Pittsboro partners who want one listing to land on several third-party sites without re-typing it five times. It is a genuinely separate subsystem: its own models (`BroadcastSubmission`, `BroadcastTarget`), its own access-tier gating (a Bearer JWT or an access code, resolved to tier 0/1/2), and a hard isolation rule enforced by tests — `broadcast/` never imports from `events/` or `ingestion/`, operating instead on its own denormalized copy of an event's fields.
 
 The primary path today is extension-driven, not fully headless: the operator SPA (`broadcastWeb`) requests a per-site "recipe" from the backend, hands it to the Chrome extension, and the extension opens each target site's form in a new tab and fills every field it can — a human still reviews the prefilled form, solves any captcha, and clicks Submit themselves. A second, fully server-side path exists (a Playwright-driven headless browser that claims queued jobs from a database queue and submits without a human in the loop) but is currently disabled in the SPA in favor of the extension flow. Neither path uses the Django ORM while a headless browser session is open — that's a hard rule, since Playwright and Django's connection pooling don't mix safely. `broadcast.md` is the single source of truth for the adapter list, access-code mechanics, and the worker's queue setup; this paragraph is deliberately the whole story here.
 
-## 6. The newsletter
+### 6. The newsletter
 
 `newsletter/` is small and mostly decoupled from the rest of the system: an email address plus a frequency preference (`WEEKLY`/`MONTHLY`), no login required to subscribe or to manage that preference — an unguessable token in the manage link is the only credential. A scheduled Celery job resolves the current recipient list once a week and once a month, builds a personalized set of upcoming `Event` rows per recipient (tag-filtered for account holders, everything for anonymous subscribers), and sends one email per recipient through Brevo. `newsletter.md` covers the recipient-resolution logic and the digest templates in more depth.
 
-## 7. Everything that makes it run in the background
+### 7. Everything that makes it run in the background
 
 Two kinds of async work happen off the request cycle. Most of it — the daily ingestion pipeline, the weekly/monthly digest fan-out — runs on **Celery**, backed by a single Redis instance split into two logical databases (one for the Celery broker and results, a separate one for Django's read-through cache). Broadcast's dispatch also runs on Celery now, but on its own dedicated queue drained by exactly one single-concurrency worker — deliberately, because the orphan-recovery logic assumes only one worker could ever be mid-drain at a time. `async-jobs.md` covers the queue layout, the beat schedule, and the sharp edges around it in full; `deploy-ops.md` covers how each of these processes is kept running in production (they're systemd units, not ad hoc scripts).
 
-## 8. Architecture at a glance
+### 8. Architecture at a glance
 
 ```mermaid
 flowchart LR
@@ -145,11 +169,11 @@ flowchart LR
 3. **One Postgres database, two owners.** `public` schema tables are Django's (migrated normally); `neon_auth` schema tables are Better Auth's mirrors, read-only from Django's side, never migrated by Django.
 4. **The whole thing runs on one virtual machine.** There's no separate services cluster — gunicorn, the Next.js server, Redis, and every worker process share one Oracle Cloud VM behind nginx. That's a deliberate scale-appropriate choice, not a stopgap; `deploy-ops.md` covers what that means operationally.
 
-## 9. Where to go next
+### 9. Where to go next
 
 Onboarding order, roughly foundational-first: `auth.md` (identity bridge) → `ingestion.md` (the pipeline in §3, in full) → `data-model.md` (every model and how they relate) → the rest as needed — `broadcast.md`, `newsletter.md`, `async-jobs.md`, `deploy-ops.md`, `frontend.md`, `design-system.md`, `testing.md`, `containerization.md`. `docs/` stays the deeper, agent-facing reference underneath all of them — when a human doc and `docs/` seem to disagree, `docs/` and the code win.
 
-## 10. Doc drift found while writing this
+### 10. Doc drift found while writing this
 
 Three things in the root-level docs are stale relative to the code as of this commit, flagged here rather than silently worked around:
 

@@ -66,6 +66,25 @@ class UploadImageTest(TestCase):
         self.assertEqual(record.client_label, "uploader@example.com")
         self.assertIn(record.image.url, body["url"])
 
+    def test_forwarded_https_header_yields_https_url(self):
+        # Regression for T46.2: nginx terminates TLS and proxies to gunicorn over
+        # a Unix socket, so without SECURE_PROXY_SSL_HEADER (set in prod.py only)
+        # request.build_absolute_uri() would compute an http:// URL on an https://
+        # site — mixed-content blocked by every destination calendar. Simulate
+        # prod's trust of X-Forwarded-Proto here since the test suite runs under
+        # dev-derived settings, not prod.py.
+        with override_settings(SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https")):
+            with _patch_jwt("uploader@example.com"):
+                resp = self.client.post(
+                    "/broadcast/upload-image",
+                    {"image": _jpeg_upload()},
+                    format="multipart",
+                    HTTP_AUTHORIZATION="Bearer faketoken",
+                    HTTP_X_FORWARDED_PROTO="https",
+                )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertTrue(resp.json()["url"].startswith("https://"))
+
     def test_png_with_alpha_is_reencoded_and_kept_as_png(self):
         resp = self._post(_png_upload_with_alpha())
         self.assertEqual(resp.status_code, 201, resp.content)

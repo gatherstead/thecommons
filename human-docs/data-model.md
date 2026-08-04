@@ -1,15 +1,42 @@
 # Data Model Reference
 
-*Reflects commit `5fe7a45`, 2026-08-01. Grounded in each app's `models.py` and `migrations/`
-(`accounts`, `events`, `newsletter`, `ingestion`, `broadcast`), plus `theCommonsWeb/src/lib/auth-schema.ts`
-for the Better Auth side. If anything here contradicts the code, trust the code — a couple of
-places where `ARCHITECTURE.md` §Data Models has drifted are called out in §9.*
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
+> Grounded in each app's `models.py` and `migrations/` (`accounts`, `events`, `newsletter`,
+> `ingestion`, `broadcast`), plus `theCommonsWeb/src/lib/auth-schema.ts` for the Better Auth
+> side. If anything here contradicts the code, trust the code — a couple of places where
+> `ARCHITECTURE.md` §Data Models has drifted are called out in the Deep Dive §9.
 
 This is the reference doc, not the narrative one — for the story of how an event moves through
 the system, read `overview.md` first. This doc exists so you can keep a tab open and look up
 "what does this column actually mean" without re-reading a `models.py`.
 
-## 1. The short version
+## Overview
+
+- Five Django apps in `backendServer/` — `events`, `ingestion`, `accounts`, `newsletter`,
+  `broadcast` — own the `public` Postgres schema between them. A sixth identity store,
+  `neon_auth`, is owned by Better Auth (the Next.js identity provider) and merely *mirrored*
+  read-only by `accounts` — Django never migrates those five tables.
+- The two facts that matter most: (1) `events.Event`'s primary key is `uuid`, not `id` — the
+  single most-hit trap in this codebase (Deep Dive §10.1); and (2) a Suite 41 refactor moved
+  `UserProfile`, `BusinessProfile`, and `NewsletterSubscriber` between Django apps *without*
+  moving their physical tables, so the app label and the Postgres table name now disagree for
+  all three (Deep Dive §8).
+- `Town` and `Category` are real SQL tables, not hardcoded enums — the ingestion pipeline parks
+  (never drops) any event whose town slug doesn't match a row.
+- `broadcast` is intentionally isolated: its models never carry a foreign key into `events`,
+  `accounts`, or `ingestion` — it works off a denormalized snapshot of an event's fields instead.
+- Who depends on this: the `events` API and frontend read/write `Event`/`Tag`/`Category`/`Town`;
+  the `ingestion` pipeline writes `RawEvent`/`StagedEvent` on the way to publishing an `Event`;
+  `accounts` mediates all identity and feeds `newsletter`'s recipient-building; `broadcast`
+  reads none of the above and stands alone.
+- Where to go next: field-level tables for each app live in Deep Dive §3–§7 (`events`,
+  `ingestion`, `accounts`, `newsletter`, `broadcast`); the Suite 41 table/app-label mismatch is
+  §8; known doc drift vs. `ARCHITECTURE.md` is §9; the running list of sharp edges (uuid PK,
+  safety-score null semantics, `published_event` pointer survival, etc.) is §10.
+
+## Deep Dive
+
+### 1. The short version
 
 Five Django apps in `backendServer/` own the `public` Postgres schema between them —
 `events`, `ingestion`, `accounts`, `newsletter`, `broadcast` — plus five more models that
@@ -21,7 +48,7 @@ a table name and its owning Django app no longer match for three of these models
 as enums, and the ingestion pipeline silently parks (not drops) any event whose town slug doesn't
 match a row.
 
-## 2. How the models relate
+### 2. How the models relate
 
 ```mermaid
 erDiagram
@@ -61,13 +88,13 @@ Two things this diagram deliberately leaves out, because they aren't foreign key
   into `Event`. `BroadcastAccess` and `BroadcastImage` are standalone rows keyed by a plain
   string (email, client_label) for the same reason — no FK anywhere in the picture.
 
-## 3. `events` app
+### 3. `events` app
 
 Owns the genuine event/taxonomy models — the public-facing data. All four tables are physically
 in `public.events_*`, and the app label matches the table prefix here (unlike `accounts` and
 `newsletter` — see §8).
 
-### `Tag`
+#### `Tag`
 
 | Field | Meaning |
 |---|---|
@@ -76,7 +103,7 @@ in `public.events_*`, and the app label matches the table prefix here (unlike `a
 Reverse-related from `Event.tags`, `UserProfile.tags`, `BusinessProfile.tags` — one shared tag
 vocabulary across events, personal interests, and business listings.
 
-### `Town`
+#### `Town`
 
 | Field | Meaning |
 |---|---|
@@ -85,7 +112,7 @@ vocabulary across events, personal interests, and business listings.
 
 A real SQL table, not an enum — seeded by data migrations (`events/migrations/0016_seed_chatham_towns.py`, `0018_seed_apex_durham_towns.py`), editable in the admin. Adding a new town is a data change, not a code change.
 
-### `Category`
+#### `Category`
 
 | Field | Meaning |
 |---|---|
@@ -96,7 +123,7 @@ Same story as `Town` — a real table (`Meta.verbose_name_plural = "categories"`
 non-default option), not hardcoded. Unlike `Town`, an unmatched category slug does **not** stall
 an event's publication — see §10.
 
-### `Event`
+#### `Event`
 
 | Field | Meaning |
 |---|---|
@@ -112,12 +139,12 @@ an event's publication — see §10.
 There is no soft-delete or unpublish concept: an `Event` row existing *is* what "published"
 means. Only the owner (`created_by`) can hard-delete their own event via the API.
 
-## 4. `ingestion` app
+### 4. `ingestion` app
 
 The pipeline that produces `Event` rows from external sources. Full flow narrative lives in
 `overview.md` §3 and `ingestion.md`; this section is field-level reference.
 
-### `EventSource`
+#### `EventSource`
 
 | Field | Meaning |
 |---|---|
@@ -128,7 +155,7 @@ The pipeline that produces `Event` rows from external sources. Full flow narrati
 | `prompt_suffix` | Extra text appended to the Gemini standardization prompt for this source specifically — a per-source LLM tuning knob. |
 | `scraper_key` | Looks up the corresponding Python scraper module for `source_type="scraper"`; blank for other types. |
 
-### `SourceRun`
+#### `SourceRun`
 
 | Field | Meaning |
 |---|---|
@@ -141,7 +168,7 @@ The pipeline that produces `Event` rows from external sources. Full flow narrati
 Ordered `-started_at` by default; indexed on `(source, -started_at)` for the "recent runs for
 this source" query the admin/monitoring views use.
 
-### `RawEvent`
+#### `RawEvent`
 
 | Field | Meaning |
 |---|---|
@@ -151,7 +178,7 @@ this source" query the admin/monitoring views use.
 | `raw_organizer` | Only populated by direct host submissions; drives the `"Direct submission by {name}"` attribution on the eventual `Event.source_name`. Blank for everything else. |
 | `processed` | Flips to `True` once `standardizer.py` has consumed it into a `StagedEvent`. |
 
-### `StagedEvent`
+#### `StagedEvent`
 
 | Field | Meaning |
 |---|---|
@@ -181,13 +208,13 @@ carry a `published_event` pointer even while parked in one of those statuses, pe
 `published_event` row above. The diagram shows the primary transitions; that pointer is a side
 channel that survives them.
 
-## 5. `accounts` app
+### 5. `accounts` app
 
 Owns identity: the five read-only Better Auth mirrors, plus the two profile models that hang
 off a user. A "business" is modeled as a *kind of user profile*, not a separate top-level
 concept.
 
-### The Better Auth mirrors (`neon_auth` schema, `managed = False`)
+#### The Better Auth mirrors (`neon_auth` schema, `managed = False`)
 
 **Better Auth, running inside the `theCommonsWeb` Next.js app, owns writes to these five
 tables — Django never migrates them.** `theCommonsWeb/src/lib/auth-schema.ts` (Drizzle) is the
@@ -211,7 +238,7 @@ an application-level one. `BetterAuthUser.id` is a UUID, but `BetterAuthAccount.
 `BetterAuthUser.id` at the Django level (the join happens through matching values, mirroring
 however Better Auth itself models it in Postgres).
 
-### `UserProfile`
+#### `UserProfile`
 
 | Field | Meaning |
 |---|---|
@@ -225,7 +252,7 @@ however Better Auth itself models it in Postgres).
 `db_table = "events_userprofile"` — the physical table name still says `events`, because this
 model *moved apps* without moving tables. See §8.
 
-### `BusinessProfile`
+#### `BusinessProfile`
 
 | Field | Meaning |
 |---|---|
@@ -237,9 +264,9 @@ model *moved apps* without moving tables. See §8.
 
 `db_table = "events_businessprofile"` — same historical-name situation as `UserProfile`.
 
-## 6. `newsletter` app
+### 6. `newsletter` app
 
-### `NewsletterSubscriber`
+#### `NewsletterSubscriber`
 
 | Field | Meaning |
 |---|---|
@@ -251,13 +278,13 @@ model *moved apps* without moving tables. See §8.
 
 `db_table = "events_newslettersubscriber"` — moved apps, table name unchanged. See §8.
 
-## 7. `broadcast` app
+### 7. `broadcast` app
 
 Pushes a published event out to third-party town calendars. Its models never reference
 `events`, `accounts`, or `ingestion` models — see §2. Full subsystem detail is in `broadcast.md`;
 this is field-level reference for the models only.
 
-### `BroadcastSubmission`
+#### `BroadcastSubmission`
 
 | Field | Meaning |
 |---|---|
@@ -266,7 +293,7 @@ this is field-level reference for the models only.
 | Denormalized event fields (`title`, `start_datetime`, `venue_name`, `address_line1`, `locality` JSON, `categories` JSON, `event_url`, `price`, `organizer_name`, `contact_email`, …) | A frozen snapshot of the event's data at submission time — deliberately not a FK into `events.Event`, per the isolation contract. |
 | `status` | `queued` / `running` / `done` / `failed` / `canceled`. |
 
-### `BroadcastTarget`
+#### `BroadcastTarget`
 
 | Field | Meaning |
 |---|---|
@@ -276,14 +303,14 @@ this is field-level reference for the models only.
 | `dry_run` | `True` = this target ran in preview/test mode, never actually submitted to the third-party site. |
 | `screenshot_path` | Blank until a run captures one; gated behind the screenshots endpoint. |
 
-### `BroadcastAccess`
+#### `BroadcastAccess`
 
 | Field | Meaning |
 |---|---|
 | `email` | Unique, lowercased on save. |
 | `tier` | `0` / `1` / `2`, default `0`. The *permanent* tier for a logged-in identity, set by redeeming an `AccessCode` of `kind="upgrade"` — resolved by `broadcast/access.py` off the JWT's email claim. |
 
-### `AccessCode`
+#### `AccessCode`
 
 | Field | Meaning |
 |---|---|
@@ -294,26 +321,26 @@ this is field-level reference for the models only.
 | `is_active` | Manual kill switch, independent of `expires_at`/`max_uses`. |
 | `expires_at` | Null = no expiry. |
 
-### `AccessCodeUse`
+#### `AccessCodeUse`
 
 | Field | Meaning |
 |---|---|
 | `access_code`, `draft_id` | `unique_together` — meters a **trial** code's anonymous preview usage per draft, so the same in-progress draft doesn't consume multiple uses on retry. |
 
-### `AccessCodeRedemption`
+#### `AccessCodeRedemption`
 
 | Field | Meaning |
 |---|---|
 | `access_code`, `email` | `unique_together` — one row per email that has redeemed an **upgrade** code; this is what `max_uses` counts against. `email` lowercased on save. |
 
-### `BroadcastImage`
+#### `BroadcastImage`
 
 | Field | Meaning |
 |---|---|
 | `image` | Stored **re-encoded**, never as received — third-party share links often lack CORS headers or aren't direct image URLs, so uploads are self-hosted rather than linked. |
 | `client_label` | Same free-text partner identifier as `BroadcastSubmission.client_label` — no FK between them. |
 
-### `SalesCodeSlot`
+#### `SalesCodeSlot`
 
 | Field | Meaning |
 |---|---|
@@ -321,7 +348,7 @@ this is field-level reference for the models only.
 | `access_code` | OneToOne → `AccessCode`, `on_delete=PROTECT` — the code currently live in that slot; rotating the slot creates a new `AccessCode` and repoints this rather than mutating the old one. |
 | `raw_code` | Plaintext, unlike `AccessCode.code_hash` elsewhere — exists so a salesperson can open the admin and see a live, copyable code with no CLI step, a deliberate convenience-over-defense-in-depth tradeoff scoped to this one low-stakes flow. |
 
-## 8. The Suite 41 model moves — what actually happened
+### 8. The Suite 41 model moves — what actually happened
 
 `UserProfile` and `BusinessProfile` moved from `events` to `accounts`; `NewsletterSubscriber`
 moved from `events` to `newsletter`. Both moves used
@@ -351,7 +378,7 @@ existing `django_celery_beat.PeriodicTask` rows' `task` dotted-path from
 themselves (created earlier by `events/migrations/0015_seed_digest_beat.py` and
 `0020_seed_monthly_digest_beat.py`) were left in place and only repointed, not recreated.
 
-## 9. Doc drift found while writing this
+### 9. Doc drift found while writing this
 
 `ARCHITECTURE.md` §Data Models is mostly accurate post-Suite-41, but has fallen behind the
 current models in a few places:
@@ -372,7 +399,7 @@ None of this changes any relationship or field meaning documented elsewhere in
 `ARCHITECTURE.md` — it's a coverage gap (models added after the doc was last updated), not a
 factual disagreement.
 
-## 10. Sharp edges
+### 10. Sharp edges
 
 1. **`events.Event`'s primary key is `uuid`, not `id`.** There is no `id` field on `Event` at
    all. `Event.objects.values("id")`, `Count("id")`, or any code that assumes a Django default
@@ -443,7 +470,7 @@ factual disagreement.
     will not stop you from inserting a value that doesn't correspond to a real `neon_auth.user`
     row; referential integrity here is enforced by the application, not the schema.
 
-## 11. Not independently verified
+### 11. Not independently verified
 
 - Whether any code outside `ingestion.services` and `newsletter.email_service` also reads or
   writes `StagedEvent.published_event` or `NewsletterSubscriber` directly — this doc is grounded

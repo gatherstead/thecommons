@@ -1,19 +1,47 @@
 # The Ingestion Pipeline
 
-Written 2026-08-01 against commit `5fe7a45`. This is the human-facing companion to
-[`docs/ingestion-pipeline.md`](../docs/ingestion-pipeline.md) (the agent-facing deep dive —
-stays the system of record for exact request/response shapes) and
-[`docs/safety-scoring.md`](../docs/safety-scoring.md) /
-[`docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) (the `/devtools/monitor`
-dashboard and the `SourceRun` health model). Where this doc and those disagree, the code
-won this argument — see "Drift from `docs/ingestion-pipeline.md`" at the end.
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. This
+> is the human-facing companion to [`docs/ingestion-pipeline.md`](../docs/ingestion-pipeline.md) (the
+> agent-facing deep dive — stays the system of record for exact request/response shapes)
+> and [`docs/safety-scoring.md`](../docs/safety-scoring.md) /
+> [`docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) (the `/devtools/monitor`
+> dashboard and the `SourceRun` health model). Where this doc and those disagree, the code
+> won this argument — see "Drift from `docs/ingestion-pipeline.md`" at the end.
 
 Audience: someone inheriting this codebase who needs to either add a new town's event
 calendar as a source, or figure out why a source has gone quiet.
 
----
+## Overview
 
-## 1. What this is and who depends on it
+- **What it is:** The Commons doesn't rely on people submitting events by hand. It polls a
+  list of town/venue/chamber-of-commerce websites on a schedule, pulls whatever raw event
+  data each site exposes, hands each event to Google Gemini to clean it up into a
+  consistent record, screens it for spam/abuse (also via Gemini), and — if it's clean —
+  publishes it as a live `Event` on thecommons.town. A human only gets pulled in for an
+  unrecognized town, a borderline safety score, or a probable duplicate.
+- **Who depends on it:** the public `events` app (everything on the site is either
+  pipeline-published or a direct host submission that went through the same code path),
+  and the `broadcast` subsystem, which pushes already-published `Event` rows out to other
+  towns' calendars (broadcast only ever reads `Event`, never `RawEvent`/`StagedEvent`).
+- **The one fact that matters most:** there are two separate ways an event gets in —
+  the **scheduled bulk pipeline** (nightly poll of every due source) and **direct host
+  submission** (a business submits one event synchronously through the broadcast SPA).
+  They share most of the same machinery (standardize → dedupe → safety-score → publish)
+  but differ in ordering and terminal status — see Deep Dive §2 for both.
+- **If ingestion silently stops**, nothing crashes or errors on the frontend — the site
+  just slowly stops getting new events, which is why the `/devtools/monitor` dashboard
+  (Deep Dive §4, and `docs/ingestion-monitoring.md`) exists.
+- **Where to go for what:**
+  - Adding a new source or classifying a URL as `ics`/`scraper`/`http` → Deep Dive §5.
+  - A source has gone quiet or you're debugging why an event never went live → Deep Dive
+    §6 (Sharp edges) and §7 (Known gaps).
+  - Understanding the data model (`EventSource`, `SourceRun`, `RawEvent`, `StagedEvent`,
+    `Event`) → Deep Dive §3.
+  - Wiring into an endpoint or CLI command → Deep Dive §4 (Interfaces).
+
+## Deep Dive
+
+### 1. What this is and who depends on it
 
 The Commons doesn't ask anyone to submit events by hand (mostly). Instead it polls a list
 of town/venue/chamber-of-commerce websites on a schedule, pulls whatever raw event data
@@ -42,9 +70,9 @@ covered below.
 
 ---
 
-## 2. How it works
+### 2. How it works
 
-### 2.1 The scheduled pipeline: source → live Event
+#### 2.1 The scheduled pipeline: source → live Event
 
 This is the nightly batch flow — one pass touches every due source, then every
 unprocessed row created by that pass. It's the same shape whether it's triggered by
@@ -113,7 +141,7 @@ flowchart TD
    deduplicator's matching corpus, so a duplicate of an already-published event still has
    something to match against. See "Publishing doesn't delete" under Sharp Edges.
 
-### 2.2 Direct host submission: one event, synchronously
+#### 2.2 Direct host submission: one event, synchronously
 
 A business/venue operator using the broadcast SPA can submit an event straight into the
 pipeline (`POST /api/events/direct-submit`), bypassing the poll step entirely. This is a
@@ -180,7 +208,7 @@ flowchart TD
 
 ---
 
-## 3. Data model
+### 3. Data model
 
 | Model | Key fields | What it represents |
 |---|---|---|
@@ -194,7 +222,7 @@ For the full cross-app data model (accounts, newsletter, broadcast included) see
 [`data-model.md`](data-model.md) once it exists, or `ARCHITECTURE.md`'s "Data Models"
 section today.
 
-### `StagedEvent.status` lifecycle
+#### `StagedEvent.status` lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -228,7 +256,7 @@ went through the real publish flow. See Sharp Edges.
 
 ---
 
-## 4. Interfaces
+### 4. Interfaces
 
 | Interface | Auth | Calls |
 |---|---|---|
@@ -250,7 +278,7 @@ went through the real publish flow. See Sharp Edges.
 
 ---
 
-## 5. Adding a new source: classification
+### 5. Adding a new source: classification
 
 Every new source has to be classified as one of `ics`, `scraper`, or `http` before any
 code gets written. The repo has a slash command for this (`/source-creation`, or the
@@ -338,7 +366,7 @@ separately, by hand or via `/devtools/ingestion-playground`
 
 ---
 
-## 6. Sharp edges
+### 6. Sharp edges
 
 **`events.Event`'s primary key is `uuid`, not `id`.** `Event` declares
 `uuid = models.UUIDField(primary_key=True, ...)` and has no `id` column at all — calling
@@ -427,7 +455,7 @@ permanently look unattributed and unverified compared to one that went through
 
 ---
 
-## 7. Known gaps
+### 7. Known gaps
 
 - **`EventSource.source_type` has an `"email"` choice with no importer behind it anywhere
   in the codebase.** It's a defined model choice, nothing more — treat it as reserved/dead
@@ -448,7 +476,7 @@ permanently look unattributed and unverified compared to one that went through
   of the shipped tool. Treat it as historical design context, not a current behavior
   reference, until someone re-verifies it against `devtools/` directly.
 
-### Drift from `docs/ingestion-pipeline.md`
+#### Drift from `docs/ingestion-pipeline.md`
 
 That doc is the agent-facing deep dive and stays authoritative for request/response
 shapes, but as of this pass it has fallen behind the code in a few concrete ways worth

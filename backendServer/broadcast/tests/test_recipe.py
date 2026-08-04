@@ -108,6 +108,32 @@ class ConditionalFieldsTest(SimpleTestCase):
         recipe = get_adapter("abc11_community").recipe(_event(contact_phone=""))
         self.assertNotIn("#cf34384", _selectors(recipe))
 
+    def test_abc11_image_field_tracks_image_url(self):
+        # 46.8: abc11's recipe must emit an image field only when the event
+        # has one — previously it never emitted an image field at all.
+        with_img = _selectors(get_adapter("abc11_community").recipe(_event()))
+        self.assertIn(".image-field-esf input[type=file]", with_img)
+
+        without_img = _selectors(get_adapter("abc11_community").recipe(_event(image_url="")))
+        self.assertNotIn(".image-field-esf input[type=file]", without_img)
+
+    def test_abc11_image_field_is_file_type_recipe_only(self):
+        recipe = get_adapter("abc11_community").recipe(_event())
+        image = next(
+            f for f in recipe["fields"] if f["selector"] == ".image-field-esf input[type=file]"
+        )
+        self.assertEqual(image["type"], "file")
+        self.assertEqual(image["value"], "https://example.com/jazz.jpg")
+
+    def test_abc11_start_date_hint_no_longer_mentions_a_label_fallback(self):
+        # 46.9: the field targets a real Fluent UI datepicker input (id merely
+        # ends in "-label"), not a <label> — the old hint sent the ticket down
+        # the wrong path and must not resurface.
+        recipe = get_adapter("abc11_community").recipe(_event())
+        start = next(f for f in recipe["fields"] if f["selector"] == "#eventStartDate-label")
+        self.assertEqual(start["type"], "date")
+        self.assertNotIn("label", (start["hint"] or "").lower())
+
     def test_terms_always_emitted_even_though_recipe_only(self):
         recipe = get_adapter("triangle_weekender").recipe(_event())
         terms = next(f for f in recipe["fields"] if f["selector"] == "#terms")

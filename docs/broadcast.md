@@ -145,13 +145,22 @@ Two independent code pools, distinguished by `AccessCode.kind`:
 | **1** | `BroadcastAccess.tier=1` — via `set_broadcast_access` or a tier-1 UPGRADE code | ✓ | ✗ |
 | **2** | `BroadcastAccess.tier=2` (dev-granted or UPGRADE code), or any valid TRIAL code | ✓ | ✓ |
 
+`resolve_access` (the API layer) will grant tier 2 to a bare TRIAL code with no login at all — that's true of the header/body auth path used by `curl` or any external caller. It is **not** true of the SPA: the SPA has no logged-out entry point to the access-code field (see Frontend below), so in practice every code — TRIAL or UPGRADE — is entered only after signing in. Handing someone a TRIAL code is not, by itself, enough to get them broadcasting through the UI; they also need an account.
+
 Permission classes: `RequiresBroadcastTier1` (preview / submit / recipe / job endpoints), `RequiresBroadcastTier2` (ai-autofill only), `RequiresBroadcastLogin` (redeem only — no tier check, just a valid JWT; stamps `request.broadcast_email`). The tier classes stamp `request.broadcast_access` (`AccessResult`) and `request.broadcast_client_label` for downstream views.
 
 **Metering:** TRIAL codes are metered **only at `POST /broadcast/preview`** — `AccessCodeUse.objects.get_or_create(code, draft_id)` (idempotent). Trial callers must include `draft_id` in the preview body; missing → 400. Re-submitting the same `draft_id` (edits) is free. UPGRADE codes are metered by distinct redeeming email (`AccessCodeRedemption`), checked in `redeem_upgrade_code`. Logged-in JWT sessions are never metered on preview.
 
 **`client_label`** on `BroadcastSubmission`: email for JWT users; `AccessCode.label` for TRIAL-code users. Access codes are stored only in the database — there is no env-var code list. `GET /broadcast/access` lets the SPA query the caller's tier and remaining trial uses (JWT or TRIAL code); `POST /broadcast/redeem` is how a logged-in user applies an UPGRADE code.
 
-**Frontend (`broadcastWeb`):** one textfield does double duty, labeled by login state — logged out it's "Access Code" (`getAccess`, anonymous TRIAL resolution, persisted in localStorage); logged in it relabels to "Upgrade Account" (`redeemAccessCode` → `POST /broadcast/redeem`, permanent, nothing persisted client-side since the grant now lives server-side against the account).
+**Frontend (`broadcastWeb`):** access always requires signing in first — the access-code field only renders in step 2 of the "Access" section (`App.tsx`), which is gated behind step 1 ("Sign in"; `step2` is `"todo"` while `!signedIn`). There is no logged-out entry point to the field. The label is static regardless of sign-in state or tier — it never relabels. The live copy (verified on prod 2026-08-03):
+
+- heading: "Enter your access code"
+- link (to re-open the field after a code is already verified): "Have another code?"
+- placeholder: "Provided by The Commons"
+- button: "Verify"
+
+One code box, two code kinds under the hood: `handleVerifyCode` first tries the entered code as an UPGRADE code (`redeemAccessCode` → `POST /broadcast/redeem`, requires the caller's JWT, permanent grant on the account); if the backend 403s that, it retries the same code as a TRIAL code (`getAccess({ accessCode })`, anonymous per-request resolution at the API layer, but only ever invoked here from an already-authenticated session). Either way the user sees one Verify step — the SPA never surfaces which kind matched.
 
 **Sign-in:** there is no embedded auth UI in the SPA (the former inline `AuthModal` component was removed). The "Sign in / Create account" button (`App.tsx`'s `handleSignIn`) does a full-page navigation to `${VITE_BETTER_AUTH_URL}/signin?redirect_to=<current broadcast URL>` — i.e. the shared auth **portal** (`theCommonsWeb`'s `src/app/(portal)/`, served at `https://auth.thecommons.town` in prod / `http://localhost:3000` in dev; see [ARCHITECTURE.md#authentication](../ARCHITECTURE.md#authentication)). Because the session cookie is scoped to `.thecommons.town`, completing sign-in in the portal returns the browser to the exact broadcast URL it left, already authenticated. `broadcastWeb/src/lib/authClient.ts` still exists — it's the Better Auth client used to read the session, mint a JWT (`fetchJwt`), and call `signOut()`, not to render any sign-in form.
 

@@ -1,15 +1,49 @@
 # The Auth Bridge — Better Auth and Django
 
-*Reflects commit `5fe7a45`, 2026-08-01. Written by reading `backendServer/accounts/` (models,
-admin, urls, views, migrations), `backendServer/backend/jwt_auth.py`,
-`backendServer/backend/permissions.py`, `backendServer/backend/settings/` (`__init__.py`,
-`base.py`, `dev.py`, `prod.py`), `theCommonsWeb/src/lib/auth.ts`, `auth-schema.ts`,
-`auth-client.ts`, `db.ts`, `theCommonsWeb/src/hooks/useAuth.tsx`, the portal route group
-(`src/app/(portal)/`), `src/app/reset-password/`, `src/lib/redirect-allowlist.ts`, and
-`broadcastWeb/src/App.tsx`. Complements `ARCHITECTURE.md`'s Authentication section, which is
-also current as of this commit; the two shouldn't drift, and if they ever do, trust the code.
-Companion docs referenced below: `overview.md` (system map), `data-model.md` (full schema),
-`deploy-ops.md` (VM/nginx/systemd), `frontend.md` (Next.js app structure).*
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`. Previously
+> reflected commit `d66b059` (branch `main`, 2026-08-03), which itself succeeded commit `5fe7a45`
+> (2026-08-01). Originally written by reading `backendServer/accounts/` (models, admin, urls,
+> views, migrations), `backendServer/backend/jwt_auth.py`, `backendServer/backend/permissions.py`,
+> `backendServer/backend/settings/` (`__init__.py`, `base.py`, `dev.py`, `prod.py`),
+> `theCommonsWeb/src/lib/auth.ts`, `auth-schema.ts`, `auth-client.ts`, `db.ts`,
+> `theCommonsWeb/src/hooks/useAuth.tsx`, the portal route group (`src/app/(portal)/`),
+> `src/app/reset-password/`, `src/lib/redirect-allowlist.ts`, and `broadcastWeb/src/App.tsx`.
+> Complements `ARCHITECTURE.md`'s Authentication section, which is also current as of that
+> commit; the two shouldn't drift, and if they ever do, trust the code. Companion docs
+> referenced below: `overview.md` (system map), `data-model.md` (full schema), `deploy-ops.md`
+> (VM/nginx/systemd), `frontend.md` (Next.js app structure).
+
+## Overview
+
+- **Django does not own user accounts.** There is no `django.contrib.auth.User` for app users,
+  no Django login view, no Django-issued session. Identity lives entirely inside the Next.js app
+  (`theCommonsWeb`), owned by an embedded library called **Better Auth**. Django keeps a
+  read-only mirror of Better Auth's tables so it can `JOIN` against them, and it verifies tokens
+  Better Auth issued — it never creates a user, checks a password, or invalidates a session.
+- **Three things depend on this bridge**: the main site (needs a live Better Auth session for
+  the UI plus a JWT to call Django's API), the broadcast SPA (`broadcastWeb`, a separate app on
+  its own subdomain that shares the same Better Auth session via a cross-subdomain cookie), and
+  Django itself (`BearerTokenAuthentication` gates nearly every non-public DRF view — if JWT
+  verification breaks, those views start rejecting real users).
+- **The one fact to remember:** sign-in/sign-up happens entirely in Next.js; Django only ever
+  sees a short-lived JWT, fetched fresh on every page load (never persisted client-side), and
+  verifies it locally against Better Auth's published JWKS keys — no callback to Next.js, no
+  Django session, no CSRF.
+- **If this bridge is down**, users can typically still sign in on the frontend (Better Auth
+  doesn't depend on Django), but every page that calls the Django API for personalized data —
+  profile, dashboard, event submission, business listings, all of `broadcast/` — starts failing
+  or serving generic/anonymous responses.
+- **Where to jump in Deep Dive**, by task:
+  - Understanding sign-in/sign-up end to end, cross-subdomain cookies, or the JWT-never-stored
+    pattern → §2.1.
+  - Debugging a 401/403 on a protected endpoint, or anything JWKS-related → §2.2 and Sharp edge 1.
+  - Looking up a specific table, model, or the `neon_auth` schema-crossing trick → §3.
+  - Wiring a new authenticated endpoint, or explaining a 401 vs. 403 to a bug reporter → §4.
+  - `DJANGO_ENV` misconfiguration, the passwordless-account rollover, or the `UUIDField` history
+    → §5.
+  - What's still unverified or unfinished (Google sign-in, email verification, prod nginx) → §6.
+
+## Deep Dive
 
 The single fact that matters more than any other in this codebase: **Django does not own user
 accounts.** There is no `django.contrib.auth.User` for app users, no Django login view, no
@@ -22,7 +56,7 @@ about to add a login endpoint to Django, or wondering why `python manage.py crea
 doesn't create an account regular users can sign in with, that's the inversion this doc exists
 to correct.
 
-## 1. What this is and who depends on it
+### 1. What this is and who depends on it
 
 Two systems share one identity: **Better Auth**, running inside `theCommonsWeb`'s Next.js
 process, and Django's `accounts` app, which mirrors Better Auth's tables just enough to join
@@ -48,9 +82,9 @@ depend on Django), but every page that calls the Django API for personalized dat
 dashboard, event submission, business listings, all of `broadcast/` — starts failing or serving
 generic/anonymous responses.
 
-## 2. How it works
+### 2. How it works
 
-### 2.1 Signing in or creating an account
+#### 2.1 Signing in or creating an account
 
 Every place in the product that needs a user to authenticate — the main site's header, the
 broadcast SPA's "Sign in" button, the old `/auth` legacy routes — does the same thing: a full
@@ -126,7 +160,7 @@ sequenceDiagram
    (`socialProviders.google`) but is commented out; there's no passwordless flow left either
    (see Sharp edge 4).
 
-### 2.2 Django verifying a Bearer JWT against JWKS
+#### 2.2 Django verifying a Bearer JWT against JWKS
 
 This is the other half of the bridge, and the one that actually enforces anything: every
 protected DRF view in this repo uses `BearerTokenAuthentication`
@@ -185,7 +219,7 @@ sequenceDiagram
    anything outside itself. It gets back claims, not a Django user object, and resolves an
    access tier from the email claim instead.
 
-## 3. Data model
+### 3. Data model
 
 `accounts` owns two kinds of tables: five **Better Auth mirrors** it never writes to, and two
 **Django-owned profile tables** that hang off them.
@@ -209,7 +243,7 @@ character; it isn't one.
 The full event/newsletter/ingestion/broadcast schema (and how those tables relate to the ones
 here) is `data-model.md`'s job, not this doc's — this table only covers the identity slice.
 
-## 4. Interfaces
+### 4. Interfaces
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
@@ -226,7 +260,7 @@ no Django session auth and no CSRF token involved, by design (see §1). A reques
 `user_type` (e.g. a LOCAL account calling `POST /businesses`) gets `403`, not `401` — worth
 knowing when a bug report says "I'm logged in but I get an error."
 
-## 5. Sharp edges
+### 5. Sharp edges
 
 **1. The JWKS fetch needs a browser-like User-Agent, or every JWT verification fails.**
 Cloudflare sits in front of the auth origin and 403s the default `python-urllib` User-Agent that
@@ -323,7 +357,7 @@ physically exactly where it was. A newcomer skimming that migration file and ass
 those tables would be wrong in a way that matters if they ever try to reason about what
 `migrate` did or didn't touch.
 
-## 6. Known gaps
+### 6. Known gaps
 
 - **The passwordless-rollover command and its guardrail test still live under `events/`, not
   `accounts/`**, even though they exist entirely to work around a bug in `accounts.models`.

@@ -11,6 +11,13 @@ DEBUG = False
 # sets instead (proxy_set_header X-Real-IP $remote_addr;).
 RATELIMIT_IP_META_KEY = "HTTP_X_REAL_IP"
 
+# nginx terminates TLS and proxies to gunicorn over a Unix socket, so Django never
+# sees an HTTPS connection directly — request.is_secure() (and anything built on it,
+# like build_absolute_uri()) would compute False for every request, producing
+# http:// URLs on an https:// site. Trust the header nginx always sets instead
+# (proxy_set_header X-Forwarded-Proto $scheme; on every server block).
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]  # crash at startup if missing
 
 ALLOWED_HOSTS = os.environ["DJANGO_ALLOWED_HOSTS"].split(",")

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
@@ -28,6 +28,8 @@ import {
   redeemAccessCode,
   retryJob,
   retryStuck,
+  SessionExpiredError,
+  setTokenRefreshListener,
   submitReal,
 } from "./services/broadcastApi";
 
@@ -105,7 +107,7 @@ export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   if (!draft.event_url || draft.event_url.trim() === "") missing.push("Event Page URL");
   if (!draft.ticket_url || draft.ticket_url.trim() === "") missing.push("Ticket URL");
   if (!draft.price || draft.price.trim() === "") missing.push("Price");
-  if (!draft.image_url || draft.image_url.trim() === "") missing.push("Image URL");
+  if (!draft.image_url || draft.image_url.trim() === "") missing.push("Event image");
   return missing;
 };
 
@@ -202,6 +204,9 @@ export default function App() {
   const [accessError, setAccessError] = useState("");
   const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  // Forces the collapsed step-3 (contact info) summary back open in place —
+  // see the "Edit" control on that summary.
+  const [contactExpanded, setContactExpanded] = useState(false);
 
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
@@ -257,6 +262,28 @@ export default function App() {
   const signedIn = Boolean(session.data);
   // Access always requires a login; a verified trial code alone is not enough.
   const hasAccess = signedIn && tier >= 1;
+
+  // broadcastApi transparently remints an expired JWT on a 401/403; keep our
+  // copy in step so the next request doesn't repeat the refresh round-trip.
+  useEffect(() => {
+    setTokenRefreshListener(setJwt);
+    return () => setTokenRefreshListener(null);
+  }, []);
+
+  // A SessionExpiredError means the Better Auth session itself is gone, so a
+  // retry can never succeed — drop the local auth state and send the user back
+  // to sign-in rather than surfacing a raw backend string.
+  const describeError = useCallback((e: unknown, fallback: string): string => {
+    if (e instanceof SessionExpiredError) {
+      setJwt(null);
+      setTier(0);
+      setIsTrial(false);
+      setUsesRemaining(null);
+      setAccessSource(null);
+      return "Your session expired — please sign in again.";
+    }
+    return e instanceof Error ? e.message : fallback;
+  }, []);
 
   useEffect(() => {
     if (session.isPending) return;
@@ -581,6 +608,7 @@ export default function App() {
     try {
       const result = await previewBroadcast(auth, toApiEvent(draft));
       setPreview(result);
+      setContactExpanded(false);
       // Coming-soon calendars are shown in the picker but can't be submitted —
       // keep them out of the default selection so they never enter the submit list.
       setSelected(
@@ -591,7 +619,7 @@ export default function App() {
         )
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Preview failed.");
+      setError(describeError(e, "Preview failed."));
     } finally {
       setBusy(false);
     }
@@ -605,7 +633,7 @@ export default function App() {
       await retryJob(auth, jobIdRef.current, siteKeys);
       setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Retry failed.");
+      setError(describeError(e, "Retry failed."));
     } finally {
       setBusy(false);
     }
@@ -618,7 +646,7 @@ export default function App() {
       await submitReal(auth, jobIdRef.current, siteKeys);
       setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Submit failed.");
+      setError(describeError(e, "Submit failed."));
     }
   };
 
@@ -630,7 +658,7 @@ export default function App() {
       await cancelJob(auth, jobIdRef.current);
       setJob(await getJob(auth, jobIdRef.current));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Cancel failed.");
+      setError(describeError(e, "Cancel failed."));
     } finally {
       setBusy(false);
     }
@@ -696,13 +724,16 @@ export default function App() {
       setSelected(new Set());
       setAiText("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "AI autofill failed.");
+      setError(describeError(e, "AI autofill failed."));
     } finally {
       setAiBusy(false);
     }
   };
 
   const contactEmailErr = contactEmailError(draft.contact_email);
+  // Contact fields specifically: locked by the reviewed-state lock unless the
+  // user opened them back up via the step-3 "Edit" control.
+  const contactLocked = locked && !contactExpanded;
 
   const draftValid =
     draft.title.trim() !== "" &&
@@ -727,7 +758,11 @@ export default function App() {
   // Access flow: one step active at a time; done steps collapse to a summary
   // line, upcoming steps stay visible but dimmed so the path ahead is clear.
   const step2: "todo" | "active" | "done" = !signedIn ? "todo" : hasAccess ? "done" : "active";
-  const step3: "todo" | "active" | "done" = !hasAccess ? "todo" : preview ? "done" : "active";
+  // contactExpanded lets the collapsed step-3 summary's "Edit" control force
+  // the fields back open without touching the preview/lock state of the rest
+  // of the page — re-collapses on the next successful Preview.
+  const step3: "todo" | "active" | "done" =
+    !hasAccess ? "todo" : preview && !contactExpanded ? "done" : "active";
   const step4: "todo" | "active" = preview ? "active" : "todo";
   const stepClass = (state: "todo" | "active" | "done") => `access-step access-step-${state}`;
 
@@ -855,7 +890,14 @@ export default function App() {
               <p className="step-summary">
                 {draft.organizer_name}
                 {draft.contact_email ? ` · ${draft.contact_email}` : ""}
-                {draft.contact_phone ? ` · ${draft.contact_phone}` : ""}
+                {draft.contact_phone ? ` · ${draft.contact_phone}` : ""}{" "}
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => setContactExpanded(true)}
+                >
+                  Edit
+                </button>
               </p>
             )}
             {step3 === "active" && (
@@ -869,7 +911,7 @@ export default function App() {
                     type="text"
                     value={draft.organizer_name ?? ""}
                     onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-                    disabled={busy || job !== null || locked}
+                    disabled={busy || job !== null || contactLocked}
                     maxLength={200}
                   />
                 </div>
@@ -883,7 +925,7 @@ export default function App() {
                     type="email"
                     value={draft.contact_email ?? ""}
                     onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-                    disabled={busy || job !== null || locked}
+                    disabled={busy || job !== null || contactLocked}
                   />
                   {contactEmailErr && <p className="field-error">{contactEmailErr}</p>}
                 </div>
@@ -897,7 +939,7 @@ export default function App() {
                     type="tel"
                     value={draft.contact_phone ?? ""}
                     onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-                    disabled={busy || job !== null || locked}
+                    disabled={busy || job !== null || contactLocked}
                     maxLength={40}
                   />
                 </div>
@@ -950,6 +992,12 @@ export default function App() {
               Talk to support and upgrade your plan to access this feature.
             </p>
           )}
+          {locked && (
+            <p className="section-note">
+              Locked while you&rsquo;re reviewing this event — click &ldquo;Make changes&rdquo;
+              below to edit it again.
+            </p>
+          )}
           {tier >= 2 && !isDraftEmpty(draft) && (
             <p className="section-note">
               Generating will replace the event details below.
@@ -991,6 +1039,12 @@ export default function App() {
         <div className={hasAccess && !locked ? "" : "form-dim"}>
           {!isDraftEmpty(draft) && (
             <p className="hint">Draft auto-saved on this device — cleared when you start over.</p>
+          )}
+          {locked && (
+            <p className="section-note">
+              Locked while you&rsquo;re reviewing this event — click &ldquo;Make changes&rdquo;
+              below to edit any field.
+            </p>
           )}
           <EventForm
             draft={draft}

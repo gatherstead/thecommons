@@ -49,7 +49,7 @@ STD_PAYLOAD = {
     "description": "An evening of live jazz music in Carrboro.",
     "location_name": "Cat's Cradle",
     "town": "Carrboro",
-    "tags": ["live-music", "evenings-only"],
+    "tags": ["live-music", "evenings"],
     "price": 0,
 }
 

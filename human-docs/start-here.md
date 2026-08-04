@@ -6,9 +6,13 @@ reading. **Human docs** (this folder) are written for people. **Agent / deep-div
 canonical. Where a human doc doesn't exist yet, this map sends you to the agent doc that
 covers the same ground.
 
-> Status: the subsystem docs are written — all of them, as of 2026-08-01. One,
-> [`containerization.md`](containerization.md), is deliberately **provisional**: it describes a
-> Docker cutover that is built and locally verified but not yet deployed.
+> Status: the subsystem docs are written — all of them — and each opens with an Overview you
+> can skim in under a minute before dropping into its Deep Dive. Every doc carries a
+> **Last updated** line stating the commit it was checked against.
+>
+> The Docker cutover it used to caveat is **done**: production has run on Docker Compose since
+> 2026-08-02 (PR #41), and [`containerization.md`](containerization.md) now describes it as
+> settled fact rather than a plan.
 
 ---
 
@@ -34,7 +38,7 @@ covers the same ground.
 | Work on the newsletter / digests | [`newsletter.md`](newsletter.md) | [`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) |
 | Add a background job or scheduled task | [`async-jobs.md`](async-jobs.md) | [`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) |
 | Deploy, or fix something in production | [`deploy-ops.md`](deploy-ops.md) | [`DEPLOY.md`](../DEPLOY.md) **(source of truth)**, [`docs/dev-db-isolation.md`](../docs/dev-db-isolation.md) |
-| Understand the Docker migration | [`containerization.md`](containerization.md) _(provisional)_ | [`docs/adr/0001-containerization.md`](../docs/adr/0001-containerization.md), [`DEPLOY.md`](../DEPLOY.md) |
+| Understand how the stack is containerized | [`containerization.md`](containerization.md) | [`docs/adr/0001-containerization.md`](../docs/adr/0001-containerization.md), [`DEPLOY.md`](../DEPLOY.md) |
 | Build UI on the main site | [`frontend.md`](frontend.md) | [`theCommonsWeb/AGENTS.md`](../theCommonsWeb/AGENTS.md) |
 | Get the look-and-feel right | [`design-system.md`](design-system.md) | [`CODING_STYLE.md`](../CODING_STYLE.md) |
 | Understand the admin / review workflow | — | [`docs/admin-backend.md`](../docs/admin-backend.md) |
@@ -50,12 +54,12 @@ covers the same ground.
 | [`AGENTS.md`](../AGENTS.md) | Repository map — where everything lives |
 | [`ARCHITECTURE.md`](../ARCHITECTURE.md) | System design: models, endpoints, auth bridge, async, deployment |
 | [`CODING_STYLE.md`](../CODING_STYLE.md) | Design philosophy + frontend/backend conventions |
-| [`DEPLOY.md`](../DEPLOY.md) | Production setup, nginx, systemd, deploy commands |
+| [`DEPLOY.md`](../DEPLOY.md) | Production setup, nginx, the Docker Compose stack, deploy commands |
 | [`docs/index.md`](../docs/index.md) | Full index of the agent-facing deep-dive guides |
 
 ---
 
 _Keeping this current: new subsystem? Add a row to "I want to…" and, if it's a whole doc, to
-[`README.md`](README.md)'s index too. When the Docker cutover lands, `containerization.md`
-either loses its provisional marker or folds into [`deploy-ops.md`](deploy-ops.md) — that doc
-says which, and this row goes with it._
+[`README.md`](README.md)'s index too. Now that the cutover has landed, `containerization.md`
+recommends folding itself into [`deploy-ops.md`](deploy-ops.md) — see its closing section. That
+merge hasn't happened yet; when it does, this row goes with it._

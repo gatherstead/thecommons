@@ -1,9 +1,13 @@
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { MiniCalendar } from './MiniCalendar';
+import { WINDOW_OPTIONS } from './TimeWindowSelector';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
-import type { FrontendEvent } from '../../models/eventsModels';
+import type { FrontendEvent, TownOption, CategoryOption } from '../../models/eventsModels';
 import type { AuthUser } from '../../models/authModels';
+import type { EventWindow } from '../../hooks/useEvents';
+import { useFacets } from '../../hooks/useFacets';
 
 type ViewMode = 'feed' | 'calendar';
 
@@ -23,10 +27,72 @@ interface SidebarProps {
     isLoadingMonth?: boolean;
     selectedTags: TagId[];
     onTagToggle: (tagId: TagId) => void;
+    towns: TownOption[];
+    categories: CategoryOption[];
+    selectedTowns: string[];
+    onTownToggle: (townSlug: string) => void;
+    selectedCategory: string | null;
+    onCategorySelect: (slug: string | null) => void;
+    currentWindow: EventWindow;
+    onWindowChange: (w: EventWindow) => void;
     currentUser: AuthUser | null;
     onSignIn: () => void;
     onSignOut: () => void;
 }
+
+// Full-width stacked filter row — the "Craigslist" facet aesthetic shared by
+// every filter group in this sidebar (Range, Towns, Categories, Interest).
+function FilterRow({
+    label,
+    count,
+    selected,
+    onToggle,
+    showClear = true,
+}: {
+    label: string;
+    count?: number;
+    selected: boolean;
+    onToggle: () => void;
+    showClear?: boolean;
+}) {
+    return (
+        <button
+            onClick={onToggle}
+            aria-pressed={selected}
+            className={[
+                'w-full flex items-center gap-2.5 text-left py-1.5 px-0',
+                'border-b border-[var(--color-border-light)]',
+                'cursor-pointer bg-transparent border-l-0 border-r-0 border-t-0',
+                'transition-colors group',
+                selected
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text)] hover:text-[var(--color-accent)]',
+            ].join(' ')}
+        >
+            {/* Dot indicator */}
+            <span
+                className={[
+                    'w-2 h-2 rounded-full shrink-0 border transition-colors',
+                    selected
+                        ? 'bg-[var(--color-accent)] border-[var(--color-accent)]'
+                        : 'border-[var(--color-border-light)] group-hover:border-[var(--color-accent)]',
+                ].join(' ')}
+                aria-hidden="true"
+            />
+            <span className={`text-xs uppercase tracking-wider ${selected ? 'font-black' : ''}`}>
+                {label}
+                {count !== undefined && (
+                    <span className="text-[var(--color-text-muted)] font-normal normal-case tracking-normal"> ({count})</span>
+                )}
+            </span>
+            {selected && showClear && (
+                <span className="ml-auto text-[10px] text-[var(--color-accent)] font-black">✕</span>
+            )}
+        </button>
+    );
+}
+
+const TOWN_PREVIEW_COUNT = 8;
 
 export function Sidebar({
     filteredCount,
@@ -44,6 +110,14 @@ export function Sidebar({
     isLoadingMonth = false,
     selectedTags,
     onTagToggle,
+    towns,
+    categories,
+    selectedTowns,
+    onTownToggle,
+    selectedCategory,
+    onCategorySelect,
+    currentWindow,
+    onWindowChange,
     currentUser,
     onSignIn,
     onSignOut,
@@ -56,6 +130,16 @@ export function Sidebar({
         day: 'numeric',
         year: 'numeric',
     });
+
+    const [showAllTowns, setShowAllTowns] = useState(false);
+
+    const facetsQuery = useFacets(currentWindow, selectedCategory);
+    const townCount = (slug: string): number | undefined =>
+        facetsQuery.isSuccess ? facetsQuery.data.towns[slug] ?? 0 : undefined;
+    const tagCount = (id: string): number | undefined =>
+        facetsQuery.isSuccess ? facetsQuery.data.tags[id] ?? 0 : undefined;
+
+    const visibleTowns = showAllTowns ? towns : towns.slice(0, TOWN_PREVIEW_COUNT);
 
     return (
         <aside className="space-y-3 text-sm">
@@ -130,48 +214,94 @@ export function Sidebar({
 
             <hr />
 
+            {/* Range — single-select, no null state, radio-style (no clear affordance) */}
+            <div role="group" aria-label="Filter by date range">
+                <p className="text-[9px] uppercase tracking-[0.18em] font-black mb-1 text-[var(--color-text-muted)]">
+                    Range
+                </p>
+                <div className="border-t border-[var(--color-border)]">
+                    {WINDOW_OPTIONS.map(opt => (
+                        <FilterRow
+                            key={opt.id}
+                            label={opt.label}
+                            selected={currentWindow === opt.id}
+                            onToggle={() => onWindowChange(opt.id)}
+                            showClear={false}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            <hr />
+
+            {/* Towns — multi-select, with facet counts */}
+            <div role="group" aria-label="Filter by town">
+                <p className="text-[9px] uppercase tracking-[0.18em] font-black mb-1 text-[var(--color-text-muted)]">
+                    Towns
+                </p>
+                <div className="border-t border-[var(--color-border)]">
+                    {visibleTowns.map(town => (
+                        <FilterRow
+                            key={town.slug}
+                            label={town.name}
+                            count={townCount(town.slug)}
+                            selected={selectedTowns.includes(town.slug)}
+                            onToggle={() => onTownToggle(town.slug)}
+                        />
+                    ))}
+                    {towns.length > TOWN_PREVIEW_COUNT && (
+                        <button
+                            onClick={() => setShowAllTowns(v => !v)}
+                            className="w-full text-left py-1.5 px-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-accent)] cursor-pointer bg-transparent border-none transition-colors"
+                        >
+                            {showAllTowns ? 'Fewer towns' : `More towns (${towns.length - TOWN_PREVIEW_COUNT})`}
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            <hr />
+
+            {/* Categories — single-select, re-selecting the active row clears back to All */}
+            <div role="group" aria-label="Filter by category">
+                <p className="text-[9px] uppercase tracking-[0.18em] font-black mb-1 text-[var(--color-text-muted)]">
+                    Categories
+                </p>
+                <div className="border-t border-[var(--color-border)]">
+                    <FilterRow
+                        label="All Categories"
+                        selected={selectedCategory === null}
+                        onToggle={() => onCategorySelect(null)}
+                        showClear={false}
+                    />
+                    {categories.map(cat => (
+                        <FilterRow
+                            key={cat.slug}
+                            label={cat.display_name}
+                            selected={selectedCategory === cat.slug}
+                            onToggle={() => onCategorySelect(selectedCategory === cat.slug ? null : cat.slug)}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            <hr />
+
             {/* Tag filters — full-width stacked rows */}
-            <div>
+            <div role="group" aria-label="Filter by interest">
                 <p className="text-[9px] uppercase tracking-[0.18em] font-black mb-1 text-[var(--color-text-muted)]">
                     Filter by Interest
                 </p>
                 <div className="border-t border-[var(--color-border)]">
-                    {FILTER_TAGS.map(tag => {
-                        const isSelected = selectedTags.includes(tag.id);
-                        return (
-                            <button
-                                key={tag.id}
-                                onClick={() => onTagToggle(tag.id)}
-                                aria-pressed={isSelected}
-                                className={[
-                                    'w-full flex items-center gap-2.5 text-left py-1.5 px-0',
-                                    'border-b border-[var(--color-border-light)]',
-                                    'cursor-pointer bg-transparent border-l-0 border-r-0 border-t-0',
-                                    'transition-colors group',
-                                    isSelected
-                                        ? 'text-[var(--color-accent)]'
-                                        : 'text-[var(--color-text)] hover:text-[var(--color-accent)]',
-                                ].join(' ')}
-                            >
-                                {/* Dot indicator */}
-                                <span
-                                    className={[
-                                        'w-2 h-2 rounded-full shrink-0 border transition-colors',
-                                        isSelected
-                                            ? 'bg-[var(--color-accent)] border-[var(--color-accent)]'
-                                            : 'border-[var(--color-border-light)] group-hover:border-[var(--color-accent)]',
-                                    ].join(' ')}
-                                    aria-hidden="true"
-                                />
-                                <span className={`text-xs uppercase tracking-wider ${isSelected ? 'font-black' : ''}`}>
-                                    {tag.label}
-                                </span>
-                                {isSelected && (
-                                    <span className="ml-auto text-[10px] text-[var(--color-accent)] font-black">✕</span>
-                                )}
-                            </button>
-                        );
-                    })}
+                    {FILTER_TAGS.map(tag => (
+                        <FilterRow
+                            key={tag.id}
+                            label={tag.label}
+                            count={tagCount(tag.id)}
+                            selected={selectedTags.includes(tag.id)}
+                            onToggle={() => onTagToggle(tag.id)}
+                        />
+                    ))}
                 </div>
             </div>
 

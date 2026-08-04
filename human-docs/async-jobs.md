@@ -1,6 +1,8 @@
 # Async: Redis + Celery
 
-Written 2026-08-01 against commit `5fe7a45`. This is the human-facing companion to
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
+
+This is the human-facing companion to
 [`docs/redis-celery-handoff.md`](../docs/redis-celery-handoff.md) (the agent-facing deep
 dive — stays the system of record for exact settings names, migration mechanics, and prod
 provisioning commands) and touches on the same incident [`docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md)
@@ -20,9 +22,41 @@ containers. None of that is cut over yet. This doc describes the systemd units
 actually running in production today. The containerized version is covered by a sibling
 doc, `containerization.md`, once it exists.
 
+## Overview
+
+- **What it is.** Redis + Celery is how The Commons runs everything that isn't a live
+  HTTP request/response: nightly event ingestion, weekly/monthly email digests,
+  bulk-publishing approved events, and pushing submitted events out to third-party
+  town calendars (broadcast). Redis DB 0 is the Celery broker/result backend; Redis
+  DB 1 is the unrelated Django page cache — a `FLUSHALL` takes out both, but nothing
+  else couples them.
+- **Who depends on it.** Ingestion and the newsletter digest engine depend on it
+  visibly — if beat or the default worker is down, new events stop arriving and
+  digests stop sending. Broadcast depends on it too, less visibly: `ARCHITECTURE.md`
+  currently claims broadcast doesn't use Celery, which is **stale** — it runs two real
+  Celery tasks on their own `broadcast` queue.
+- **The one fact that matters most.** If this whole layer goes down, nothing crashes
+  in the request path — events just quietly stop flowing and broadcast submissions sit
+  forever at `status="queued"`. That silence is why `manage.py healthcheck` (Deep Dive
+  § 2.4) matters as much as knowing how to add a task.
+- **Three named queues**, each with its own worker process: `default` (network-bound
+  work, `-c 2`), `scrape`, and `broadcast` (both headless-Chromium/Playwright work,
+  `-c 1` each — see Deep Dive § 2.1 for why `broadcast`'s `-c 1` is a correctness
+  requirement, not a tuning knob).
+- **Schedules live in Postgres, not in a settings file** — `django-celery-beat` reads
+  `CrontabSchedule`/`PeriodicTask` rows seeded once by a migration, then editable live
+  in the admin. See Deep Dive § 2.2 for how to change a schedule, and § 2.3–2.4 for the
+  known `last_run_at` persistence-lag sharp edge and how the healthcheck works around it.
+- **Where to go for a task:** adding a new background job → Deep Dive § 4 ("Adding a
+  new periodic task, correctly"); a scheduled job didn't run → Deep Dive § 2.4 and § 5;
+  understanding the broadcast/ingestion/digest task list → Deep Dive § 4's tables;
+  known doc drift → Deep Dive § 6.
+
+## Deep Dive
+
 ---
 
-## 1. What this is and who depends on it
+### 1. What this is and who depends on it
 
 The Commons runs almost everything that isn't an HTTP request/response cycle through
 Celery: the nightly ingestion pipeline, weekly and monthly email digests, bulk-publishing
@@ -54,7 +88,7 @@ silence is exactly why the healthcheck section later in this doc matters as much
 
 ---
 
-## 2. How it works
+### 2. How it works
 
 ### 2.1 Queue and worker topology
 
@@ -278,7 +312,7 @@ flowchart TD
 
 ---
 
-## 3. Data model
+### 3. Data model
 
 There's no domain data model here in the usual sense — the state this layer owns is
 scheduling and caching metadata, not business data:
@@ -298,7 +332,7 @@ involved in cache invalidation at all.
 
 ---
 
-## 4. Interfaces
+### 4. Interfaces
 
 ### Periodic (beat-scheduled) tasks — the live schedule as seeded
 
@@ -372,7 +406,7 @@ worker that isn't there.
 
 ---
 
-## 5. Sharp edges
+### 5. Sharp edges
 
 **`CELERY_BEAT_MAX_LOOP_INTERVAL` (6 hours) and `CELERY_BEAT_SYNC_EVERY` (1) work together,
 and tuning one without the other silently reopens a monitoring blind spot.** Both live in
@@ -418,7 +452,7 @@ admin. § 2.2 covers how to check the live truth.
 
 ---
 
-## 6. Known gaps and doc drift
+### 6. Known gaps and doc drift
 
 - **`ARCHITECTURE.md`'s Broadcast section is stale**, per § 1 above — it says broadcast
   "does not use Celery," which was true before the queue-drain and orphan-recovery logic

@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.core.cache import cache
+from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -47,10 +48,9 @@ def get_categories(request):
     return Response(data)
 
 
-@api_view(["GET"])
-def get_all(request):  # noqa: C901  # query-param filtering; complexity is inherent
+def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; complexity is inherent
     """
-    List published events (paginated, page_size=30).
+    Shared window/category/date filtering for the events list and facet-count endpoints.
 
     Query params (applied in priority order — after/before/include_past override window):
       after        ISO datetime — events on or after this datetime
@@ -61,21 +61,20 @@ def get_all(request):  # noqa: C901  # query-param filtering; complexity is inhe
                             otherwise date >= now (fills page from all future events)
                    past:    date < now
                    future:  date > now + 90 days
-    """
-    cache_key = events_cache.events_list_key(request.query_params)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return Response(cached)
 
+    Note: does NOT apply `.order_by()` — callers that care about ordering (e.g. get_all's
+    "past" window, which reverses to newest-first) must apply it themselves.
+    """
     now = timezone.now()
     ninety_days_out = now + timedelta(days=90)
 
-    events = Event.objects.all().order_by("date")
+    events = Event.objects.all()
 
     include_past = request.query_params.get("include_past", "").lower() == "true"
     after_param = request.query_params.get("after")
     before_param = request.query_params.get("before")
     window = request.query_params.get("window", "").lower()
+    is_past_window = False  # only set by the unqualified window=past branch below
 
     # after/before/include_past are explicit overrides; window applies only when none are set
     if after_param or before_param or include_past:
@@ -92,7 +91,8 @@ def get_all(request):  # noqa: C901  # query-param filtering; complexity is inhe
                 events = events.filter(date__lte=before_dt)
     else:
         if window == "past":
-            events = events.filter(date__lt=now).order_by("-date")
+            events = events.filter(date__lt=now)
+            is_past_window = True
         elif window == "future":
             events = events.filter(date__gt=ninety_days_out)
         else:  # 'default' or unset — 90-day cap unless fewer than PAGE_SIZE events exist there
@@ -106,10 +106,63 @@ def get_all(request):  # noqa: C901  # query-param filtering; complexity is inhe
     if category_param:
         events = events.filter(categories__slug__in=category_param).distinct()
 
+    return events, is_past_window
+
+
+@api_view(["GET"])
+def get_all(request):
+    """
+    List published events (paginated, page_size=30).
+
+    See `_filtered_events_queryset` for the supported query params.
+    """
+    cache_key = events_cache.events_list_key(request.query_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
+    events, is_past_window = _filtered_events_queryset(request)
+    events = events.order_by("-date") if is_past_window else events.order_by("date")
+
     paginator = EventsPagination()
     page = paginator.paginate_queryset(events, request)
     serializer = EventSerializer(page, many=True)
     data = paginator.get_paginated_response(serializer.data).data
+    cache.set(cache_key, data, events_cache.EVENTS_LIST_TTL)
+    return Response(data)
+
+
+@api_view(["GET"])
+def get_facets(request):
+    """
+    Facet counts (towns, tags) over the full filtered event set — unpaginated.
+
+    Accepts the same window/category/date query params as `get_all`. Used by the
+    frontend sidebar so counts reflect the whole filtered result, not just the
+    current page.
+    """
+    cache_key = events_cache.events_facets_key(request.query_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
+    events, _is_past_window = _filtered_events_queryset(request)
+
+    town_counts = (
+        events.exclude(town__isnull=True)
+        .values("town__slug")
+        .annotate(n=Count("pk", distinct=True))
+    )
+    tag_counts = (
+        events.exclude(tags__isnull=True)
+        .values("tags__name")
+        .annotate(n=Count("pk", distinct=True))
+    )
+
+    data = {
+        "towns": {row["town__slug"]: row["n"] for row in town_counts if row["town__slug"]},
+        "tags": {row["tags__name"]: row["n"] for row in tag_counts if row["tags__name"]},
+    }
     cache.set(cache_key, data, events_cache.EVENTS_LIST_TTL)
     return Response(data)
 

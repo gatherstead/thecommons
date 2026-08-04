@@ -7,12 +7,13 @@ Form notes from the capture:
 - Venue and Organizer are select2 "Create or Find" widgets: we type the name,
   reuse an existing entry on a close string match, otherwise pick "Create".
   Detail inputs (address/email/…) only populate when we create a new entry.
-- Categories are a select2 AJAX dropdown (remote term search); the extension
-  only selects a term on an exact label match, so unrelated site categories
-  are never picked. The custom "County" checkboxes map from our locality
-  tags, so we set those. Tags are a free-form site vocabulary (not a
-  controlled list like categories) and can't be matched reliably, so we don't
-  attempt them.
+- Categories are a select2 "AJAX" dropdown, but the typed search term never
+  actually filters it — it always renders the full ~62-term vocabulary. The
+  extension matches against that full rendered list (exact, else prefix), so
+  unrelated site categories are still never picked. The custom "County"
+  checkboxes map from our locality tags, so we set those. Tags are a
+  free-form site vocabulary (not a controlled list like categories) and
+  can't be matched reliably, so we don't attempt them.
 - A newsletter popup is scheduled to appear after a delay and can cover the
   submit button; we dismiss it before submitting.
 - No captcha on this form.
@@ -29,20 +30,22 @@ _MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 e
 # Locality slugs that are county/region-level only — not useful as a city name.
 _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
 
-# Mapping from our canonical category slugs (routing.CATEGORIES) to the search
-# terms the Triangle Weekender's AJAX category dropdown understands. The
-# extension searches each term; unmatched terms are skipped silently.
+# Mapping from our canonical category slugs (routing.CATEGORIES) to search
+# terms drawn from Triangle Weekender's real ~62-term vocabulary (verified
+# live 2026-08-03 — see suite 46.1). A slug may map to multiple labels
+# (comma-joined by _wk_category_terms, split again by the extension); the
+# extension reports any term it can't match rather than skipping it silently.
 _WK_CATEGORY_MAP: dict[str, str] = {
-    "music": "Music",
+    "music": "Music & Concerts,Live Music",
     "arts": "Arts",
-    "family-kids": "Family",
+    "family-kids": "Kids & Family,Family Fun",
     "wellness": "Wellness",
-    "food-drink": "Food",
-    "festival": "Festival",
+    "food-drink": "Food & Drink",
+    "festival": "Festivals",
     "market": "Market",
-    "literary": "Literary",
-    "community": "Community",
-    "nightlife": "Nightlife",
+    "literary": "Books & Readings,Writing",
+    "community": "Gather,Volunteerism",
+    "nightlife": "Comedy,Trivia",
     "education": "Education",
 }
 
@@ -103,7 +106,7 @@ _PLAIN_FIELDS = [
     ),
     RecipeField("#EventEndDate", "date", lambda ev: _wk_date(_end(ev)), label="End date"),
     RecipeField("#EventURL", "text", lambda ev: ev.event_url, required=True, label="Event URL"),
-    RecipeField("#EventCost", "text", lambda ev: "0" if ev.is_free else ev.price, label="Cost"),
+    RecipeField("#EventCost", "text", lambda ev: h.format_cost(ev.is_free, ev.price), label="Cost"),
 ]
 
 
@@ -243,7 +246,8 @@ class TriangleWeekenderAdapter(SiteAdapter):
                 _wk_category_terms,
                 recipe_only=True,
                 label="Event categories",
-                hint="AJAX dropdown — extension searches each term; unmatched terms are skipped",
+                hint="select2 dropdown — extension matches each term against the full "
+                "rendered list and reports any it can't find",
             )
         )
         if ev.image_url:

@@ -11,6 +11,15 @@ missing them yields needs_manual rather than submitting a fabricated identity.
 Field ids (cfN) and the submit button (value="save") are verified against the
 captured dump. Category (react-select) and image (custom uploader) are
 best-effort; everything else maps from canonical fields.
+
+Image: the form has exactly one `input[type=file][accept="image/*"]`, behind a
+drag-and-drop skin at `.image-field-esf .image-dropzone` — a real file input,
+not a JS-only dropzone, so a programmatic file set works through the normal
+Playwright/extension path. Emitted only when `ev.image_url` is set (mirrors
+triangle_weekender's image spec). Uploading reveals an alt-text field on
+ABC11's form; `CanonicalEvent` has no alt-text field upstream, and per the
+"adapters never invent content" rule we do not synthesize one — that field is
+left for manual follow-up (see docs/broadcast.md's adapter rules).
 """
 
 from broadcast.adapters import _helpers as h
@@ -48,24 +57,27 @@ def _duration(ev):
 
 
 # Map our canonical category slugs to a search term to type into ABC11's
-# react-select Category box; the extension types it and picks the first option.
+# react-select Category box; the extension types it and picks whichever
+# rendered option is an exact (else prefix) match, per term. ABC11's
+# vocabulary is a fixed 17-term list (verified live 2026-08-03 — see suite
+# 46.1) with no "Music"/"Family"/etc. terms, so most of our slugs have no
+# defensible match — those are left unmapped rather than guessing (a wrong
+# category is worse than none; adapters never invent content).
 _CAT_MAP = {
-    "music": "Music",
-    "arts": "Arts",
-    "family-kids": "Family",
-    "food-drink": "Food",
-    "festival": "Festival",
-    "market": "Market",
-    "literary": "Literature",
-    "community": "Community",
-    "nightlife": "Nightlife",
-    "wellness": "Health",
-    "education": "Education",
-    "sports": "Sports",
-    "film": "Film",
-    "dance": "Dance",
-    "comedy": "Comedy",
-    "theatre": "Theater",
+    "music": "Theater / Concerts",
+    "dance": "Theater / Concerts",
+    "comedy": "Theater / Concerts",
+    "theatre": "Theater / Concerts",
+    "arts": "Art / Photography / Crafts",
+    "food-drink": "Food and Beverage / Farmer's Market",
+    "market": "Food and Beverage / Farmer's Market",
+    "festival": "Festivals / Parades",
+    "community": "Community Events / Volunteerism",
+    "education": "School / Education",
+    "sports": "Sports and Recreation",
+    # Unmapped — no defensible match in ABC11's vocabulary; left out so no
+    # category is sent rather than stretching to a nearest neighbour:
+    # family-kids, literary, nightlife, wellness, film.
 }
 
 
@@ -80,14 +92,20 @@ def _cat_terms(ev) -> str:
 
 # Declared once; consumed by the server-side fill loop (h.apply_specs) and the
 # manual-review recipe export. Date/time are best-effort (optional) as before.
-# NOTE: #eventStartDate-label is the field's <label>, not the input — the
-# content-script date handler must fall back to the label's associated input.
+# NOTE: #eventStartDate-label is NOT a <label> — the id just happens to end in
+# "-label". It's the Fluent UI (Office UI Fabric) datepicker's own text input
+# (role="combobox"), the only date input on the form; the selector is correct
+# as-is and needs no fallback. What it does need is the retry handled by the
+# content-script date handler (see fillInputVerified) — Trumba's widget
+# self-populates the field with a near-current default shortly after load
+# (see the ready_selector comment below), so a value written before that
+# default fires gets silently overwritten.
 _RECIPE_FIELDS = [
     RecipeField("#cf3", "text", lambda ev: ev.title, required=True, label="Event title"),
     RecipeField("#cf4", "textarea", lambda ev: ev.description, label="Event Details"),
     RecipeField("#cf5", "text", _location, label="Location"),
     RecipeField("#cf6", "text", lambda ev: ev.event_url, label="Web link"),
-    RecipeField("#cf33293", "text", lambda ev: "0" if ev.is_free else ev.price, label="Cost"),
+    RecipeField("#cf33293", "text", lambda ev: h.format_cost(ev.is_free, ev.price), label="Cost"),
     RecipeField("#cf33704", "text", lambda ev: ev.organizer_name, label="Contact Name"),
     RecipeField("#cf34384", "text", lambda ev: ev.contact_phone, label="Contact Phone"),
     RecipeField("#cf34385", "text", lambda ev: ev.contact_email, label="Contact Email"),
@@ -105,7 +123,8 @@ _RECIPE_FIELDS = [
         "date",
         lambda ev: _date(ev.start_datetime),
         label="Start date",
-        hint="targets a label — fall back to its input",
+        hint="Trumba's own widget self-populates a default shortly after load; "
+        "the fill must re-read and re-apply if that default overwrites us",
     ),
     RecipeField(
         "#eventStartTime",
@@ -166,7 +185,20 @@ class Abc11CommunityAdapter(SiteAdapter):
                     lambda ev, c=cats: c,
                     recipe_only=True,
                     label="Category",
-                    hint="type each term and pick the first option",
+                    hint="react-select — extension matches each term exactly (else by "
+                    "prefix) and reports any it can't find",
+                )
+            )
+        if ev.image_url:
+            specs.append(
+                RecipeField(
+                    ".image-field-esf input[type=file]",
+                    "file",
+                    lambda ev: ev.image_url,
+                    recipe_only=True,
+                    label="Event image",
+                    hint="auto-uploaded by the extension; reveals an alt-text field "
+                    "on ABC11's form that must be filled in manually",
                 )
             )
         return specs
@@ -198,6 +230,11 @@ class Abc11CommunityAdapter(SiteAdapter):
                 screenshot_path=h.take_screenshot(page, ctx, self.key),
             )
 
+        if ev.image_url:
+            local = h.download_image(ev.image_url, ctx.download_dir)
+            if local:
+                _try_fill_file(page, ".image-field-esf input[type=file]", local)
+
         if h.has_captcha(page):
             return TargetResult(
                 status="needs_manual",
@@ -226,3 +263,10 @@ class Abc11CommunityAdapter(SiteAdapter):
             return page.locator("input[type='password']").first.is_visible(timeout=500)
         except Exception:
             return False
+
+
+def _try_fill_file(page, selector: str, path: str) -> None:
+    try:
+        page.locator(selector).first.set_input_files(path, timeout=5000)
+    except Exception:
+        pass

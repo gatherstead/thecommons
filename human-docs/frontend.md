@@ -1,14 +1,39 @@
 # The Main Site (theCommonsWeb)
 
-Reflects `theCommonsWeb/` at commit `5fe7a45` on `all-things-ingestion`, dated 2026-08-01. This
-complements `theCommonsWeb/AGENTS.md` (the agent-facing directory map, which stays terse) —
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
+
+## Overview
+
+- `theCommonsWeb` is the public-facing Next.js 16 site (App Router, React 19, Tailwind v4,
+  TanStack Query v5) that renders the event feed, calendar, post-an-event flow, profile/dashboard
+  pages, and the standalone sign-in/sign-up portal. If this app is down, the whole site is down —
+  there's no fallback rendering path.
+- It talks to two backends: the Django REST API (`backendServer/`) for events/profiles/business
+  data, and its own **Better Auth instance running inside this same Next.js process** for
+  identity. The one fact newcomers get backwards most: this app *is* the identity provider —
+  Django only mirrors Better Auth's `neon_auth` tables read-only and verifies the JWTs this app
+  issues.
+- The Django API has no server-rendered pages of its own; it's a pure JSON backend consumed by
+  this app (and separately by `broadcastWeb`, not covered here).
+- Where to go for a given task: home-feed rendering/prefetch → Deep Dive §2.1; how sign-in/sign-up
+  resolves a session and JWT → §2.2; the "fill out `/post` while signed out" flow → §2.3; the
+  route table → §3; hooks/services and query keys → §4; client-side auth gating → §5; visual
+  spec pointer → §6; known traps (npm vs pnpm, type-checking, stale docs, query-key drift) → §7;
+  open gaps the author didn't chase down → §8.
+- Related docs: `theCommonsWeb/AGENTS.md` (terser, agent-facing directory map), `auth.md` (Better
+  Auth internals, JWT/JWKS, cross-subdomain cookie), `design-system.md` (visual spec), `data-model.md`
+  (Django API shapes), `testing.md` (running the test suite).
+
+## Deep Dive
+
+This complements `theCommonsWeb/AGENTS.md` (the agent-facing directory map, which stays terse) —
 this doc goes deeper for a human landing in the codebase for the first time. For the identity
 bridge itself (Better Auth internals, JWT/JWKS verification, the cross-subdomain cookie), see
 `auth.md`; this doc only covers how the React side consumes that bridge. For the visual spec,
 see `design-system.md`. For the shapes the Django API returns, see `data-model.md`. For running
 the test suite, see `testing.md`.
 
-## 1. What this is and who depends on it
+### 1. What this is and who depends on it
 
 `theCommonsWeb` is the public-facing Next.js 16 site — the App Router, React 19, Tailwind v4,
 TanStack Query v5 stack that renders the newspaper-style event feed, the calendar, the post-an-
@@ -28,9 +53,9 @@ site is down — there is no fallback rendering path. If only Django is down, th
 serves its shell and cached data (see §2.1's "Django down" branch), which is a deliberate
 design choice in the home page's server component.
 
-## 2. How it works
+### 2. How it works
 
-### 2.1 Rendering the home feed — server prefetch, hydration, client refetch
+#### 2.1 Rendering the home feed — server prefetch, hydration, client refetch
 
 The home route (`/`) is unusual among the app's pages: `app/page.tsx` is an async **server**
 component that prefetches three queries into a `QueryClient` before any HTML reaches the
@@ -100,7 +125,7 @@ call when `window` is undefined (i.e., on the server) and a memoized singleton i
 sharing one instance across concurrent server requests would leak one visitor's prefetched data
 into another's response.
 
-### 2.2 From a session cookie to `useAuth().user`
+#### 2.2 From a session cookie to `useAuth().user`
 
 `useAuth` (`src/hooks/useAuth.tsx`) is the only sanctioned way for a component to know who's
 signed in — components must not call `authClient` (the Better Auth client, `src/lib/auth-client.ts`)
@@ -168,7 +193,7 @@ Second, sign-in and sign-up both leave the actual profile fetch to the same code
 then `fetchProfileFromDjango`), so a bug in the profile fetch shows up identically regardless of
 which portal flow triggered it — there's no separate "new user" profile-loading code.
 
-### 2.3 Posting an event across the auth wall
+#### 2.3 Posting an event across the auth wall
 
 `/post` is reachable, and its form fully usable, without being signed in — the auth requirement
 only bites at submission. This produces a flow that spans two page loads and a full-origin
@@ -197,7 +222,7 @@ using a private window that clears storage on cross-origin navigation) between s
 loses the draft silently. There's no warning for this; the user just lands back on an empty
 form.
 
-## 3. Routes
+### 3. Routes
 
 | Path | File | Type | Auth required? | Purpose |
 |---|---|---|---|---|
@@ -224,7 +249,7 @@ route handlers, all of which exist and are live in the current tree. Worth fixin
 the next time someone's in there; not fixed here per this doc's scope (docs only, and that file
 belongs to the agent-facing tree).
 
-## 4. The data layer: hooks and services
+### 4. The data layer: hooks and services
 
 Every network call to Django goes through `src/services/`, never directly from a component or
 hook. Each service function reads `NEXT_PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`)
@@ -258,7 +283,7 @@ by string literal; `EditEventModal`'s update mutation invalidates `['my-events']
 do match, but a rename in one file silently stops invalidating the other. There is no shared
 query-key constants module; string literals are the entire convention.
 
-## 5. Auth on the client
+### 5. Auth on the client
 
 `useAuth` is the boundary — see §2.2 for how it resolves state, and `auth.md` for the Better
 Auth configuration, the JWKS bridge to Django, and the cross-subdomain cookie setup in
@@ -277,7 +302,7 @@ client-rendered content is gated. All of the pages that need this today are clie
 with no sensitive server-fetched data, so it hasn't mattered in practice, but it's not a
 structural guarantee.
 
-## 6. Design system
+### 6. Design system
 
 Tailwind v4 with the newsprint palette and typography as CSS custom properties in
 `src/app/globals.css`, plus the `.rule-thick`/`.drop-cap`/`.skeleton-block` utilities used
@@ -285,7 +310,7 @@ throughout the pages above. The full enforceable spec — the banned list, the t
 component conventions — lives in `design-system.md`; nothing in this doc should be treated as
 the aesthetic source of truth.
 
-## 7. Sharp edges
+### 7. Sharp edges
 
 **`npm install` is not blocked by anything mechanical — only by convention.** There is no
 `packageManager` field in `package.json`, no `engines` field, and no `preinstall`/`only-allow`
@@ -372,7 +397,7 @@ and `theCommonsWeb/AGENTS.md` don't exist in the code.** The actual keys are `['
 code has since diverged from — and it matters in practice because it's exactly the kind of key
 someone would copy-paste from the docs into a new invalidation call and have it silently no-op.
 
-## 8. Known gaps
+### 8. Known gaps
 
 I did not find a shared constants module for query keys (confirmed by grepping every
 `queryKey:`/`invalidateQueries`/`setQueryData` call site in `src/`) — every key is a string

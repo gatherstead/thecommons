@@ -98,9 +98,9 @@ Runs on all `RawEvent` records where `processed=False`.
 
 | Category | Tags |
 |---|---|
-| Schedule | `weekends-only`, `evenings-only`, `daytime-only` |
+| Schedule | `weekends`, `evenings`, `daytime` |
 | Cost | `free` |
-| Audience | `family-friendly`, `lgbtq-friendly`, `speaks-spanish` |
+| Audience | `family-friendly` |
 | Accessibility | `wheelchair-accessible` |
 | Activity | `live-music`, `food-and-drink`, `arts-and-culture`, `fitness-and-wellness`, `community-meetup`, `fundraiser`, `market-or-fair`, `workshop-or-class` |
 | Business | `small-business`, `nature` |

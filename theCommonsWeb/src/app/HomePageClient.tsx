@@ -49,6 +49,7 @@ export default function HomePageClient() {
     selectedCategory,
     toggleTag,
     toggleTown,
+    clearTowns,
     setCategory,
     clearFilters,
   } = useEvents(viewMode);
@@ -100,7 +101,8 @@ export default function HomePageClient() {
     selectedTags.length > 0 ||
     selectedTowns.length > 0 ||
     selectedCategory !== null ||
-    selectedDate !== null;
+    selectedDate !== null ||
+    currentWindow !== '3months';
 
   const sidebarProps = {
     isLoading,
@@ -117,6 +119,14 @@ export default function HomePageClient() {
     isLoadingMonth,
     selectedTags,
     onTagToggle: toggleTag,
+    towns,
+    categories,
+    selectedTowns,
+    onTownToggle: toggleTown,
+    selectedCategory,
+    onCategorySelect: setCategory,
+    currentWindow,
+    onWindowChange: setWindow,
     currentUser: user,
     onSignIn: () => {
       const redirectTo = encodeURIComponent(
@@ -133,7 +143,7 @@ export default function HomePageClient() {
         towns={towns}
         selectedTowns={selectedTowns}
         onTownToggle={toggleTown}
-        onClearFilters={handleClearFilters}
+        onClearTowns={clearTowns}
       />
 
       <main id="main-content" className="max-w-[1200px] mx-auto px-4 py-4">

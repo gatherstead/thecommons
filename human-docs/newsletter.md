@@ -1,16 +1,42 @@
 # The Newsletter (`newsletter` app)
 
-*Reflects commit `5fe7a45`, 2026-08-01. Written by reading `backendServer/newsletter/` in
-full (models, views, urls, `email_service.py`, `tasks.py`, `admin.py`, the digest management
-commands, migrations, and the email templates under `newsletter/templates/email/`), the
-generic transport it calls out to (`backendServer/events/email_service.py`), the parts of
-`backendServer/accounts/` that touch subscribers, and the beat/Brevo settings in
-`backendServer/backend/settings/base.py`. Complements `overview.md` (§6, one-paragraph
-summary), `data-model.md` (the field-level `NewsletterSubscriber` table and the Suite 41
-migration history), and `auth.md` (the account-holder side of identity). If anything here
-disagrees with the code, trust the code.*
+> **Last updated:** 2026-08-03, commit `9a38379`, branch `suite-47-tags-and-filters`
+>
+> Originally written by reading `backendServer/newsletter/` in full (models, views, urls,
+> `email_service.py`, `tasks.py`, `admin.py`, the digest management commands, migrations, and
+> the email templates under `newsletter/templates/email/`), the generic transport it calls out
+> to (`backendServer/events/email_service.py`), the parts of `backendServer/accounts/` that
+> touch subscribers, and the beat/Brevo settings in `backendServer/backend/settings/base.py`.
+> Complements `overview.md` (§6, one-paragraph summary), `data-model.md` (the field-level
+> `NewsletterSubscriber` table and the Suite 41 migration history), and `auth.md` (the
+> account-holder side of identity). If anything here disagrees with the code, trust the code.
 
-## 1. What this is and who depends on it
+## Overview
+
+- `newsletter` is one of six Django apps in `backendServer`. It owns one thing: a mailing list
+  (`NewsletterSubscriber`) of email addresses with a `WEEKLY`/`MONTHLY` frequency preference, plus
+  a Celery-driven engine that renders and sends a personalized digest of upcoming `Event` rows.
+  There's no login anywhere in this app — subscribing takes only an email, and managing or
+  cancelling uses an unguessable token in a link, never a password or session.
+- Two kinds of people share the same table: anonymous subscribers who just typed an email in, and
+  account holders (`accounts.UserProfile`) whose digest preference syncs into this same
+  `NewsletterSubscriber` row. There's no separate model for the two.
+- The two facts that matter most: (1) a fresh signup gets `email_preference='NEVER'` and **no**
+  `NewsletterSubscriber` row at all, so brand-new users are silently opted out until they change
+  a setting (see Deep Dive §5); and (2) sends are entirely driven by a Postgres-stored
+  `PeriodicTask` schedule that does **not** auto-follow code moves — moving a task without a data
+  migration breaks digests silently (Deep Dive §5).
+- Who depends on it: Celery beat fires weekly/monthly with no human in the loop, so failures are
+  silent until a subscriber complains; `accounts` writes into this app's table directly; and the
+  public site's subscribe form and profile settings page both call its endpoints.
+- Where to go for a task: adding/removing a subscriber → Deep Dive §2.1; "why didn't recipient X
+  get an email" → Deep Dive §2.2 and §5; how sends actually fire → Deep Dive §2.3; a manual/ops
+  resend or smoke test → Deep Dive §2.4; the field-level schema → Deep Dive §3; the endpoint/task
+  list → Deep Dive §4; known traps → Deep Dive §5; what's unverified → Deep Dive §6.
+
+## Deep Dive
+
+### 1. What this is and who depends on it
 
 `newsletter` is one of six Django apps in `backendServer`. It owns exactly one thing: a mailing
 list of email addresses, each with a `WEEKLY`/`MONTHLY` frequency preference, and a Celery-driven
@@ -32,7 +58,7 @@ asks why they stopped getting email (see §5). The `accounts` app depends on it 
 a row here is how a profile's email preference becomes a real mailing-list entry), and the
 public site's subscribe form and profile settings page both call its two endpoints directly.
 
-## 2. How it works
+### 2. How it works
 
 ### 2.1 Getting onto (or off) the list
 
@@ -193,7 +219,7 @@ tag filtering, and passes no `manage_url` into the template context at all — s
 back to the "reply to unsubscribe" text rather than a real manage link. It's a template/delivery
 smoke test, not a preview of what any real subscriber receives.
 
-## 3. Data model
+### 3. Data model
 
 `newsletter` owns exactly one model, `NewsletterSubscriber` — `email` (unique), `frequency`
 (`WEEKLY`/`MONTHLY`), `is_active`, `subscribed_at`, and `manage_token` (a UUID, unique, the
@@ -201,7 +227,7 @@ entire authentication mechanism for the login-free manage link). The full field-
 its `db_table` history, and the Suite 41 migration mechanics live in `data-model.md` §6 and §8 —
 this doc doesn't restate them.
 
-## 4. Interfaces
+### 4. Interfaces
 
 | Interface | Trigger / caller | Description |
 |---|---|---|
@@ -216,7 +242,7 @@ this doc doesn't restate them.
 | `python manage.py send_weekly_digest` | Manual/ops | Thin wrapper that calls `fan_out_weekly_digest.delay()`. |
 | `python manage.py send_test_digest --email <address>` | Manual/ops | One-off delivery/template smoke test — see §2.4 for how it differs from a real digest. |
 
-## 5. Sharp edges
+### 5. Sharp edges
 
 **Moving or renaming a Celery task does not update the beat schedule — the `PeriodicTask` row
 has to be repointed by hand, in a data migration, or it fails silently on a weekly cadence.**
@@ -289,7 +315,7 @@ didn't match anything in the window. There is no distinct "no events found" emai
 in this case (that copy only exists in the template's `{% else %}` branch, which fires for an
 *anonymous* subscriber whose full, untagged event list happens to be empty — a different case).
 
-## 6. Known gaps
+### 6. Known gaps
 
 I did not verify whether any frontend code (`theCommonsWeb`) reads or displays
 `NewsletterSubscriber.subscribed_at`, or whether the `/newsletter/manage` landing page in the

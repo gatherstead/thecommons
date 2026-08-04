@@ -78,11 +78,11 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const { selected: selectedTags, toggle: toggleTag, clear: clearTags } = useToggleSet<TagId>([]);
     const { selected: selectedTowns, toggle: toggleTown, clear: clearTowns } = useToggleSet<TownId>([]);
 
-    // Switching between feed and calendar resets to the 3-month window
-    // (category is preserved, matching the previous behavior).
+    // Switching between feed and calendar invalidates the calendar's month
+    // cache and resets pagination (window and category are preserved — they're
+    // shared filter state, not view-local).
     useEffect(() => {
         lastChangeRef.current = 'initial';
-        setCurrentWindow('3months');
         setCurrentPageUrl(null);
         setCurrentPage(1);
         setMonthEvents([]);
@@ -163,7 +163,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const setCategory = (slug: string | null) => {
         lastChangeRef.current = 'category';
         setSelectedCategoryState(slug);
-        setCurrentWindow('3months');
         setCurrentPageUrl(null);
         setCurrentPage(1);
         setMonthEvents([]);
@@ -211,6 +210,7 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         if (selectedCategory !== null) {
             setCategory(null);
         }
+        setWindow('3months');
     };
 
     const totalCount = pageQuery.data?.count ?? 0;
@@ -239,6 +239,7 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         selectedCategory,
         toggleTag,
         toggleTown,
+        clearTowns,
         setCategory,
         clearFilters,
         refetch: () => {

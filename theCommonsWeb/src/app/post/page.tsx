@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { EventPayload } from '../../models/eventsModels';
-import { FILTER_TAGS, type TagId } from '../../constants/tags';
+import { SUBMISSION_TAGS, type TagId } from '../../constants/tags';
 import { createEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/useAuth';
 import { useTowns } from '../../hooks/useTowns';
@@ -28,6 +28,7 @@ export default function PostEventPage() {
     const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>('town');
     const [error, setError] = useState<string | null>(null);
+    const [fieldErrors, setFieldErrors] = useState<{ price?: string }>({});
 
     const towns = useTowns().data ?? [];
     const categories = useCategories().data ?? [];
@@ -72,17 +73,41 @@ export default function PostEventPage() {
         submitEvent(payload);
     }, [isAuthenticated, isInitializing, token, submitEvent]);
 
-    const buildPayload = (): EventPayload => ({
+    // `formData.price` is a raw string from a controlled number input. `''` means
+    // "nothing entered" (invalid — price is required); anything else is parsed
+    // as-is so an explicit 0 survives as 0, not as a falsy stand-in for "missing".
+    const parsePrice = (raw: string): number | null => {
+        if (raw.trim() === '') return null;
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const buildPayload = (price: number): EventPayload => ({
         title: formData.name,
         town: formData.town,
         venue: formData.place,
         date: new Date(`${formData.date}T${formData.time}`).toISOString(),
         description: formData.description,
-        price: parseFloat(formData.price) || 0,
+        price,
         tags: formData.tags,
         link: formData.link,
         category: formData.category,
     });
+
+    // Mirrors backendServer/events/tagging.py::day_part_tags so the picker can show
+    // what the server will actually compute — display only, never sent as tags.
+    const dayPartPreview = (): string[] => {
+        if (!formData.date || !formData.time) return [];
+        const dt = new Date(`${formData.date}T${formData.time}`);
+        if (Number.isNaN(dt.getTime())) return [];
+        const hour = dt.getHours();
+        const weekday = dt.getDay(); // 0=Sun ... 6=Sat
+        const parts: string[] = [];
+        if (hour < 18) parts.push('daytime');
+        if (hour >= 16) parts.push('evenings');
+        if (weekday === 0 || weekday === 6 || (weekday === 5 && hour >= 17)) parts.push('weekends');
+        return parts;
+    };
 
     const handleTagToggle = (tagId: TagId) => {
         setFormData(prev => ({
@@ -97,7 +122,14 @@ export default function PostEventPage() {
         e.preventDefault();
         setError(null);
 
-        const payload = buildPayload();
+        const price = parsePrice(formData.price);
+        if (price === null) {
+            setFieldErrors({ price: 'Price is required — enter 0 for a free event.' });
+            return;
+        }
+        setFieldErrors({});
+
+        const payload = buildPayload(price);
 
         if (!isAuthenticated) {
             try { sessionStorage.setItem(PENDING_EVENT_KEY, JSON.stringify(payload)); } catch { /* ignore */ }
@@ -230,14 +262,14 @@ export default function PostEventPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Input
-                            label="Event Name"
+                            label="Event Name *"
                             type="text"
                             required
                             value={formData.name}
                             onChange={e => setFormData({ ...formData, name: e.target.value })}
                         />
                         <Input
-                            label="Venue/Place"
+                            label="Venue/Place *"
                             type="text"
                             required
                             value={formData.place}
@@ -246,7 +278,7 @@ export default function PostEventPage() {
                     </div>
 
                     <Textarea
-                        label="Description"
+                        label="Description *"
                         required
                         rows={3}
                         value={formData.description}
@@ -263,35 +295,48 @@ export default function PostEventPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <Input
-                            label="Date"
+                            label="Date *"
                             type="date"
                             required
                             value={formData.date}
                             onChange={e => setFormData({ ...formData, date: e.target.value })}
                         />
                         <Input
-                            label="Time"
+                            label="Time *"
                             type="time"
                             required
                             value={formData.time}
                             onChange={e => setFormData({ ...formData, time: e.target.value })}
                         />
                         <Input
-                            label="Price"
+                            label="Price *"
                             type="number"
                             step="0.01"
                             min="0"
                             placeholder="0.00"
                             required
                             value={formData.price}
-                            onChange={e => setFormData({ ...formData, price: e.target.value })}
+                            onChange={e => {
+                                setFormData({ ...formData, price: e.target.value });
+                                if (fieldErrors.price) setFieldErrors({});
+                            }}
+                            error={fieldErrors.price}
+                            aria-invalid={fieldErrors.price ? true : undefined}
+                            style={fieldErrors.price ? { borderColor: 'var(--color-accent)' } : undefined}
                         />
                     </div>
 
                     <div>
                         <label className="block text-xs uppercase tracking-wider font-bold mb-2">Tags</label>
+                        <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+                            Weekends / evenings / daytime aren&apos;t pickable here — they&apos;re set
+                            automatically from the date and time above.
+                            {dayPartPreview().length > 0 && (
+                                <> This event will be tagged <strong>{dayPartPreview().join(', ')}</strong>.</>
+                            )}
+                        </p>
                         <div className="flex flex-wrap gap-1.5">
-                            {FILTER_TAGS.map(tag => {
+                            {SUBMISSION_TAGS.map(tag => {
                                 const isSelected = formData.tags.includes(tag.id);
                                 return (
                                     <button

@@ -72,7 +72,8 @@ export function ForgotPasswordForm() {
                         </Button>
                         <Link
                             href={signInHref}
-                            className="font-[var(--font-sans)] cursor-pointer tracking-wide uppercase text-xs font-bold bg-[var(--color-text)] text-[var(--color-bg)] border-2 border-[var(--color-text)] hover:bg-[var(--color-accent)] hover:border-[var(--color-accent)] px-4 py-2.5 inline-block text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                            style={{ color: 'var(--color-bg)', textDecoration: 'none' }}
+                            className="font-[var(--font-sans)] cursor-pointer tracking-wide uppercase text-xs font-bold bg-[var(--color-text)] border-2 border-[var(--color-text)] hover:bg-[var(--color-accent)] hover:border-[var(--color-accent)] px-4 py-2.5 inline-block text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
                         >
                             Back to Sign In
                         </Link>

@@ -148,6 +148,28 @@ class TriangleWeekenderCategoryMapTests(unittest.TestCase):
 
         self.assertEqual(_wk_category_terms(_Ev()), "")
 
+    def test_never_falls_back_to_misc(self):
+        # A wrong category is worse than none — adapters never invent content.
+        for joined in _WK_CATEGORY_MAP.values():
+            self.assertNotIn("Misc.", joined.split(","))
+
+    def test_known_unmapped_slugs_are_intentionally_left_out(self):
+        # Suite 48.11: "nightlife" mis-filed a Halloween festival under
+        # Comedy/Trivia — no term in the real vocabulary is defensible for a
+        # typical nightlife event, so it's intentionally left unmapped.
+        self.assertNotIn("nightlife", _WK_CATEGORY_MAP)
+
+    def test_community_no_longer_maps_to_volunteerism(self):
+        # Suite 48.11: "Volunteerism" is the term that mis-filed the
+        # Halloween festival — a typical community-slug event isn't a
+        # volunteer opportunity, so it must not reappear here.
+        self.assertNotIn("Volunteerism", _WK_CATEGORY_MAP.get("community", "").split(","))
+
+    def test_literary_no_longer_maps_to_writing(self):
+        # Suite 48.11: a typical literary-slug event (reading, book club,
+        # poetry night) is about books, not the act of writing.
+        self.assertNotIn("Writing", _WK_CATEGORY_MAP.get("literary", "").split(","))
+
 
 @tag("fast")
 class Abc11CategoryMapTests(unittest.TestCase):

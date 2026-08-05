@@ -63,15 +63,34 @@ def _duration(ev):
 # 46.1) with no "Music"/"Family"/etc. terms, so most of our slugs have no
 # defensible match — those are left unmapped rather than guessing (a wrong
 # category is worse than none; adapters never invent content).
+# Suite 48.11: re-reviewed for editorial correctness alongside Triangle
+# Weekender's map (a Halloween festival there was mis-filed under
+# Volunteerism/Trivia — mechanically valid, editorially wrong). ABC11's map
+# is 1-slug-to-1-term already, so there's no comma-joined expansion to prune,
+# but several of our slugs collapse onto the same ABC11 term; each collapse
+# is noted below with why the term still holds for a TYPICAL event of that
+# slug. No changes to the mapped pairs were needed on this pass.
 _CAT_MAP = {
+    # music/dance/comedy/theatre all collapse onto ABC11's one performing-
+    # arts bucket. A typical event under each of these slugs — a concert, a
+    # dance performance, a stand-up show, a play — is a staged performance,
+    # which "Theater / Concerts" covers without stretching.
     "music": "Theater / Concerts",
     "dance": "Theater / Concerts",
     "comedy": "Theater / Concerts",
     "theatre": "Theater / Concerts",
     "arts": "Art / Photography / Crafts",
+    # food-drink and market collapse onto ABC11's one food/market bucket —
+    # a typical event under either slug (restaurant week, food festival,
+    # farmers market) is food-and-beverage or market commerce, both covered.
     "food-drink": "Food and Beverage / Farmer's Market",
     "market": "Food and Beverage / Farmer's Market",
     "festival": "Festivals / Parades",
+    # ABC11 groups community events and volunteering into one bucket by its
+    # own naming ("Community Events / Volunteerism"), unlike Triangle
+    # Weekender where "Volunteerism" is a separate, narrower category from
+    # general community terms — so this term holds for a typical
+    # community-slug event here in a way the Weekender split did not.
     "community": "Community Events / Volunteerism",
     "education": "School / Education",
     "sports": "Sports and Recreation",

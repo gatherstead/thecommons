@@ -5,6 +5,7 @@ from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from events.models import Tag
 from ingestion.models import StagedEvent
 
 from .factories import make_event, make_town, make_user
@@ -59,6 +60,74 @@ class EventsListTests(TestCase):
         row = next(e for e in resp.data["results"] if e["uuid"] == str(self.future.uuid))
         self.assertEqual(row["title"], "Future Show")
         self.assertEqual(row["town"], "carrboro")
+
+
+@tag("db")
+class EventsTagAndTownFilterTests(TestCase):
+    """Suite 48.12 — the `tag`/`town` params drive server-side filtering (and the
+    paginated `count`), so the WEEKENDS-style sidebar filters aren't limited to
+    whatever happens to be on the current 30-row page.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.carrboro = make_town("carrboro", "Carrboro")
+        self.chapel_hill = make_town("chapel-hill", "Chapel Hill")
+
+        self.weekends = Tag.objects.create(name="weekends")
+        self.evenings = Tag.objects.create(name="evenings")
+        self.free = Tag.objects.create(name="free")
+
+        self.weekend_show = make_event("Weekend Show", town=self.carrboro, days_offset=1)
+        self.weekend_show.tags.add(self.weekends)
+
+        self.weekend_evening_show = make_event(
+            "Weekend Evening Show", town=self.chapel_hill, days_offset=2
+        )
+        self.weekend_evening_show.tags.add(self.weekends, self.evenings)
+
+        self.weekday_show = make_event("Weekday Show", town=self.carrboro, days_offset=3)
+
+    def test_tag_filter_returns_only_matching_events(self):
+        resp = self.client.get(reverse("events"), {"tag": "weekends"})
+        self.assertEqual(resp.status_code, 200)
+        uuids = {e["uuid"] for e in resp.data["results"]}
+        self.assertEqual(resp.data["count"], 2)
+        self.assertEqual(uuids, {str(self.weekend_show.uuid), str(self.weekend_evening_show.uuid)})
+        self.assertNotIn(str(self.weekday_show.uuid), uuids)
+
+    def test_town_filter_returns_only_matching_events(self):
+        resp = self.client.get(reverse("events"), {"town": "chapel-hill"})
+        self.assertEqual(resp.status_code, 200)
+        uuids = {e["uuid"] for e in resp.data["results"]}
+        self.assertEqual(resp.data["count"], 1)
+        self.assertEqual(uuids, {str(self.weekend_evening_show.uuid)})
+
+    def test_multi_town_is_or(self):
+        resp = self.client.get(reverse("events"), {"town": ["carrboro", "chapel-hill"]})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["count"], 3)
+
+    def test_repeated_tag_param_is_and_not_or(self):
+        resp = self.client.get(reverse("events"), {"tag": ["weekends", "evenings"]})
+        self.assertEqual(resp.status_code, 200)
+        uuids = {e["uuid"] for e in resp.data["results"]}
+        self.assertEqual(resp.data["count"], 1)
+        self.assertEqual(uuids, {str(self.weekend_evening_show.uuid)})
+
+    def test_tag_and_town_combined(self):
+        resp = self.client.get(reverse("events"), {"tag": "weekends", "town": "carrboro"})
+        self.assertEqual(resp.status_code, 200)
+        uuids = {e["uuid"] for e in resp.data["results"]}
+        self.assertEqual(resp.data["count"], 1)
+        self.assertEqual(uuids, {str(self.weekend_show.uuid)})
+
+    def test_tag_filter_does_not_duplicate_events_with_multiple_matching_tags(self):
+        # weekend_evening_show carries both weekends and evenings; a naive
+        # tags__name__in filter without .distinct() would double it up.
+        resp = self.client.get(reverse("events"), {"tag": ["weekends", "evenings"]})
+        uuids = [e["uuid"] for e in resp.data["results"]]
+        self.assertEqual(len(uuids), len(set(uuids)))
 
 
 @tag("db")

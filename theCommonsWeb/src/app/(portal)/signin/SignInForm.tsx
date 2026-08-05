@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '../../../hooks/useAuth';
 import { resolveRedirect } from '../../../lib/redirect-allowlist';
@@ -13,6 +14,9 @@ export function SignInForm() {
     const { login, isAuthenticated, isInitializing } = useAuth();
 
     const redirectTo = searchParams.get('redirect_to');
+    const forgotPasswordHref = redirectTo
+        ? `/forgot-password?redirect_to=${encodeURIComponent(redirectTo)}`
+        : '/forgot-password';
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -74,7 +78,13 @@ export function SignInForm() {
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                 />
-                <div className="flex justify-end items-center pt-2">
+                <div className="flex justify-between items-center pt-2">
+                    <Link
+                        href={forgotPasswordHref}
+                        className="text-xs uppercase tracking-wider font-bold hover:text-[var(--color-accent)] transition-colors"
+                    >
+                        Forgot Password?
+                    </Link>
                     <Button type="submit" variant="primary" disabled={isLoading}>
                         {isLoading ? 'Please wait…' : 'Sign In'}
                     </Button>

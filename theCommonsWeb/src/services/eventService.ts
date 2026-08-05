@@ -109,6 +109,8 @@ export const getEvents = async (params?: {
     window?: 'past';
     pageUrl?: string;
     category?: string;
+    tags?: string[];
+    towns?: string[];
 }): Promise<EventsPage> => {
     try {
         let url: string;
@@ -121,6 +123,10 @@ export const getEvents = async (params?: {
             if (params?.include_past) query.set('include_past', 'true');
             if (params?.window) query.set('window', params.window);
             if (params?.category) query.set('category', params.category);
+            // Repeatable params: ?tag=weekends&tag=evenings, ?town=durham&town=carrboro.
+            // AND semantics for tags, OR semantics for towns — enforced server-side.
+            for (const t of params?.tags ?? []) query.append('tag', t);
+            for (const t of params?.towns ?? []) query.append('town', t);
             const qs = query.toString();
             url = `${API_BASE}/events/${qs ? `?${qs}` : ''}`;
         }

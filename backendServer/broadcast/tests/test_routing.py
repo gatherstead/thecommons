@@ -39,7 +39,7 @@ class RoutingMatrixTest(SimpleTestCase):
         self.assertIn("triangle_on_the_cheap", ek)
         self.assertIn("triangle_weekender", ek)
         self.assertIn("abc11_community", ek)
-        excluded_keys = {k for k, _ in excluded}
+        excluded_keys = {k for k, _, _ in excluded}
         self.assertIn("chatham_arts", excluded_keys)  # not an arts event
         self.assertIn("visit_raleigh", excluded_keys)  # wrong locality
         self.assertIn("chapelboro", excluded_keys)
@@ -74,7 +74,7 @@ class RoutingMatrixTest(SimpleTestCase):
 
     def test_excluded_reasons_are_explanatory(self):
         _, excluded = eligible_targets(make_event("durham", ["music"]), _TIER1)
-        reasons = dict(excluded)
+        reasons = {key: reason for key, _name, reason in excluded}
         self.assertIn("Covers", reasons["explore_pittsboro"])
         self.assertIn("Pittsboro", reasons["explore_pittsboro"])
         self.assertIn("check one of those localities", reasons["explore_pittsboro"])

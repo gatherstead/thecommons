@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 import { getQueryClient } from '../lib/queryClient';
 import { getEvents, getTowns, getCategories } from '../services/eventService';
@@ -25,7 +26,13 @@ export default async function HomePage() {
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <HomePageClient />
+      {/* useEvents() reads useSearchParams() to seed filter state from the URL
+          (48.13) — Next requires that call site to sit under a Suspense
+          boundary. The page is already `force-dynamic`, so this doesn't add a
+          new static/dynamic distinction; it just satisfies the build. */}
+      <Suspense fallback={null}>
+        <HomePageClient />
+      </Suspense>
     </HydrationBoundary>
   );
 }

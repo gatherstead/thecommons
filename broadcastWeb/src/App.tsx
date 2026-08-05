@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import EventForm from "./components/EventForm";
 import JobProgress from "./components/JobProgress";
 import SitePicker, { COMING_SOON } from "./components/SitePicker";
+import { contactEmailError } from "./models/broadcastModels";
 import type { EventDraft, JobDetail, PreviewResult } from "./models/broadcastModels";
 import {
   clearDraft,
@@ -13,7 +14,7 @@ import {
   saveDraft,
   saveSession,
 } from "./lib/persist";
-import { sendFill, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
+import { sendFillWithAck, useExtension, WEB_STORE_URL } from "./hooks/useExtension";
 import { authClient, fetchJwt } from "./lib/authClient";
 import {
   type ApiAuth,
@@ -98,9 +99,9 @@ export const isDraftEmpty = (draft: EventDraft): boolean =>
   !draft.is_free &&
   (draft.image_url === undefined || draft.image_url.trim() === "");
 
-// Organizer/contact fields are required (see the access-step-3 contact-row
-// and draftValid) so they're excluded here — this list is for genuinely
-// optional fields only.
+// Organizer/contact fields are required (see EventForm's contact fields and
+// draftValid) so they're excluded here — this list is for genuinely optional
+// fields only.
 export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   const missing: string[] = [];
   if (!draft.end_datetime || draft.end_datetime === "") missing.push("Ends");
@@ -110,12 +111,6 @@ export const unfilledOptionalFields = (draft: EventDraft): string[] => {
   if (!draft.image_url || draft.image_url.trim() === "") missing.push("Event image");
   return missing;
 };
-
-function contactEmailError(email: string | undefined): string {
-  const v = (email ?? "").trim();
-  if (!v) return "";
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "" : "Enter a valid email address.";
-}
 
 const POLL_MS = 3000;
 // Poll backoff: widen the delay when a tick brings no change, so an idle tab
@@ -170,14 +165,31 @@ type ExtFillStatus =
   | "ready"
   | "filling"
   | "submitted"
-  | "unavailable";
+  | "unavailable"
+  // content.js's completion ack came back with ok:false (a field handler or
+  // runFill itself threw) — a real, confirmed failure, distinct from
+  // "unavailable" (the extension/tab never opened at all).
+  | "failed"
+  // No completion ack arrived within FILL_ACK_TIMEOUT_MS — NOT the same as
+  // FILLED and not the same as a confirmed failure either: the fill may well
+  // have gone through, we just never heard back (ticket 48.2).
+  | "unconfirmed";
+
+// Statuses that are done-for-now and worth remembering across a reload —
+// mirrors the terminal set the render below treats as resubmit-eligible.
+const TERMINAL_FILL_STATUSES = new Set<ExtFillStatus>([
+  "submitted",
+  "unavailable",
+  "failed",
+  "unconfirmed",
+]);
 
 const restoreFillStatus = (
   saved: Record<string, string> | undefined
 ): Record<string, ExtFillStatus> => {
   const out: Record<string, ExtFillStatus> = {};
   for (const [key, value] of Object.entries(saved ?? {})) {
-    out[key] = value === "submitted" || value === "unavailable"
+    out[key] = TERMINAL_FILL_STATUSES.has(value as ExtFillStatus)
       ? (value as ExtFillStatus)
       : "ready";
   }
@@ -204,9 +216,6 @@ export default function App() {
   const [accessError, setAccessError] = useState("");
   const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  // Forces the collapsed step-3 (contact info) summary back open in place —
-  // see the "Edit" control on that summary.
-  const [contactExpanded, setContactExpanded] = useState(false);
 
   const [draft, setDraft] = useState<EventDraft>({
     ...(DRAFT.draft ?? EMPTY_DRAFT),
@@ -215,6 +224,10 @@ export default function App() {
   });
   const [preview, setPreview] = useState<PreviewResult | null>(DRAFT.preview ?? null);
   const [selected, setSelected] = useState<Set<string>>(new Set(DRAFT.selected ?? []));
+  // Destinations the user explicitly unchecked in the picker — survives a
+  // re-preview (48.7) so editing a field and re-previewing doesn't silently
+  // re-add a calendar the user deliberately excluded. Cleared on a fresh event.
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [job, setJob] = useState<JobDetail | null>(DRAFT.job ?? null);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
@@ -593,8 +606,13 @@ export default function App() {
     }
   };
 
-  const handleDraftChange = (next: EventDraft) => {
-    setDraft(next);
+  // Functional-updater contract (48.3): the child hands us a `prev => next`
+  // function instead of a materialized draft, so we always merge against
+  // React's current state rather than whatever the child closed over — the
+  // fix for the stale-closure race where an in-flight image upload's `await`
+  // resolved with an old `draft` snapshot and reverted intervening edits.
+  const handleDraftChange = (updater: (prev: EventDraft) => EventDraft) => {
+    setDraft(updater);
     if (!job) {
       setPreview(null); // routing may change — stale previews mislead
       setError("");
@@ -608,14 +626,21 @@ export default function App() {
     try {
       const result = await previewBroadcast(auth, toApiEvent(draft));
       setPreview(result);
-      setContactExpanded(false);
       // Coming-soon calendars are shown in the picker but can't be submitted —
       // keep them out of the default selection so they never enter the submit list.
+      // Newly-eligible destinations default to selected, but a destination the
+      // user explicitly unchecked earlier (tracked in `deselected`) stays
+      // unchecked across this re-preview (48.7) rather than silently reviving.
+      // Prune deselected keys that are no longer eligible at all, so the set
+      // doesn't grow stale forever.
+      const eligibleKeys = new Set(result.eligible.map((s) => s.site_key));
+      const stillDeselected = new Set([...deselected].filter((key) => eligibleKeys.has(key)));
+      setDeselected(stillDeselected);
       setSelected(
         new Set(
           result.eligible
             .map((s) => s.site_key)
-            .filter((key) => !COMING_SOON.has(key))
+            .filter((key) => !COMING_SOON.has(key) && !stillDeselected.has(key))
         )
       );
     } catch (e) {
@@ -672,8 +697,22 @@ export default function App() {
     setExtFillStatus((prev) => ({ ...prev, [siteKey]: "filling" }));
     try {
       const recipe = await directRecipe(auth, toApiEvent(draft), siteKey);
-      const ok = await sendFill(extensionId, recipe);
-      setExtFillStatus((prev) => ({ ...prev, [siteKey]: ok ? "submitted" : "unavailable" }));
+      // FILLED is only ever reported once content.js's own completion ack
+      // says so — never inferred from the tab having opened (the bug this
+      // ticket fixes). "timeout" and "dispatch-failed" are deliberately
+      // different outcomes: the former means we just never heard back, the
+      // latter means the fill never started.
+      const result = await sendFillWithAck(extensionId, recipe);
+      if (result.kind === "complete") {
+        setExtFillStatus((prev) => ({
+          ...prev,
+          [siteKey]: result.summary.ok ? "submitted" : "failed",
+        }));
+      } else if (result.kind === "timeout") {
+        setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unconfirmed" }));
+      } else {
+        setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
+      }
     } catch {
       setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
     }
@@ -685,6 +724,7 @@ export default function App() {
     setJob(null);
     setPreview(null);
     setSelected(new Set());
+    setDeselected(new Set());
     setDraft((prev) => ({
       ...EMPTY_DRAFT,
       draft_id: crypto.randomUUID(),
@@ -722,6 +762,7 @@ export default function App() {
       setPreview(null);
       setJob(null);
       setSelected(new Set());
+      setDeselected(new Set());
       setAiText("");
     } catch (e) {
       setError(describeError(e, "AI autofill failed."));
@@ -731,9 +772,6 @@ export default function App() {
   };
 
   const contactEmailErr = contactEmailError(draft.contact_email);
-  // Contact fields specifically: locked by the reviewed-state lock unless the
-  // user opened them back up via the step-3 "Edit" control.
-  const contactLocked = locked && !contactExpanded;
 
   const draftValid =
     draft.title.trim() !== "" &&
@@ -758,12 +796,9 @@ export default function App() {
   // Access flow: one step active at a time; done steps collapse to a summary
   // line, upcoming steps stay visible but dimmed so the path ahead is clear.
   const step2: "todo" | "active" | "done" = !signedIn ? "todo" : hasAccess ? "done" : "active";
-  // contactExpanded lets the collapsed step-3 summary's "Edit" control force
-  // the fields back open without touching the preview/lock state of the rest
-  // of the page — re-collapses on the next successful Preview.
-  const step3: "todo" | "active" | "done" =
-    !hasAccess ? "todo" : preview && !contactExpanded ? "done" : "active";
-  const step4: "todo" | "active" = preview ? "active" : "todo";
+  // Step 3 (organizer/contact info) lives in the main event form now (48.10) —
+  // this step just points down to it.
+  const step3: "todo" | "active" = preview ? "active" : "todo";
   const stepClass = (state: "todo" | "active" | "done") => `access-step access-step-${state}`;
 
   const codeEntry = (
@@ -877,85 +912,13 @@ export default function App() {
             )}
           </li>
 
-          {/* Step 3 — contact info */}
+          {/* Step 3 — autofill & submit */}
           <li className={stepClass(step3)}>
-            <p className="step-label">Confirm your contact info</p>
-            {step3 === "todo" && (
-              <p className="hint">
-                Name, email, and phone shown as the organizer contact on each calendar —
-                prefilled from your account.
-              </p>
-            )}
-            {step3 === "done" && (
-              <p className="step-summary">
-                {draft.organizer_name}
-                {draft.contact_email ? ` · ${draft.contact_email}` : ""}
-                {draft.contact_phone ? ` · ${draft.contact_phone}` : ""}{" "}
-                <button
-                  type="button"
-                  className="linklike"
-                  onClick={() => setContactExpanded(true)}
-                >
-                  Edit
-                </button>
-              </p>
-            )}
-            {step3 === "active" && (
-              <div className="contact-row">
-                <div className="field">
-                  <label htmlFor="contact-name">
-                    Organizer / Organization Name <span className="required-mark">*</span>
-                  </label>
-                  <input
-                    id="contact-name"
-                    type="text"
-                    value={draft.organizer_name ?? ""}
-                    onChange={(e) => handleDraftChange({ ...draft, organizer_name: e.target.value })}
-                    disabled={busy || job !== null || contactLocked}
-                    maxLength={200}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor="contact-email">
-                    Contact Email <span className="required-mark">*</span>
-                  </label>
-                  <input
-                    id="contact-email"
-                    type="email"
-                    value={draft.contact_email ?? ""}
-                    onChange={(e) => handleDraftChange({ ...draft, contact_email: e.target.value })}
-                    disabled={busy || job !== null || contactLocked}
-                  />
-                  {contactEmailErr && <p className="field-error">{contactEmailErr}</p>}
-                </div>
-
-                <div className="field">
-                  <label htmlFor="contact-phone">
-                    Contact Phone <span className="required-mark">*</span>
-                  </label>
-                  <input
-                    id="contact-phone"
-                    type="tel"
-                    value={draft.contact_phone ?? ""}
-                    onChange={(e) => handleDraftChange({ ...draft, contact_phone: e.target.value })}
-                    disabled={busy || job !== null || contactLocked}
-                    maxLength={40}
-                  />
-                </div>
-                <p className="contact-hint hint">
-                  Remembered on this device, so you only enter these once.
-                </p>
-              </div>
-            )}
-          </li>
-
-          {/* Step 4 — autofill & submit */}
-          <li className={stepClass(step4)}>
             <p className="step-label">Autofill &amp; submit your events</p>
-            {step4 === "todo" ? (
+            {step3 === "todo" ? (
               <p className="hint">
-                Preview your event below to see which calendars it&rsquo;s eligible for.
+                Fill in the event below (including organizer/contact info) and preview it
+                to see which calendars it&rsquo;s eligible for.
               </p>
             ) : (
               <p className="step-summary">Scroll down to autofill and submit your events.</p>
@@ -1104,7 +1067,7 @@ export default function App() {
               {[...selected].map((siteKey) => {
                 const siteName = nameByKey[siteKey] ?? siteKey;
                 const status = extFillStatus[siteKey] ?? "ready";
-                const isTerminal = status === "submitted" || status === "unavailable";
+                const isTerminal = TERMINAL_FILL_STATUSES.has(status);
                 const isFilling = status === "filling";
                 return (
                   <li key={siteKey}>
@@ -1125,9 +1088,21 @@ export default function App() {
                     {status === "unavailable" && (
                       <span className="target-status unavailable">not available</span>
                     )}
-                    {status !== "filling" && status !== "submitted" && status !== "unavailable" && (
-                      <span className="target-status ready">ready</span>
+                    {status === "failed" && (
+                      <span className="target-status failed">fill failed</span>
                     )}
+                    {status === "unconfirmed" && (
+                      <span className="target-status unconfirmed">
+                        couldn&rsquo;t confirm — check the tab
+                      </span>
+                    )}
+                    {status !== "filling" &&
+                      status !== "submitted" &&
+                      status !== "unavailable" &&
+                      status !== "failed" &&
+                      status !== "unconfirmed" && (
+                        <span className="target-status ready">ready</span>
+                      )}
                     {isTerminal && (
                       <button
                         type="button"
@@ -1169,8 +1144,21 @@ export default function App() {
                   onToggle={(key) =>
                     setSelected((prev) => {
                       const next = new Set(prev);
-                      if (next.has(key)) next.delete(key);
-                      else next.add(key);
+                      if (next.has(key)) {
+                        next.delete(key);
+                        // Record the manual uncheck so a later re-preview
+                        // (edit a field → Preview again) doesn't silently
+                        // re-add this destination (48.7).
+                        setDeselected((prevDeselected) => new Set(prevDeselected).add(key));
+                      } else {
+                        next.add(key);
+                        setDeselected((prevDeselected) => {
+                          if (!prevDeselected.has(key)) return prevDeselected;
+                          const nextDeselected = new Set(prevDeselected);
+                          nextDeselected.delete(key);
+                          return nextDeselected;
+                        });
+                      }
                       return next;
                     })
                   }

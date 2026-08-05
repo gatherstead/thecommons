@@ -19,13 +19,11 @@ Form notes from the capture:
 - No captcha on this form.
 """
 
-import difflib
+import re
 
 from broadcast.adapters import _helpers as h
 from broadcast.adapters.base import RecipeField, SiteAdapter, TargetResult
 from broadcast.routing import TRIANGLE, Eligibility
-
-_MATCH_THRESHOLD = 0.82  # similarity above which we reuse an existing select2 entry
 
 # Locality slugs that are county/region-level only — not useful as a city name.
 _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
@@ -35,18 +33,45 @@ _REGION_ONLY_SLUGS = frozenset({"wake", "chatham", "triangle"})
 # live 2026-08-03 — see suite 46.1). A slug may map to multiple labels
 # (comma-joined by _wk_category_terms, split again by the extension); the
 # extension reports any term it can't match rather than skipping it silently.
+#
+# Suite 48.11: reviewed for editorial (not mechanical) correctness after a
+# Halloween festival was filed under Volunteerism and Trivia on the live
+# Weekender calendar — both terms were mechanically valid but wrong for the
+# event. Principle applied per the owner: emit fewer, confidently-correct
+# terms; for every 1-to-many expansion, the term must hold for a TYPICAL
+# event carrying that slug, not just a plausible one. Under-tagging (no
+# category) is acceptable; mis-filing on someone else's calendar is not.
+# Rationale for each multi-term slug kept below; slugs with no defensible
+# term are left out of the map entirely (see "Unmapped" note below).
 _WK_CATEGORY_MAP: dict[str, str] = {
+    # A typical "music" event on our calendar is a live performance (gig,
+    # concert, open mic) — both terms hold for the typical case.
     "music": "Music & Concerts,Live Music",
     "arts": "Arts",
+    # "Kids & Family" and "Family Fun" are near-synonyms for this slug —
+    # either is correct for a typical family-kids event, so both are safe.
     "family-kids": "Kids & Family,Family Fun",
     "wellness": "Wellness",
     "food-drink": "Food & Drink",
     "festival": "Festivals",
     "market": "Market",
-    "literary": "Books & Readings,Writing",
-    "community": "Gather,Volunteerism",
-    "nightlife": "Comedy,Trivia",
+    # "Writing" dropped: a typical literary-slug event (author reading, book
+    # club, poetry night) is about books, not the act of writing — that term
+    # only fits a workshop subset, not the typical case.
+    "literary": "Books & Readings",
+    # "Volunteerism" dropped: this is the slug that mis-filed the Halloween
+    # festival. "community" is a broad catch-all (block parties, town halls,
+    # cultural festivals, fairs) and most such events are not volunteer
+    # opportunities. "Gather" is the one term generic enough to hold for the
+    # typical community-slug event without implying something false.
+    "community": "Gather",
     "education": "Education",
+    # "nightlife" intentionally has no entry: no term in the real vocabulary
+    # is defensible for a typical nightlife event. "Comedy" and "Trivia"
+    # were the two terms that mis-filed the Halloween festival — nightlife
+    # also covers dance parties, drag shows, karaoke, and club nights that
+    # neither term fits. No other vocabulary term ("Dance", "Games",
+    # "Mixer") is a safe generic fit either, so this slug sends no category.
 }
 
 
@@ -374,10 +399,75 @@ class TriangleWeekenderAdapter(SiteAdapter):
         )
 
 
+# --- select2 ranked matching (suite 48.6) -----------------------------------
+#
+# Weekender's venue/organizer "Create or Find" widgets already hold huge
+# vocabularies (~1653 venues, ~1959 organizers) and often carry an
+# address-suffixed duplicate of the same place (e.g. venue id 1215 =
+# "Durham Central Park" vs id 8234 = "Durham Central Park @ 501 Foster St").
+# Reusing neither creates a third. Match in tiers — exact, then prefix, then a
+# normalized token-set — and never fall back to plain substring matching,
+# keeping suite 46's anchoring discipline (a short name must not swallow an
+# unrelated, longer one).
+
+_TRAILING_COUNT_RE = re.compile(r"\(\d+\)\s*$")
+_TRAILING_ADDRESS_RE = re.compile(r"\s*@\s*.+$")
+_PUNCT_RE = re.compile(r"[^\w\s-]")
+
+
+def _wk_normalize_label(text: str) -> str:
+    """Normalize a select2 option/query label for exact/prefix comparison:
+    strip a trailing result count and a trailing "@ <address>" suffix, fold a
+    few punctuation variants, and collapse whitespace."""
+    s = (text or "").strip()
+    s = _TRAILING_COUNT_RE.sub("", s)
+    s = _TRAILING_ADDRESS_RE.sub("", s)
+    s = s.lower().replace("&", "and").replace("’", "").replace("'", "")
+    s = s.replace("–", "-").replace("—", "-")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _wk_token_set(text: str) -> frozenset[str]:
+    """Case- and punctuation-insensitive token set for the fuzzy fallback tier."""
+    norm = _wk_normalize_label(text)
+    return frozenset(_PUNCT_RE.sub(" ", norm).split())
+
+
+def _rank_select2_match(labels: list[str], query: str) -> int | None:
+    """Return the index into `labels` of the best match for `query`, or None
+    if nothing scores. Tiers: exact normalized match, then prefix, then
+    normalized token-set equality. Ties within a tier prefer the shortest
+    label (the bare venue name over an address-suffixed variant)."""
+    norm_query = _wk_normalize_label(query)
+    if not norm_query:
+        return None
+    query_tokens = _wk_token_set(query)
+
+    exact: list[int] = []
+    prefix: list[int] = []
+    token: list[int] = []
+    for i, label in enumerate(labels):
+        norm_label = _wk_normalize_label(label)
+        if not norm_label:
+            continue
+        if norm_label == norm_query:
+            exact.append(i)
+        elif norm_label.startswith(norm_query):
+            prefix.append(i)
+        elif _wk_token_set(label) == query_tokens:
+            token.append(i)
+
+    for tier in (exact, prefix, token):
+        if tier:
+            return min(tier, key=lambda i: len(labels[i]))
+    return None
+
+
 def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
     """Open the select2 bound to <select id=select_id>, type the value, and:
-    reuse an existing option on a close string match ("matched"), otherwise pick
-    the "Create: <text>" option ("created"). Returns None on any failure."""
+    reuse an existing option on a ranked match ("matched" — see
+    _rank_select2_match), otherwise pick the "Create: <text>" option
+    ("created"). Returns None on any failure."""
     try:
         # Open via the select2 jQuery API — a pointer click on the selection can
         # be intercepted by a leftover jQuery-UI date/time overlay. Fall back to
@@ -406,24 +496,21 @@ def _select2_match_or_create(page, select_id: str, text: str) -> str | None:
         page.wait_for_timeout(1000)  # let results + the freeform "Create:" render
 
         options = page.locator(".select2-dropdown li.select2-results__option")
-        target, create_opt = None, None
-        norm = text.strip().lower()
-        best_ratio = 0.0
+        labels: list[str] = []
+        opt_indices: list[int] = []
+        create_opt = None
         for i in range(options.count()):
             opt = options.nth(i)
             label = (opt.inner_text() or "").strip()
-            low = label.lower()
-            if low.startswith("create"):
+            if label.lower().startswith("create"):
                 create_opt = opt
                 continue
-            ratio = difflib.SequenceMatcher(None, low, norm).ratio()
-            if norm and (norm in low or low in norm):
-                ratio = max(ratio, 0.9)
-            if ratio > best_ratio:
-                best_ratio, target = ratio, opt
+            labels.append(label)
+            opt_indices.append(i)
 
-        if target is not None and best_ratio >= _MATCH_THRESHOLD:
-            target.click(timeout=3000)
+        best = _rank_select2_match(labels, text)
+        if best is not None:
+            options.nth(opt_indices[best]).click(timeout=3000)
             return "matched"
         chosen = create_opt or options.first
         chosen.click(timeout=3000)

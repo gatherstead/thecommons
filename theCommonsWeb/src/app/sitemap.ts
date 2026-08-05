@@ -25,6 +25,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${SITE}/`, lastModified: now, changeFrequency: 'daily', priority: 1.0 },
     { url: `${SITE}/about`, lastModified: now, changeFrequency: 'monthly', priority: 0.5 },
+    { url: `${SITE}/post`, lastModified: now, changeFrequency: 'monthly', priority: 0.5 },
+    { url: `${SITE}/event-guidelines`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
+    { url: `${SITE}/submit-correction`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
+    { url: `${SITE}/advertise`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
+    { url: `${SITE}/contact`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
+    { url: `${SITE}/feedback`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
   ];
 
   const eventRoutes: MetadataRoute.Sitemap = events.map(e => ({

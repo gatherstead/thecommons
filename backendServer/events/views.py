@@ -61,6 +61,10 @@ def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; 
                             otherwise date >= now (fills page from all future events)
                    past:    date < now
                    future:  date > now + 90 days
+      category     repeatable (?category=a&category=b) — OR within the group
+      tag          repeatable (?tag=a&tag=b) — AND within the group: an event must
+                   carry every requested tag, not just one of them
+      town         repeatable (?town=a&town=b) — OR within the group
 
     Note: does NOT apply `.order_by()` — callers that care about ordering (e.g. get_all's
     "past" window, which reverses to newest-first) must apply it themselves.
@@ -105,6 +109,24 @@ def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; 
     category_param = request.query_params.getlist("category")
     if category_param:
         events = events.filter(categories__slug__in=category_param).distinct()
+
+    # Multi-tag is AND (an event must carry every selected tag), unlike category/town
+    # which are OR within their own group. A single `tags__name__in=[...]` filter would
+    # give OR semantics, so each tag gets its own chained `.filter()` call — each one
+    # adds its own join, which is what makes the AND work.
+    #
+    # Known mismatch (accepted, not a bug): the sidebar's per-tag facet counts are
+    # computed independently per tag, so a 2-tag AND selection can legitimately return
+    # fewer events than either individual facet count suggests.
+    tag_param = request.query_params.getlist("tag")
+    for tag_name in tag_param:
+        events = events.filter(tags__name=tag_name)
+    if tag_param:
+        events = events.distinct()
+
+    town_param = request.query_params.getlist("town")
+    if town_param:
+        events = events.filter(town__slug__in=town_param)
 
     return events, is_past_window
 
@@ -186,6 +208,17 @@ def get_one(request, event_id):
     return Response(serializer.data)
 
 
+def _coerce_price(value):
+    """Normalize a submitted price, keeping 0 (free) distinct from "no price given".
+
+    A plain `value or None` collapses 0 to NULL, which loses the difference between a
+    deliberately free event and one whose price was never entered.
+    """
+    if value is None or value == "":
+        return None
+    return value
+
+
 @api_view(["GET", "PATCH", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -227,7 +260,7 @@ def manage_staged_event(request, event_id):  # noqa: C901  # multi-method CRUD v
     if "description" in data:
         staged.description = data["description"]
     if "price" in data:
-        staged.price = data["price"] or None
+        staged.price = _coerce_price(data["price"])
     if "link" in data:
         staged.link = data["link"]
     if "tags" in data:
@@ -259,7 +292,7 @@ def create_event(request):
         location_name=data["venue"],
         start_datetime=data["date"],
         description=data["description"],
-        price=data.get("price") or None,
+        price=_coerce_price(data.get("price")),
         link=data.get("link", ""),
         tags=data.get("tags", []),
         category=data.get("category", ""),

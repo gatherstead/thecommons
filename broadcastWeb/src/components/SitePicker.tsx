@@ -49,7 +49,7 @@ export default function SitePicker({ preview, selected, onToggle, disabled }: Pr
         {preview.excluded.map((site) => (
           <li key={site.site_key} className="excluded">
             <input type="checkbox" checked={false} disabled readOnly />
-            <span className="site-name">{site.site_key}</span>
+            <span className="site-name">{site.name ?? site.site_key}</span>
             <span className="reason">— {site.reason}</span>
           </li>
         ))}

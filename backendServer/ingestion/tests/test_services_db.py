@@ -65,9 +65,7 @@ class PublishAllApprovedTests(TestCase):
         """
         # get_or_create, not create: migration 0012 already seeds all nine
         # real category slugs, so create() collides on the unique slug.
-        music, _ = Category.objects.get_or_create(
-            slug="music", defaults={"display_name": "Music"}
-        )
+        music, _ = Category.objects.get_or_create(slug="music", defaults={"display_name": "Music"})
         food, _ = Category.objects.get_or_create(
             slug="food-drink", defaults={"display_name": "Food & Drink"}
         )

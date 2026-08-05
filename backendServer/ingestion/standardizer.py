@@ -356,7 +356,30 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
     data = _generate_json(client, prompt, log_label=raw_event.raw_title)
 
     valid_tags = [t for t in (data.get("tags") or []) if t in VALID_TAGS]
-    valid_categories = _extract_categories(data)
+
+    # A direct host submission (see ingestion/views.py:direct_submit) carries
+    # hand-picked categories in raw_event.raw_categories, stored verbatim and
+    # unvalidated — the host told us what their event IS, and re-guessing that
+    # from Gemini after the fact would both waste the call and risk
+    # contradicting the host's own judgment. Filter/cap it exactly like
+    # _extract_categories does for the model's answer (never trust client
+    # input more than model output either) and prefer it over Gemini's
+    # "categories" key whenever at least one slug survives filtering.
+    #
+    # Ingested (non-direct) RawEvents simply have raw_categories=[], so this
+    # branch is a no-op for them and falls straight through to the LLM path
+    # below, unchanged from before this ticket.
+    #
+    # If the host's list is entirely unrecognised (e.g. the broadcast SPA's
+    # own vocabulary, which doesn't line up with CATEGORY_SLUGS — see
+    # events/categories.py), fall back to LLM inference rather than storing
+    # an empty list: silently discarding a host's intent-to-categorize would
+    # just recreate the "we throw away what the host told us" bug this ticket
+    # exists to fix.
+    host_categories = [c for c in (raw_event.raw_categories or []) if c in CATEGORY_SLUGS][
+        :MAX_CATEGORIES
+    ]
+    valid_categories = host_categories if host_categories else _extract_categories(data)
 
     # Parse price: -1 means N/A (displayed as "N/A" on frontend)
     price = _coerce_price(data.get("price", -1))

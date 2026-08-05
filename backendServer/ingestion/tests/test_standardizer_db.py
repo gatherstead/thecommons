@@ -5,7 +5,7 @@ from unittest import mock
 from django.test import TestCase, tag
 
 from ingestion.models import EventSource, RawEvent, StagedEvent
-from ingestion.standardizer import standardize_all_unprocessed, standardize_event
+from ingestion.standardizer import MAX_CATEGORIES, standardize_all_unprocessed, standardize_event
 
 
 @tag("db")
@@ -190,6 +190,84 @@ class StandardizerTests(TestCase):
             staged = standardize_event(self.raw)
 
         self.assertEqual(staged.price, -1)
+
+
+@tag("db")
+class HostCategoryPrecedenceTests(TestCase):
+    """49.11b: a direct submission's host-supplied categories (RawEvent.raw_categories)
+    must win over Gemini's guess, be filtered against CATEGORY_SLUGS, capped at
+    MAX_CATEGORIES, and fall back to LLM inference when nothing usable survives."""
+
+    def setUp(self):
+        self.source = EventSource.objects.create(
+            name="Direct Host Submission", source_type="direct", url=""
+        )
+
+    def _raw(self, raw_categories, uid="uid-host-1"):
+        return RawEvent.objects.create(
+            source=self.source,
+            raw_title="raw concert",
+            raw_description="a show",
+            raw_location="somewhere",
+            raw_start_datetime=datetime(2099, 6, 1, 18, 0, tzinfo=UTC),
+            source_url="",
+            source_uid=uid,
+            raw_categories=raw_categories,
+        )
+
+    def _gemini_returning(self, payload):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(text=json.dumps(payload))
+        return mock.patch("ingestion.standardizer.genai.Client", return_value=client)
+
+    def _payload(self, **overrides):
+        payload = {
+            "title": "Test Event",
+            "description": "A test.",
+            "location_name": "Test Venue",
+            "town": "Carrboro",
+            "tags": [],
+            "categories": ["community"],  # what the LLM would have guessed
+            "price": 0,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_valid_host_categories_win_over_llm_guess(self):
+        raw = self._raw(["music"])
+        with self._gemini_returning(self._payload()):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.categories, ["music"])
+
+    def test_host_categories_are_filtered_against_slugs(self):
+        raw = self._raw(["music", "not-a-real-category"])
+        with self._gemini_returning(self._payload()):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.categories, ["music"])
+
+    def test_host_categories_are_capped_at_max_categories(self):
+        raw = self._raw(["music", "art", "community"])
+        with self._gemini_returning(self._payload()):
+            staged = standardize_event(raw)
+
+        self.assertEqual(len(staged.categories), MAX_CATEGORIES)
+        self.assertEqual(staged.categories, ["music", "art"])
+
+    def test_all_garbage_host_categories_fall_back_to_llm(self):
+        raw = self._raw(["not-a-real-category"])
+        with self._gemini_returning(self._payload(categories=["community"])):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.categories, ["community"])
+
+    def test_empty_host_categories_fall_back_to_llm(self):
+        raw = self._raw([])
+        with self._gemini_returning(self._payload(categories=["community"])):
+            staged = standardize_event(raw)
+
+        self.assertEqual(staged.categories, ["community"])
 
 
 @tag("db")

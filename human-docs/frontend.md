@@ -68,11 +68,11 @@ not `Promise.all` — a failed prefetch (Django down, cold Neon connection) must
 rendering; the client component just falls back to fetching client-side once it mounts.
 
 Once hydrated, `HomePageClient` calls `useEvents`, which owns a TanStack Query `useQuery` keyed
-on the current window/category selection. Because the server prefetch used the *exact* query
-key the client's initial state produces (`['events', 'window', '3months', null]` — 3-month
-window, no category selected, matching `useEvents`'s default state), the client's first render
-finds a warm cache entry and skips a redundant fetch entirely. Change the default window or
-category state in `useEvents` without updating the server prefetch key in `app/page.tsx` (or
+on the current window/facet selection. Because the server prefetch used the *exact* query
+key the client's initial state produces (`['events', 'window', '3months', [], []]` — 3-month
+window, no tags or towns selected, matching `useEvents`'s default state), the client's first
+render finds a warm cache entry and skips a redundant fetch entirely. Change the default window
+or facet state in `useEvents` without updating the server prefetch key in `app/page.tsx` (or
 vice versa) and this silently degrades to a double-fetch on every home page load — nothing
 breaks, but the whole point of the prefetch is lost. This is the sharpest instance of the
 query-key-must-stay-in-sync problem described in §7.
@@ -87,8 +87,8 @@ sequenceDiagram
     participant Django
 
     Browser->>Server: GET /
-    Server->>Svc: prefetchQuery(events window/towns/categories)
-    Svc->>Django: GET /events/, /events/towns/, /events/categories/
+    Server->>Svc: prefetchQuery(events window/towns)
+    Svc->>Django: GET /events/, /events/towns/
     alt Django reachable
         Django-->>Svc: 200 JSON (Redis-cached on Django's side)
         Svc-->>Server: cache populated
@@ -107,18 +107,18 @@ sequenceDiagram
         Django-->>Svc: 200 JSON
         Svc-->>Client: FrontendEvent[]
     end
-    Note over Client: window/category change -> new query key -> repeats from useQuery step
+    Note over Client: window/facet change -> new query key -> repeats from useQuery step
 ```
 
 Three things the diagram can't say. First, `staleTime` on the shared `QueryClient`
 (`src/lib/queryClient.ts`) is one hour, not `Infinity` — a common misconception carried over from
-how `useTowns`/`useCategories` are configured (they *do* set `staleTime: Infinity` per-query,
-overriding the client default, because town/category lists change rarely). The event list itself
+how `useTowns` is configured (it *does* set `staleTime: Infinity` per-query,
+overriding the client default, because the town list changes rarely). The event list itself
 inherits the one-hour default, so a background refetch can happen without any user action if a
 tab is left open past that window — though `refetchOnWindowFocus`/`refetchOnReconnect` are both
 off, so it won't happen just from switching tabs. Second, `gcTime` really is `Infinity` on the
 client — cached query data for a given key is never garbage-collected client-side, so switching
-window/category back and forth re-renders instantly from cache rather than refetching, at the
+window/facets back and forth re-renders instantly from cache rather than refetching, at the
 cost of unbounded cache growth for a long-lived tab (acceptable for a page people don't leave
 open for days). Third, `getQueryClient()` deliberately returns a *fresh* `QueryClient` on every
 call when `window` is undefined (i.e., on the server) and a memoized singleton in the browser —
@@ -261,9 +261,8 @@ specifically so no component has to know the Django wire format.
 
 | Hook / Service | Lives in | Backs | Query key(s) it owns |
 |---|---|---|---|
-| `useEvents` | `hooks/useEvents.ts` | Home feed + calendar: paged list, per-month calendar cache, window/category/tag/town filter state | `['events','window',window,category]`, `['events','page',pageUrl]`, `['events','month',key]` |
+| `useEvents` | `hooks/useEvents.ts` | Home feed + calendar: paged list, per-month calendar cache, window/tag/town filter state | `['events','window',window,tags,towns]`, `['events','page',pageUrl]`, `['events','month',key]` |
 | `useTowns` | `hooks/useTowns.ts` | Town dropdown/filter options | `['towns']` (staleTime: Infinity) |
-| `useCategories` | `hooks/useCategories.ts` | Category dropdown/filter options | `['categories']` (staleTime: Infinity) |
 | `useAuth` / `AuthProvider` | `hooks/useAuth.tsx` | Session + JWT + Django profile; `login`/`signup`/`logout`/`refreshSession` | `['profile', token]` |
 | `useMessageStack` / `MessageStackProvider` | `hooks/useMessageStack.tsx` | One-at-a-time banner queue (digest CTA, etc.) — plain React state, not TanStack Query | — |
 | `useToggleSet<T>` | `hooks/useToggleSet.ts` | Generic multi-select toggle (used for tags, towns, business tags/service-area) | — |
@@ -383,7 +382,7 @@ container does nothing; the image has to be rebuilt with the new value passed as
 
 **`queryClient.ts`'s `staleTime` is one hour, not `Infinity`**, despite both `ARCHITECTURE.md`
 and `theCommonsWeb/AGENTS.md` describing the defaults as `staleTime/gcTime: Infinity`. Only
-`gcTime` is actually `Infinity`; `staleTime` is `60 * 60 * 1000`. `useTowns` and `useCategories`
+`gcTime` is actually `Infinity`; `staleTime` is `60 * 60 * 1000`. `useTowns`
 each override it back to `Infinity` on their own query, which is presumably where the confusion
 originated — but the event-list queries inherit the one-hour default. Worth fixing in
 `ARCHITECTURE.md` directly; flagged here rather than corrected there for the same reason as the
@@ -403,7 +402,7 @@ I did not find a shared constants module for query keys (confirmed by grepping e
 `queryKey:`/`invalidateQueries`/`setQueryData` call site in `src/`) — every key is a string
 literal at its call site, which is the root cause of the query-key drift described in §7 and §4.
 I also did not trace whether the one-hour `staleTime` on the event list was a deliberate choice
-or a leftover from before `useTowns`/`useCategories` were split out with their own
+or a leftover from before `useTowns` was split out with its own
 `Infinity` overrides; the git history predates what's visible from reading the current tree
 alone. Neither gap blocks using this doc to add a new page — both are things a future cleanup
 pass would want to know about.

@@ -11,7 +11,7 @@ thecommons/
 │   │                             #     jwt_auth (Better Auth JWKS), permissions, test_runner
 │   ├── accounts/                 #   Identity/auth-bridge app: neon_auth mirrors (BetterAuth*),
 │   │                             #     UserProfile + BusinessProfile, /auth/me, /businesses
-│   ├── events/                   #   Public app: Event/Town/Tag/Category + genuine event views
+│   ├── events/                   #   Public app: Event/Town/Tag + genuine event views
 │   ├── newsletter/                #   NewsletterSubscriber, subscribe/manage views, digest engine
 │   │                              #     (email_service, tasks, templates, digest commands)
 │   ├── ingestion/                #   Pipeline: EventSource → RawEvent → StagedEvent → published Event
@@ -21,7 +21,7 @@ thecommons/
 ├── theCommonsWeb/                # Next.js 16 (App Router) + React 19 + Better Auth — main site
 │   ├── src/app/                  #   Pages + API routes (App Router)
 │   ├── src/components/           #   auth/, events/, layout/, ui/, providers/
-│   ├── src/hooks/                #   useAuth, useEvents, useTowns, useCategories, useMessageStack, …
+│   ├── src/hooks/                #   useAuth, useEvents, useTowns, useMessageStack, …
 │   ├── src/lib/                  #   Better Auth config, Drizzle schema, DB pool, queryClient
 │   ├── src/services/             #   Django API clients (event, profile, business)
 │   └── AGENTS.md                 #   ← Frontend local map
@@ -92,7 +92,7 @@ Run backend + theCommonsWeb together for end-to-end auth (Django validates JWTs 
 ## Guardrails
 
 - **Never migrate `neon_auth` tables.** Better Auth (Next.js) owns them. Django mirrors are `managed = False`.
-- **`Town` and `Category` are SQL tables** — don't hardcode. Pipeline skips events with unknown town slugs.
+- **`Town` is a SQL table** — don't hardcode. Pipeline skips events with unknown town slugs. (Event categories were retired in suite 50; `Tag` is the only event facet vocabulary now.)
 - **Auth lives in Next.js**, not Django. Don't add Django login/signup views or use `django.contrib.auth.User` for app users.
 - **`broadcast/` and `ingestion/` are isolated from the rest.** No app imports from `ingestion`/`broadcast`; `broadcast/routing.py` must not import from `events` (enforced by tests). `accounts`, `newsletter`, and `events` may read each other where the domain genuinely overlaps — e.g. `accounts.me` writes a `NewsletterSubscriber` row (email-preference sync) and `newsletter._build_recipients` reads `accounts.UserProfile` (tag-filtered digests). Both directions are intentional; don't "fix" the coupling.
 - **No Django ORM inside `sync_playwright`** — fetch all data into plain objects first, then drive the browser.

@@ -8,13 +8,9 @@ them up by key.
 from ingestion.scraping.scrapers.carychamber import CarychamberScraper
 from ingestion.scraping.scrapers.carysistercities import CarysistercitiesScraper
 from ingestion.scraping.scrapers.chapelhillarts import ChapelhillartsScraper
-from ingestion.scraping.scrapers.chapelhillnc import ChapelhillncScraper
 from ingestion.scraping.scrapers.chathamchamber import ChathamchamberScraper
 from ingestion.scraping.scrapers.downtowncarync import DowntowncarynScraper
 from ingestion.scraping.scrapers.downtownraleigh import DowntownraleighScraper
-from ingestion.scraping.scrapers.eventbritemorrisville import EventbritemorrisvilleScraper
-from ingestion.scraping.scrapers.eventbritepittsboro import EventbritepittsboroScraper
-from ingestion.scraping.scrapers.eventbriteraleigh import EventbriteraleighScraper
 from ingestion.scraping.scrapers.morrisvillechamber import MorrisvillechamberScraper
 from ingestion.scraping.scrapers.morrisvilleevents import MorrisvilleeventsScraper
 from ingestion.scraping.scrapers.patchdurham import PatchdurhamScraper
@@ -34,13 +30,9 @@ _SCRAPERS = [
     CarychamberScraper(),
     CarysistercitiesScraper(),
     ChapelhillartsScraper(),
-    ChapelhillncScraper(),
     ChathamchamberScraper(),
     DowntowncarynScraper(),
     DowntownraleighScraper(),
-    EventbritemorrisvilleScraper(),
-    EventbritepittsboroScraper(),
-    EventbriteraleighScraper(),
     MorrisvillechamberScraper(),
     MorrisvilleeventsScraper(),
     PatchdurhamScraper(),

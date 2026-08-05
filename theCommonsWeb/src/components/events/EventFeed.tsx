@@ -16,22 +16,6 @@ interface EventFeedProps {
     onNextPage?: () => void;
     onPrevPage?: () => void;
     isLoadingPage?: boolean;
-    sectionName?: string | null;
-}
-
-// Section front nameplate — shown when a single category ("section") is active
-function SectionNameplate({ name }: { name: string }) {
-    return (
-        <div className="text-center pt-5 pb-4">
-            <h2
-                className="font-black uppercase leading-none tracking-[0.12em]"
-                style={{ fontSize: 'clamp(1.6rem, 3.2vw, 2.5rem)', fontFamily: 'var(--font-headline)' }}
-            >
-                {name}
-            </h2>
-            <span className="block mx-auto mt-3 w-20 border-t-2 border-[var(--color-accent)]" aria-hidden="true" />
-        </div>
-    );
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -403,7 +387,7 @@ function PageNav({
 
 // ─── EventFeed (main export) ──────────────────────────────────────────────────
 
-export function EventFeed({ events, isLoading, onEventClick, towns, footer, currentPage = 1, totalPages = 1, totalCount = 0, onNextPage, onPrevPage, isLoadingPage = false, sectionName = null }: EventFeedProps) {
+export function EventFeed({ events, isLoading, onEventClick, towns, footer, currentPage = 1, totalPages = 1, totalCount = 0, onNextPage, onPrevPage, isLoadingPage = false }: EventFeedProps) {
     if (isLoading) {
         return <FeedSkeleton />;
     }
@@ -411,7 +395,6 @@ export function EventFeed({ events, isLoading, onEventClick, towns, footer, curr
     if (events.length === 0) {
         return (
             <div className="border-t-2 border-[var(--color-border)]">
-                {sectionName && <SectionNameplate name={sectionName} />}
                 <div className="text-center py-16">
                     <p className="italic text-[var(--color-text-muted)]">No upcoming events.</p>
                     <p className="text-xs text-[var(--color-text-muted)] mt-1">Try adjusting your filters or changing the date range in the sidebar.</p>
@@ -436,7 +419,6 @@ export function EventFeed({ events, isLoading, onEventClick, towns, footer, curr
 
     return (
         <div className="border-t-2 border-[var(--color-border)]">
-            {sectionName && <SectionNameplate name={sectionName} />}
 
             <FeaturedCard event={featured} onClick={onEventClick} towns={towns} />
 

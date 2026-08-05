@@ -1,6 +1,6 @@
 // src/services/eventService.ts
 
-import type { FrontendEvent, BackendEvent, PaginatedBackendEvents, EventPayload, TownOption, CategoryOption, MyEventSummary } from "../models/eventsModels";
+import type { FrontendEvent, BackendEvent, PaginatedBackendEvents, EventPayload, TownOption, MyEventSummary } from "../models/eventsModels";
 
 export interface EventsPage {
     results: FrontendEvent[];
@@ -46,7 +46,6 @@ const transformBackendEvent = (backendEvent: BackendEvent): FrontendEvent => {
         town: backendEvent.town,
         description: backendEvent.description,
         tags: backendEvent.tag_names || [],
-        categories: backendEvent.category_slugs || [],
         date: dateObj,
         time: timeString,
         price: priceString,
@@ -70,29 +69,15 @@ export const getTowns = async (): Promise<TownOption[]> => {
     }
 };
 
-// --- GET ALL CATEGORIES ---
-export const getCategories = async (): Promise<CategoryOption[]> => {
-    try {
-        const url = `${API_BASE}/events/categories/`;
-        const response = await fetch(url);
-        if (!response.ok) throw await httpError('GET', url, response);
-        return await response.json();
-    } catch (error) {
-        console.error('Error fetching categories:', error);
-        return [];
-    }
-};
-
 // --- GET FACET COUNTS (towns + tags, over the full filtered set) ---
 export interface EventFacets {
     towns: Record<string, number>;
     tags: Record<string, number>;
 }
 
-export const getFacets = async (params?: { window?: string; category?: string }): Promise<EventFacets> => {
+export const getFacets = async (params?: { window?: string }): Promise<EventFacets> => {
     const query = new URLSearchParams();
     if (params?.window) query.set('window', params.window);
-    if (params?.category) query.set('category', params.category);
     const qs = query.toString();
     const url = `${API_BASE}/events/facets/${qs ? `?${qs}` : ''}`;
 
@@ -108,7 +93,6 @@ export const getEvents = async (params?: {
     include_past?: boolean;
     window?: 'past';
     pageUrl?: string;
-    category?: string;
     tags?: string[];
     towns?: string[];
 }): Promise<EventsPage> => {
@@ -122,7 +106,6 @@ export const getEvents = async (params?: {
             if (params?.before) query.set('before', params.before);
             if (params?.include_past) query.set('include_past', 'true');
             if (params?.window) query.set('window', params.window);
-            if (params?.category) query.set('category', params.category);
             // Repeatable params: ?tag=weekends&tag=evenings, ?town=durham&town=carrboro.
             // AND semantics for tags, OR semantics for towns — enforced server-side.
             for (const t of params?.tags ?? []) query.append('tag', t);

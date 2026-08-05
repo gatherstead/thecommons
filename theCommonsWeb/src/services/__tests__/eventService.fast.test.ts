@@ -39,13 +39,12 @@ describe('getEvents query-string construction', () => {
         expect(calledUrl()).toBe(`${API_BASE}/events/`);
     });
 
-    it('encodes before/after/category together', async () => {
-        await getEvents({ after: '2026-01-01', before: '2026-02-01', category: 'music' });
+    it('encodes before/after together', async () => {
+        await getEvents({ after: '2026-01-01', before: '2026-02-01' });
         const url = new URL(calledUrl());
         expect(url.pathname).toBe('/events/');
         expect(url.searchParams.get('after')).toBe('2026-01-01');
         expect(url.searchParams.get('before')).toBe('2026-02-01');
-        expect(url.searchParams.get('category')).toBe('music');
     });
 
     it('serializes include_past as the string "true"', async () => {
@@ -60,7 +59,7 @@ describe('getEvents query-string construction', () => {
 
     it('uses pageUrl verbatim and ignores other params', async () => {
         const pageUrl = `${API_BASE}/events/?cursor=abc123`;
-        await getEvents({ pageUrl, category: 'music' });
+        await getEvents({ pageUrl });
         expect(calledUrl()).toBe(pageUrl);
     });
 });

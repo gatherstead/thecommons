@@ -116,7 +116,6 @@ class SerializerCreateDayPartTagsTests(TestCase):
                 "venue": "Venue",
                 "description": "desc",
                 "tags": tags,
-                "categories": [],
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)

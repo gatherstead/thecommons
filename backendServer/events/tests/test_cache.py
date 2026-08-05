@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from events import cache as events_cache
-from events.models import Category, Event
+from events.models import Event
 
 from .factories import make_event, make_town
 
@@ -61,8 +61,8 @@ class EventsListKeyTests(TestCase):
         self.town = make_town("carrboro", "Carrboro")
 
     def test_distinct_query_params_get_distinct_keys(self):
-        key_a = events_cache.events_list_key(QueryDict("category=music"))
-        key_b = events_cache.events_list_key(QueryDict("category=art"))
+        key_a = events_cache.events_list_key(QueryDict("tag=free"))
+        key_b = events_cache.events_list_key(QueryDict("tag=nature"))
         self.assertNotEqual(key_a, key_b)
 
     def test_event_write_bumps_version_so_prior_key_misses(self):
@@ -71,18 +71,3 @@ class EventsListKeyTests(TestCase):
         make_event("Fresh", town=self.town)  # post_save signal bumps the version
         after = events_cache.events_list_key(empty)
         self.assertNotEqual(before, after)
-
-
-@tag("db")
-class CategoryCacheSignalTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    def test_category_write_invalidates_categories_cache(self):
-        cache.set(events_cache.CATEGORIES_CACHE_KEY, [{"slug": "stale"}], events_cache.STATIC_TTL)
-        cat = Category.objects.create(slug="test-cache-cat", display_name="Test Cache Cat")
-        self.assertIsNone(cache.get(events_cache.CATEGORIES_CACHE_KEY))
-
-        cache.set(events_cache.CATEGORIES_CACHE_KEY, [{"slug": "stale"}], events_cache.STATIC_TTL)
-        cat.delete()
-        self.assertIsNone(cache.get(events_cache.CATEGORIES_CACHE_KEY))

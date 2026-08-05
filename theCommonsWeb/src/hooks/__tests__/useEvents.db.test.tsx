@@ -31,7 +31,6 @@ function backendEvent(over: Partial<BackendEvent>): BackendEvent {
         description: '',
         price: '0',
         tag_names: [],
-        category_slugs: [],
         photo: null,
         link: '',
         is_verified: true,
@@ -59,9 +58,6 @@ beforeEach(() => {
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes('/events/towns/')) {
-            return { ok: true, json: async () => [] } as Response;
-        }
-        if (url.includes('/events/categories/')) {
             return { ok: true, json: async () => [] } as Response;
         }
         if (url.includes('/events')) {
@@ -136,27 +132,13 @@ describe('useEvents', () => {
         expect(result.current.currentWindow).toBe('12months');
     });
 
-    it('changing category does not reset the selected window', async () => {
-        const { result } = renderHookWithClient(() => useEvents());
-
-        await waitFor(() => expect(result.current.filteredEvents).toHaveLength(2));
-
-        act(() => result.current.setWindow('6months'));
-        expect(result.current.currentWindow).toBe('6months');
-
-        act(() => result.current.setCategory('music'));
-
-        expect(result.current.currentWindow).toBe('6months');
-    });
-
     describe('URL round-tripping (48.13)', () => {
         it('seeds filter state from a pasted URL on first render', async () => {
-            setUrlSearchParams('tag=weekends&tag=evenings&town=Carrboro&category=music&window=12months');
+            setUrlSearchParams('tag=weekends&tag=evenings&town=Carrboro&window=12months');
             const { result } = renderHookWithClient(() => useEvents());
 
             expect(result.current.selectedTags).toEqual(['weekends', 'evenings']);
             expect(result.current.selectedTowns).toEqual(['Carrboro']);
-            expect(result.current.selectedCategory).toBe('music');
             expect(result.current.currentWindow).toBe('12months');
 
             await waitFor(() => expect(eventUrls.length).toBeGreaterThan(0));
@@ -164,7 +146,6 @@ describe('useEvents', () => {
             expect(url).toContain('tag=weekends');
             expect(url).toContain('tag=evenings');
             expect(url).toContain('town=Carrboro');
-            expect(url).toContain('category=music');
             // '12months' is expressed as a `before=` cutoff by fetchForWindow, not
             // a literal window= param (only 'past' passes window= through) — the
             // state itself is what we're asserting here.
@@ -193,7 +174,7 @@ describe('useEvents', () => {
         });
 
         it('clearFilters clears the URL back to the bare path', async () => {
-            setUrlSearchParams('town=Carrboro&category=music&window=12months');
+            setUrlSearchParams('town=Carrboro&window=12months');
             const { result } = renderHookWithClient(() => useEvents());
             await waitFor(() => expect(result.current.selectedTowns).toEqual(['Carrboro']));
 
@@ -201,14 +182,13 @@ describe('useEvents', () => {
 
             await waitFor(() => expect(routerReplace).toHaveBeenLastCalledWith('/', { scroll: false }));
             expect(result.current.selectedTowns).toEqual([]);
-            expect(result.current.selectedCategory).toBeNull();
             expect(result.current.currentWindow).toBe('3months');
         });
 
         it('restores a page > 1 found in the URL by walking forward from page 1', async () => {
             const localFetch = vi.fn(async (input: RequestInfo | URL) => {
                 const url = String(input);
-                if (url.includes('/events/towns/') || url.includes('/events/categories/')) {
+                if (url.includes('/events/towns/')) {
                     return { ok: true, json: async () => [] } as Response;
                 }
                 const params = new URL(url, 'http://localhost').searchParams;

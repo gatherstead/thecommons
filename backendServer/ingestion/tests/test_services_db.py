@@ -6,7 +6,7 @@ from unittest import mock
 from django.core.management import call_command
 from django.test import TestCase, tag
 
-from events.models import Category, Event, Town
+from events.models import Event, Town
 from events.tests.factories import make_town, make_user
 from ingestion.deduplicator import find_duplicate
 from ingestion.models import EventSource, RawEvent, StagedEvent
@@ -56,29 +56,6 @@ class PublishAllApprovedTests(TestCase):
         published_row = StagedEvent.objects.get(title="Approved Show")
         self.assertEqual(published_row.status, "published")
         self.assertEqual(StagedEvent.objects.count(), 4)
-
-    def test_multiple_category_slugs_round_trip_to_event(self):
-        """`StagedEvent.categories` (a list of slugs) resolves to the matching
-        `Category` rows on publish — one query, unmatched slugs skipped
-        silently (mirrors the old single-slug `.first()`-returns-None
-        behaviour).
-        """
-        # get_or_create, not create: migration 0012 already seeds all nine
-        # real category slugs, so create() collides on the unique slug.
-        music, _ = Category.objects.get_or_create(slug="music", defaults={"display_name": "Music"})
-        food, _ = Category.objects.get_or_create(
-            slug="food-drink", defaults={"display_name": "Food & Drink"}
-        )
-        self._staged(
-            "Multi Category Show",
-            "approved",
-            categories=["music", "food-drink", "does-not-exist"],
-        )
-
-        publish_all_approved()
-
-        event = Event.objects.get(title="Multi Category Show")
-        self.assertEqual(set(event.categories.all()), {music, food})
 
     def test_no_approved_events_is_noop(self):
         self._staged("Pending Show", "pending")

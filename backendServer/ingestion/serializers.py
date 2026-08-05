@@ -2,7 +2,12 @@ from rest_framework import serializers
 
 
 class DirectSubmitEventSerializer(serializers.Serializer):
-    """Validates the `event` object of direct host submission requests."""
+    """Validates the `event` object of direct host submission requests.
+
+    Note: the broadcast SPA still sends a `categories` array. It is deliberately
+    not declared here — suite 50 retired event categories, and DRF ignores
+    unknown keys, so the SPA keeps working unchanged across the deploy skew.
+    """
 
     title = serializers.CharField(max_length=300)
     description = serializers.CharField()
@@ -15,7 +20,6 @@ class DirectSubmitEventSerializer(serializers.Serializer):
     state = serializers.CharField(max_length=2, required=False, default="NC")
     zip = serializers.CharField(max_length=10)
     locality = serializers.ListField(child=serializers.CharField(), allow_empty=False)
-    categories = serializers.ListField(child=serializers.CharField(), allow_empty=False)
     event_url = serializers.URLField(required=False, allow_blank=True, default="")
     price = serializers.CharField(max_length=60, required=False, allow_blank=True, default="")
     is_free = serializers.BooleanField(required=False, default=False)

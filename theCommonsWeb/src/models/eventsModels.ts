@@ -3,11 +3,6 @@ export interface TownOption {
     name: string;
 }
 
-export interface CategoryOption {
-    slug: string;
-    display_name: string;
-}
-
 // 1. Define what the Django API actually sends us
 export interface PaginatedBackendEvents {
     count: number;
@@ -25,7 +20,6 @@ export interface BackendEvent {
     description: string;
     price: string; // Django DecimalField sends a string like "10.00" or number
     tag_names: string[];
-    category_slugs: string[];
     photo: string | null;
     link: string;
     is_verified: boolean;
@@ -41,7 +35,6 @@ export interface FrontendEvent {
     time: string;
     description: string;
     tags: string[];
-    categories: string[];
     town: string;
     price: string;
     link: string;
@@ -60,7 +53,6 @@ export interface EventPayload {
     price: number;
     tags: string[];
     link: string;
-    category?: string;
 }
 
 export type MyEventStatus = 'pending' | 'approved' | 'rejected' | 'duplicate' | 'published';

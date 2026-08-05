@@ -8,7 +8,6 @@ import { SUBMISSION_TAGS, type TagId } from '../../constants/tags';
 import { createEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/useAuth';
 import { useTowns } from '../../hooks/useTowns';
-import { useCategories } from '../../hooks/useCategories';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Textarea } from '../../components/ui/Textarea';
@@ -20,7 +19,7 @@ const PENDING_EVENT_KEY = 'pendingEventPayload';
 
 const AUTH_ORIGIN = process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? 'http://localhost:3000';
 
-type Step = 'town' | 'category' | 'details' | 'done';
+type Step = 'town' | 'details' | 'done';
 
 export default function PostEventPage() {
     const { token, isAuthenticated, isInitializing } = useAuth();
@@ -31,7 +30,6 @@ export default function PostEventPage() {
     const [fieldErrors, setFieldErrors] = useState<{ price?: string }>({});
 
     const towns = useTowns().data ?? [];
-    const categories = useCategories().data ?? [];
 
     const createEventMutation = useMutation({
         mutationFn: (payload: EventPayload) => createEvent(payload, token!),
@@ -46,7 +44,6 @@ export default function PostEventPage() {
 
     const [formData, setFormData] = useState({
         town: '',
-        category: '',
         name: '',
         place: '',
         description: '',
@@ -91,7 +88,6 @@ export default function PostEventPage() {
         price,
         tags: formData.tags,
         link: formData.link,
-        category: formData.category,
     });
 
     // Mirrors backendServer/events/tagging.py::day_part_tags so the picker can show
@@ -144,8 +140,6 @@ export default function PostEventPage() {
     };
 
     const townName = towns.find(t => t.slug === formData.town)?.name ?? formData.town;
-    const categoryName =
-        categories.find(c => c.slug === formData.category)?.display_name ?? formData.category;
 
     return (
         <main id="main-content" className="max-w-[560px] mx-auto px-4 py-12">
@@ -165,7 +159,7 @@ export default function PostEventPage() {
                 <p className="text-sm italic text-[var(--color-text-muted)]">
                     {step === 'done'
                         ? 'Thanks for contributing to the bulletin.'
-                        : 'A couple of quick questions, then the details.'}
+                        : 'One quick question, then the details.'}
                 </p>
             </header>
 
@@ -178,7 +172,7 @@ export default function PostEventPage() {
                 </div>
             )}
 
-            {/* ── Step: where (1 of 2) ────────────────────────────────── */}
+            {/* ── Step: where (1 of 1) ────────────────────────────────── */}
             {step === 'town' && (
                 <section className="space-y-6">
                     <h2 className="text-xs uppercase tracking-[0.2em] font-black text-[var(--color-accent)] border-b border-[var(--color-border-light)] pb-1">
@@ -201,40 +195,6 @@ export default function PostEventPage() {
                             type="button"
                             variant="primary"
                             disabled={!formData.town}
-                            onClick={() => setStep('category')}
-                        >
-                            Continue
-                        </Button>
-                    </div>
-                </section>
-            )}
-
-            {/* ── Step: what kind (2 of 2) ────────────────────────────── */}
-            {step === 'category' && (
-                <section className="space-y-6">
-                    <h2 className="text-xs uppercase tracking-[0.2em] font-black text-[var(--color-accent)] border-b border-[var(--color-border-light)] pb-1">
-                        And what kind of event?
-                    </h2>
-
-                    <Select
-                        label="Event type"
-                        value={formData.category}
-                        onChange={e => setFormData({ ...formData, category: e.target.value })}
-                    >
-                        <option value="">Select a type</option>
-                        {categories.map(cat => (
-                            <option key={cat.slug} value={cat.slug}>{cat.display_name}</option>
-                        ))}
-                    </Select>
-
-                    <div className="flex justify-between pt-2">
-                        <Button type="button" variant="secondary" onClick={() => setStep('town')}>
-                            Back
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="primary"
-                            disabled={!formData.category}
                             onClick={() => setStep('details')}
                         >
                             Continue
@@ -248,8 +208,8 @@ export default function PostEventPage() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="flex items-baseline justify-between border-b border-[var(--color-border-light)] pb-2">
                         <p className="text-xs uppercase tracking-wider">
-                            <span className="font-black">{categoryName}</span>
-                            <span className="text-[var(--color-text-muted)]"> in {townName}</span>
+                            <span className="text-[var(--color-text-muted)]">In </span>
+                            <span className="font-black">{townName}</span>
                         </p>
                         <button
                             type="button"
@@ -358,7 +318,7 @@ export default function PostEventPage() {
                     </div>
 
                     <div className="pt-4 border-t border-[var(--color-border-light)] flex justify-between gap-3">
-                        <Button type="button" variant="secondary" onClick={() => setStep('category')}>
+                        <Button type="button" variant="secondary" onClick={() => setStep('town')}>
                             Back
                         </Button>
                         <Button type="submit" variant="primary" disabled={isLoading}>

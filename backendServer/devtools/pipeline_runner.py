@@ -60,7 +60,6 @@ def _event_dict(e):
         "price": str(e.price) if e.price is not None else None,
         "link": e.link,
         "tags": list(e.tags.values_list("name", flat=True)),
-        "categories": list(e.categories.values_list("display_name", flat=True)),
         "is_verified": e.is_verified,
         "created_by": str(e.created_by_id) if e.created_by_id else None,
         "photo": bool(e.photo),

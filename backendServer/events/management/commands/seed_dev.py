@@ -5,7 +5,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from events.models import Category, Event, Tag, Town
+from events.models import Event, Tag, Town
 
 TOWNS = [
     ("carrboro", "Carrboro"),
@@ -31,14 +31,6 @@ TAGS = [
     "Summer Camp",
 ]
 
-CATEGORIES = [
-    ("concerts", "Concerts"),
-    ("food", "Food & Drink"),
-    ("community", "Community"),
-    ("arts", "Arts & Culture"),
-    ("outdoors", "Outdoors"),
-    ("family", "Family"),
-]
 
 EVENTS = [
     {
@@ -51,7 +43,6 @@ EVENTS = [
         ),
         "days_offset": 3,
         "tags": ["Music", "Nightlife"],
-        "categories": ["concerts"],
         "price": "12.00",
     },
     {
@@ -64,7 +55,6 @@ EVENTS = [
         ),
         "days_offset": 5,
         "tags": ["Food & Drink", "Community", "Family"],
-        "categories": ["food", "community"],
         "price": None,
     },
     {
@@ -77,7 +67,6 @@ EVENTS = [
         ),
         "days_offset": 7,
         "tags": ["Arts", "Community"],
-        "categories": ["arts"],
         "price": "0.00",
     },
     {
@@ -90,7 +79,6 @@ EVENTS = [
         ),
         "days_offset": 10,
         "tags": ["Outdoors", "Community"],
-        "categories": ["outdoors", "community"],
         "price": None,
     },
     {
@@ -103,7 +91,6 @@ EVENTS = [
         ),
         "days_offset": 12,
         "tags": ["Sports", "Family"],
-        "categories": ["family"],
         "price": "14.00",
     },
     {
@@ -116,7 +103,6 @@ EVENTS = [
         ),
         "days_offset": 16,
         "tags": ["Food & Drink", "Music", "Community"],
-        "categories": ["food", "community"],
         "price": "0.00",
     },
     {
@@ -129,7 +115,6 @@ EVENTS = [
         ),
         "days_offset": 19,
         "tags": ["Tech", "Community"],
-        "categories": ["community"],
         "price": None,
     },
     {
@@ -142,14 +127,13 @@ EVENTS = [
         ),
         "days_offset": 22,
         "tags": ["Wellness", "Outdoors", "Family"],
-        "categories": ["outdoors"],
         "price": "5.00",
     },
 ]
 
 
 class Command(BaseCommand):
-    help = "Seed dev database with Towns, Tags, Categories, sample Events, and scraper sources"
+    help = "Seed dev database with Towns, Tags, sample Events, and scraper sources"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -183,16 +167,6 @@ class Command(BaseCommand):
             if created:
                 tags_created += 1
 
-        cats_created = 0
-        cat_map = {}
-        for slug, display_name in CATEGORIES:
-            obj, created = Category.objects.get_or_create(
-                slug=slug, defaults={"display_name": display_name}
-            )
-            cat_map[slug] = obj
-            if created:
-                cats_created += 1
-
         events_created = 0
         events_existing = 0
         for spec in EVENTS:
@@ -211,13 +185,11 @@ class Command(BaseCommand):
                 source_name="seed_dev",
             )
             event.tags.set([tag_map[t] for t in spec["tags"]])
-            event.categories.set([cat_map[c] for c in spec["categories"]])
             events_created += 1
 
         self.stdout.write(
             f"Created {towns_created} towns, {tags_created} tags, "
-            f"{cats_created} categories, {events_created} events "
-            f"({events_existing} already existed)"
+            f"{events_created} events ({events_existing} already existed)"
         )
 
         # Without these the devtools playground's "load existing source" picker is

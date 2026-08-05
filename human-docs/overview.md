@@ -48,7 +48,7 @@ thecommons/
 └── docs/                 agent-facing deep dives — the system of record Claude reads on every task
 ```
 
-**`backendServer/`** is a Django + Django REST Framework project, managed with `uv` rather than pip, split into five small apps instead of one monolith: `accounts` (identity — mirrors Better Auth's tables and holds the local `UserProfile`/`BusinessProfile`), `events` (the public `Event`/`Town`/`Category`/`Tag` models and the read endpoints), `newsletter` (subscribers and the digest engine), `ingestion` (the pipeline described in §3), and `broadcast` (the syndication subsystem, described in §5). The apps are deliberately walled off from each other in a few places — most importantly, `broadcast/` and `ingestion/` are not allowed to import from each other or from other app internals, which is enforced by isolation tests, not just convention.
+**`backendServer/`** is a Django + Django REST Framework project, managed with `uv` rather than pip, split into five small apps instead of one monolith: `accounts` (identity — mirrors Better Auth's tables and holds the local `UserProfile`/`BusinessProfile`), `events` (the public `Event`/`Town`/`Tag` models and the read endpoints), `newsletter` (subscribers and the digest engine), `ingestion` (the pipeline described in §3), and `broadcast` (the syndication subsystem, described in §5). The apps are deliberately walled off from each other in a few places — most importantly, `broadcast/` and `ingestion/` are not allowed to import from each other or from other app internals, which is enforced by isolation tests, not just convention.
 
 **`theCommonsWeb/`** is the public-facing site — a Next.js 16 App Router app that also happens to host **Better Auth**, the identity provider for the whole system. That's a detail worth sitting with: there is no separate auth service, and Django never issues its own login/session — it only verifies a JWT that this Next.js app minted. Auth is served at its own subdomain (`auth.thecommons.town`) fronted by a "portal" route group inside the same app, but it's the same codebase and the same deploy. The identity/auth bridge is its own document (`auth.md`) — not covered further here.
 
@@ -76,7 +76,7 @@ flowchart TD
     G -- yes --> I{Town slug\nmatches a real Town row?}
     I -- no --> J[status=skipped_no_town]
     I -- yes --> K[status=approved]
-    K --> L[Event row created, tags/category attached]
+    K --> L[Event row created, tags attached]
     L --> M[StagedEvent.status=published,\n StagedEvent kept - not deleted]
 
     N[Public site: POST /events/create] -.-> C2[StagedEvent created directly,\nstatus=pending - skips poll+standardize]

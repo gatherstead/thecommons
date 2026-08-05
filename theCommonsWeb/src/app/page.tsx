@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 import { getQueryClient } from '../lib/queryClient';
-import { getEvents, getTowns, getCategories } from '../services/eventService';
+import { getEvents, getTowns } from '../services/eventService';
 import HomePageClient from './HomePageClient';
 
 // Render per-request so the prefetch below hits Django's (Redis-cached) data on
@@ -18,10 +18,9 @@ export default async function HomePage() {
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ['events', 'window', '3months', null],
-      queryFn: () => getEvents({ category: undefined }),
+      queryFn: () => getEvents(),
     }),
     queryClient.prefetchQuery({ queryKey: ['towns'], queryFn: getTowns }),
-    queryClient.prefetchQuery({ queryKey: ['categories'], queryFn: getCategories }),
   ]);
 
   return (

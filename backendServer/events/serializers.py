@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Category, Event, Town
+from .models import Event, Town
 from .tagging import apply_tags
 
 
@@ -19,19 +19,6 @@ class EventSerializer(serializers.ModelSerializer):
         required=False,
     )
 
-    # Categories: write_only list of slugs, read_only category_slugs
-    categories = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        write_only=True,
-        required=False,
-    )
-    category_slugs: serializers.Field = serializers.SlugRelatedField(
-        many=True,
-        read_only=True,
-        source="categories",
-        slug_field="slug",
-    )
-
     class Meta:
         model = Event
         fields = [
@@ -46,25 +33,15 @@ class EventSerializer(serializers.ModelSerializer):
             "link",
             "tags",
             "tag_names",
-            "categories",
-            "category_slugs",
             "is_verified",
             "source_name",
         ]
 
     def create(self, validated_data):
         tags_data = validated_data.pop("tags", [])
-        categories_data = validated_data.pop("categories", [])
 
         event = Event.objects.create(**validated_data)
 
         apply_tags(event, tags_data)
-
-        for slug in categories_data:
-            try:
-                cat = Category.objects.get(slug=slug.strip())
-                event.categories.add(cat)
-            except Category.DoesNotExist:
-                pass
 
         return event

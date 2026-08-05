@@ -48,8 +48,7 @@ moved to `accounts`/`newsletter` respectively (state-only migrations — see bel
 |-------|-----------|---------------|
 | `Tag` | `name` (unique) | M2M from users/businesses/events |
 | `Town` | `slug` (unique), `name` | FK target of `Event.town` |
-| `Category` | `slug` (unique), `display_name` | M2M with `Event` |
-| `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`, `Category`; FK→`accounts.BetterAuthUser` (`created_by`) |
+| `Event` | `uuid` (PK), `title`, `date` (indexed), `venue`, `description`, `price`, `photo`, `link`, `is_verified`, `source_name` | FK→`Town` (SET_NULL); M2M→`Tag`; FK→`accounts.BetterAuthUser` (`created_by`) |
 
 ### `newsletter` app — `public` schema (managed)
 
@@ -82,7 +81,7 @@ existing `django_celery_beat` `PeriodicTask` rows from `events.tasks.fan_out_*_d
 |-------|-----------|---------------|
 | `EventSource` | `name`, `source_type` (ics/scraper/email/**direct**), `url`, `active`, `last_polled`, `poll_interval_hours` | reverse `raw_events` |
 | `RawEvent` | raw title/description/location, raw start/end, `source_url`, `source_uid`, `processed` | FK→`EventSource`; `unique_together=(source, source_uid)` |
-| `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, category, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`accounts.BetterAuthUser` (`submitted_by`) |
+| `StagedEvent` | LLM fields (title, description, location, town, datetimes, tags JSON, price, link), `status` (pending/approved/rejected/duplicate), `safety_score/notes`, `reviewer_notes` | OneToOne→`RawEvent`; self-FK `duplicate_of`; FK→`events.Event` (`published_event`); FK→`accounts.BetterAuthUser` (`submitted_by`) |
 
 ### `broadcast` app — `public` schema (managed)
 
@@ -148,9 +147,8 @@ Notes that apply throughout:
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/events/` | — | Paginated published events (window/after/before/category filters, Redis-cached) |
+| GET | `/events/` | — | Paginated published events (window/after/before/tag/town filters, Redis-cached) |
 | GET | `/events/towns/` | — | Town list (cached) |
-| GET | `/events/categories/` | — | Category list (cached) |
 | GET | `/events/me/profile` | user | Own profile summary |
 | GET | `/events/me/events` | user | Own staged + published events |
 | GET/PATCH/DELETE | `/events/staged/<int>` | user | Manage own staged submission |
@@ -258,7 +256,7 @@ Flow: tier-based auth (Bearer JWT or access code, resolved by `broadcast/access.
   - `monthly-digest` → `newsletter.tasks.fan_out_monthly_digest`, 1st of month 18:00 America/New_York (seeded by `events/migrations/0020_seed_monthly_digest_beat.py`; repointed by the same `0002_repoint_digest_beat.py`).
   - `ingest-events-daily` → `ingestion.tasks.run_ingestion_pipeline`, 04:00 America/New_York (`ingestion/migrations/0007_seed_ingest_beat.py`).
 - **Tasks:** `newsletter.tasks` (`send_one_digest`, `fan_out_weekly_digest`, `fan_out_monthly_digest`), `events.tasks` (`ping`), `ingestion.tasks` (`run_ingestion_pipeline`, `publish_all_approved_task`).
-- **Read-endpoint cache:** `events/cache.py` is a version-keyed Redis cache for the hot list endpoints; `events/signals.py` bumps the version on `Event`/`Town`/`Category` writes to invalidate.
+- **Read-endpoint cache:** `events/cache.py` is a version-keyed Redis cache for the hot list endpoints; `events/signals.py` bumps the version on `Event`/`Town` writes to invalidate.
 
 See [docs/redis-celery-handoff.md](docs/redis-celery-handoff.md).
 
@@ -294,7 +292,7 @@ The main site is **Next.js 16 App Router**. Root layout (`src/app/layout.tsx`) w
 ### Data layer (TanStack Query)
 - `src/lib/queryClient.ts` — `getQueryClient()` returns a per-request client on the server and a browser singleton on the client. Defaults: `staleTime/gcTime: Infinity`, no refetch on focus/reconnect, `retry: 1`.
 - `src/components/providers/QueryProvider.tsx` mounts the provider (devtools lazily loaded in development only).
-- Query keys: `['towns']`, `['categories']`, `['profile', token]`, `['events','window'|'page'|'month', …]`, `['myEvents', token]`, `['myBusiness', token]`. Mutations + `invalidateQueries` live in `post`/`profile`/`dashboard` pages.
+- Query keys: `['towns']`, `['profile', token]`, `['events','window'|'page'|'month', …]`, `['myEvents', token]`, `['myBusiness', token]`. Mutations + `invalidateQueries` live in `post`/`profile`/`dashboard` pages.
 - **Services** (`src/services/`) talk to Django over `fetch` at `NEXT_PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`): `eventService` (events CRUD, `BackendEvent`→`FrontendEvent` mapping), `profileService`, `businessService`. `profileService`/`businessService` use `fetchWithRetry` for Neon cold-starts.
 
 ### Auth on the frontend

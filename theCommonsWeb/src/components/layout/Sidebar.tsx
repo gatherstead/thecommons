@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { MiniCalendar } from './MiniCalendar';
 import { WINDOW_OPTIONS } from './TimeWindowSelector';
 import { FILTER_TAGS, type TagId } from '../../constants/tags';
-import type { FrontendEvent, TownOption, CategoryOption } from '../../models/eventsModels';
+import type { FrontendEvent, TownOption } from '../../models/eventsModels';
 import type { AuthUser } from '../../models/authModels';
 import type { EventWindow } from '../../hooks/useEvents';
 import { useFacets } from '../../hooks/useFacets';
@@ -28,11 +28,8 @@ interface SidebarProps {
     selectedTags: TagId[];
     onTagToggle: (tagId: TagId) => void;
     towns: TownOption[];
-    categories: CategoryOption[];
     selectedTowns: string[];
     onTownToggle: (townSlug: string) => void;
-    selectedCategory: string | null;
-    onCategorySelect: (slug: string | null) => void;
     currentWindow: EventWindow;
     onWindowChange: (w: EventWindow) => void;
     currentUser: AuthUser | null;
@@ -41,7 +38,7 @@ interface SidebarProps {
 }
 
 // Full-width stacked filter row — the "Craigslist" facet aesthetic shared by
-// every filter group in this sidebar (Range, Towns, Categories, Interest).
+// every filter group in this sidebar (Range, Towns, Interest).
 function FilterRow({
     label,
     count,
@@ -111,11 +108,8 @@ export function Sidebar({
     selectedTags,
     onTagToggle,
     towns,
-    categories,
     selectedTowns,
     onTownToggle,
-    selectedCategory,
-    onCategorySelect,
     currentWindow,
     onWindowChange,
     currentUser,
@@ -133,7 +127,7 @@ export function Sidebar({
 
     const [showAllTowns, setShowAllTowns] = useState(false);
 
-    const facetsQuery = useFacets(currentWindow, selectedCategory);
+    const facetsQuery = useFacets(currentWindow);
     const townCount = (slug: string): number | undefined =>
         facetsQuery.isSuccess ? facetsQuery.data.towns[slug] ?? 0 : undefined;
     const tagCount = (id: string): number | undefined =>
@@ -257,31 +251,6 @@ export function Sidebar({
                             {showAllTowns ? 'Fewer towns' : `More towns (${towns.length - TOWN_PREVIEW_COUNT})`}
                         </button>
                     )}
-                </div>
-            </div>
-
-            <hr />
-
-            {/* Categories — single-select, re-selecting the active row clears back to All */}
-            <div role="group" aria-label="Filter by category">
-                <p className="text-[9px] uppercase tracking-[0.18em] font-black mb-1 text-[var(--color-text-muted)]">
-                    Categories
-                </p>
-                <div className="border-t border-[var(--color-border)]">
-                    <FilterRow
-                        label="All Categories"
-                        selected={selectedCategory === null}
-                        onToggle={() => onCategorySelect(null)}
-                        showClear={false}
-                    />
-                    {categories.map(cat => (
-                        <FilterRow
-                            key={cat.slug}
-                            label={cat.display_name}
-                            selected={selectedCategory === cat.slug}
-                            onToggle={() => onCategorySelect(selectedCategory === cat.slug ? null : cat.slug)}
-                        />
-                    ))}
                 </div>
             </div>
 

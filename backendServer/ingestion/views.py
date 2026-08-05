@@ -93,13 +93,6 @@ def direct_submit(request):
             "raw_end_datetime": data.get("end_datetime"),
             "source_url": data.get("event_url", "")[:500],
             "raw_organizer": data["organizer_name"][:200],
-            # Stored verbatim, unvalidated — mirrors raw_organizer's "as
-            # submitted" idiom. The broadcast SPA's category vocabulary isn't
-            # guaranteed to match CATEGORY_SLUGS, so filtering against the
-            # canonical vocabulary happens once, in standardize_event, rather
-            # than here (an `update_or_create` on every resubmission would
-            # otherwise re-filter the same list for no reason).
-            "raw_categories": data["categories"],
             "processed": False,
         },
     )

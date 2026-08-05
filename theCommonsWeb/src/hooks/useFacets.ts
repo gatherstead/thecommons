@@ -4,10 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { getFacets } from '../services/eventService';
 import type { EventWindow } from './useEvents';
 
-export function useFacets(currentWindow: EventWindow, selectedCategory: string | null) {
+export function useFacets(currentWindow: EventWindow) {
     return useQuery({
-        queryKey: ['facets', currentWindow, selectedCategory],
-        queryFn: () => getFacets({ window: currentWindow, category: selectedCategory ?? undefined }),
+        queryKey: ['facets', currentWindow],
+        queryFn: () => getFacets({ window: currentWindow }),
         retry: false,
     });
 }

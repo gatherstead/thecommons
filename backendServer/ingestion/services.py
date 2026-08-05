@@ -3,7 +3,7 @@ import logging
 from django.db import transaction
 
 from accounts.models import BetterAuthUser
-from events.models import Category, Event, Town
+from events.models import Event, Town
 from events.tagging import apply_tags
 from ingestion.deduplicator import (
     BROADCAST_LOCATION_SIMILARITY_THRESHOLD,
@@ -124,9 +124,6 @@ def publish_all_approved(source=None, force_town=None):  # noqa: C901  # inheren
                     is_verified=is_verified,
                 )
                 apply_tags(event, staged.tags)
-                if staged.categories:
-                    cats = Category.objects.filter(slug__in=staged.categories)
-                    event.categories.add(*cats)
                 staged.published_event = event
                 staged.save(update_fields=["published_event"])
                 published_count += 1
@@ -269,12 +266,6 @@ def ingest_direct_submission(raw_event_id, user_id):
             f"Direct submission by {organizer}" if organizer else "Direct submission by host"
         )
 
-        category_objs = (
-            Category.objects.filter(slug__in=staged.categories)
-            if staged.categories
-            else Category.objects.none()
-        )
-
         if prior_event is not None:
             event = prior_event
             event.title = staged.title
@@ -289,8 +280,6 @@ def ingest_direct_submission(raw_event_id, user_id):
             event.is_verified = is_verified
             event.save()
             apply_tags(event, staged.tags)
-            event.categories.clear()
-            event.categories.add(*category_objs)
             staged.published_event = event
         else:
             event = Event.objects.create(
@@ -306,7 +295,6 @@ def ingest_direct_submission(raw_event_id, user_id):
                 is_verified=is_verified,
             )
             apply_tags(event, staged.tags)
-            event.categories.add(*category_objs)
             staged.published_event = event
 
         staged.status = "approved"

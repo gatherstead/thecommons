@@ -1,5 +1,11 @@
 # SEO Hub Pages — Town & Category Landing Pages
 
+> ⚠️ **Partly superseded (suite 50, 2026-08-05).** Event categories were retired
+> entirely — `Category`, `/events/categories/`, and the `?category=` filter no
+> longer exist. Neither `/towns/[slug]` nor `/categories/[slug]` was ever built,
+> so nothing here is live; the **town** half of this design still stands, the
+> **category** half does not. Do not implement the category routes.
+
 Design doc for the town and category hub pages identified as the highest long-term
 SEO play for The Commons. This is a 2–3 day build; implement after the quick wins
 (JSON-LD, sitemap, metadataBase) are live and indexed.

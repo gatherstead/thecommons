@@ -18,17 +18,6 @@ class Town(models.Model):
         return self.name
 
 
-class Category(models.Model):
-    slug = models.SlugField(unique=True)
-    display_name = models.CharField(max_length=100)
-
-    class Meta:
-        verbose_name_plural = "categories"
-
-    def __str__(self):
-        return self.display_name
-
-
 class Event(models.Model):
     uuid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -49,8 +38,6 @@ class Event(models.Model):
     photo = models.ImageField(upload_to="event_photos/", null=True, blank=True)
 
     tags = models.ManyToManyField(Tag, related_name="events", blank=True)
-
-    categories = models.ManyToManyField(Category, related_name="events", blank=True)
 
     link = models.URLField(max_length=500, blank=True)
 

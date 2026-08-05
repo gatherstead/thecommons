@@ -106,13 +106,6 @@ class RawEvent(models.Model):
     # "Direct submission by {name}" attribution on the published Event.
     raw_organizer = models.CharField(max_length=200, blank=True)
 
-    # Category slugs as submitted (direct host submissions only), pre-
-    # standardization — mirrors `raw_organizer`'s "as submitted" idiom.
-    # `ingestion/standardizer.py` maps these onto the controlled vocabulary
-    # before they land on `StagedEvent.categories`; a later ticket wires the
-    # write side (this field is currently unpopulated).
-    raw_categories = models.JSONField(default=list, blank=True)
-
     processed = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -167,7 +160,6 @@ class StagedEvent(models.Model):
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
     tags = models.JSONField(default=list)
-    categories = models.JSONField(default=list)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     link = models.URLField(max_length=500, blank=True)
 

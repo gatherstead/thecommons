@@ -3,8 +3,8 @@
 The event list is cached under a version-keyed scheme: each cache key embeds the
 current list version, and a write bumps the version so subsequent reads miss and
 repopulate (old entries fall out via TTL). This works with Django's stdlib
-RedisCache backend, which has no `delete_pattern`. Towns and categories are
-near-static, so they use plain keys with a long TTL.
+RedisCache backend, which has no `delete_pattern`. Towns are near-static, so
+they use a plain key with a long TTL.
 """
 
 import hashlib
@@ -15,7 +15,6 @@ EVENTS_LIST_VERSION_KEY = "events:list:version"
 EVENTS_LIST_TTL = 60  # seconds — community freshness without hammering Neon
 
 TOWNS_CACHE_KEY = "events:towns"
-CATEGORIES_CACHE_KEY = "events:categories"
 STATIC_TTL = 60 * 60  # 1 hour — refreshed only via admin/pipeline
 
 
@@ -56,7 +55,3 @@ def invalidate_events_list():
 
 def invalidate_towns():
     cache.delete(TOWNS_CACHE_KEY)
-
-
-def invalidate_categories():
-    cache.delete(CATEGORIES_CACHE_KEY)

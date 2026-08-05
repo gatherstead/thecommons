@@ -8,7 +8,6 @@ import { type FrontendEvent } from '../models/eventsModels';
 import { type TagId } from '../constants/tags';
 import { useToggleSet } from './useToggleSet';
 import { useTowns } from './useTowns';
-import { useCategories } from './useCategories';
 
 export type TownId = string;
 export type ViewMode = 'feed' | 'calendar';
@@ -35,34 +34,32 @@ function isEventWindow(value: string | null): value is EventWindow {
     return value === '3months' || value === '6months' || value === '12months' || value === 'past';
 }
 
-// Builds the ?tag=&town=&category=&window=&page= query string for the current
+// Builds the ?tag=&town=&window=&page= query string for the current
 // filter state, omitting anything at its default value so a filter-free view
 // keeps a bare URL. Param names/repetition MUST match the API (see 48.12):
 // tag repeats (AND), town repeats (OR).
 function filtersToSearchParams(state: {
     selectedTags: string[];
     selectedTowns: string[];
-    selectedCategory: string | null;
     currentWindow: EventWindow;
     currentPage: number;
 }): URLSearchParams {
     const params = new URLSearchParams();
     for (const t of state.selectedTags) params.append('tag', t);
     for (const t of state.selectedTowns) params.append('town', t);
-    if (state.selectedCategory) params.set('category', state.selectedCategory);
     if (state.currentWindow !== '3months') params.set('window', state.currentWindow);
     if (state.currentPage > 1) params.set('page', String(state.currentPage));
     return params;
 }
 
-async function fetchForWindow(w: EventWindow, category?: string, tags?: string[], towns?: string[]) {
-    if (w === 'past') return getEvents({ window: 'past', category, tags, towns });
-    if (w === '3months') return getEvents({ category, tags, towns });
+async function fetchForWindow(w: EventWindow, tags?: string[], towns?: string[]) {
+    if (w === 'past') return getEvents({ window: 'past', tags, towns });
+    if (w === '3months') return getEvents({ tags, towns });
     const before = new Date(Date.now() + (w === '6months' ? 180 : 365) * DAY_MS).toISOString();
-    return getEvents({ before, category, tags, towns });
+    return getEvents({ before, tags, towns });
 }
 
-type ChangeKind = 'initial' | 'window' | 'category' | 'page' | 'facet';
+type ChangeKind = 'initial' | 'window' | 'page' | 'facet';
 
 export function useEvents(viewMode: ViewMode = 'feed') {
     const queryClient = useQueryClient();
@@ -74,9 +71,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     // view. Later URL changes are driven BY this state (see the sync effect
     // below), not the other way around, so we intentionally don't re-read
     // searchParams after the first render.
-    const [selectedCategory, setSelectedCategoryState] = useState<string | null>(
-        () => searchParams.get('category'),
-    );
     const [currentWindow, setCurrentWindow] = useState<EventWindow>(() => {
         const w = searchParams.get('window');
         return isEventWindow(w) ? w : '3months';
@@ -109,7 +103,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const lastChangeRef = useRef<ChangeKind>('initial');
 
     const townsQuery = useTowns();
-    const categoriesQuery = useCategories();
 
     // useToggleSet only consumes this initial array on its first render, so
     // recomputing it from searchParams every render is harmless.
@@ -123,18 +116,18 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const pageQuery = useQuery({
         queryKey: currentPageUrl
             ? ['events', 'page', currentPageUrl]
-            : ['events', 'window', currentWindow, selectedCategory, selectedTags, selectedTowns],
+            : ['events', 'window', currentWindow, selectedTags, selectedTowns],
         queryFn: () =>
             currentPageUrl
                 ? getEvents({ pageUrl: currentPageUrl })
-                : fetchForWindow(currentWindow, selectedCategory ?? undefined, selectedTags, selectedTowns),
+                : fetchForWindow(currentWindow, selectedTags, selectedTowns),
         placeholderData: keepPreviousData,
     });
 
-    // Tag/town selection is server-side filtering now (it changes `results` and
-    // `count`), so — like category — it must reset pagination back to page 1 and
-    // invalidate the calendar's month cache (month fetches also carry tag/town
-    // params, see prefetchMonth below).
+    // Tag/town selection is server-side filtering (it changes `results` and
+    // `count`), so it must reset pagination back to page 1 and invalidate the
+    // calendar's month cache (month fetches also carry tag/town params, see
+    // prefetchMonth below).
     const resetForFacetChange = () => {
         lastChangeRef.current = 'facet';
         setCurrentPageUrl(null);
@@ -165,8 +158,8 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     };
 
     // Switching between feed and calendar invalidates the calendar's month
-    // cache and resets pagination (window and category are preserved — they're
-    // shared filter state, not view-local).
+    // cache and resets pagination (window is preserved — it's shared filter
+    // state, not view-local).
     useEffect(() => {
         lastChangeRef.current = 'initial';
         setCurrentPageUrl(null);
@@ -236,7 +229,7 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     // eslint-disable-next-line react-hooks/refs
     const isLoading =
         pageQuery.isPending ||
-        (isPlaceholder && (lastChangeRef.current === 'category' || lastChangeRef.current === 'facet'));
+        (isPlaceholder && lastChangeRef.current === 'facet');
     // eslint-disable-next-line react-hooks/refs
     const isLoadingWindow = isPlaceholder && lastChangeRef.current === 'window';
     // eslint-disable-next-line react-hooks/refs
@@ -249,16 +242,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         setCurrentWindow(w);
     };
 
-    const setCategory = (slug: string | null) => {
-        lastChangeRef.current = 'category';
-        setSelectedCategoryState(slug);
-        setCurrentPageUrl(null);
-        setCurrentPage(1);
-        setMonthEvents([]);
-        fetchedMonths.current.clear();
-        emptyMonthVisits.current.clear();
-    };
-
     const nextPage = () => {
         if (!pageQuery.data?.next || isLoadingPage) return;
         lastChangeRef.current = 'page';
@@ -269,7 +252,7 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const prevPage = () => {
         if (!pageQuery.data?.previous || isLoadingPage) return;
         lastChangeRef.current = 'page';
-        // Page 1 is keyed by window+category, so going back to it reuses that cache entry.
+        // Page 1 is keyed by window+facets, so going back to it reuses that cache entry.
         setCurrentPageUrl(currentPage === 2 ? null : pageQuery.data.previous);
         setCurrentPage(p => p - 1);
     };
@@ -296,14 +279,13 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         const params = filtersToSearchParams({
             selectedTags,
             selectedTowns,
-            selectedCategory,
             currentWindow,
             currentPage,
         });
         const qs = params.toString();
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedTags, selectedTowns, selectedCategory, currentWindow, currentPage, pathname, router]);
+    }, [selectedTags, selectedTowns, currentWindow, currentPage, pathname, router]);
 
     // Tag/town filtering now happens server-side (see `_filtered_events_queryset`
     // in backendServer/events/views.py) so both `pageQuery.data.results` and
@@ -318,9 +300,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     const clearFilters = () => {
         clearTags();
         clearTowns();
-        if (selectedCategory !== null) {
-            setCategory(null);
-        }
         setWindow('3months');
     };
 
@@ -331,7 +310,6 @@ export function useEvents(viewMode: ViewMode = 'feed') {
     return {
         filteredEvents,
         towns: townsQuery.data ?? [],
-        categories: categoriesQuery.data ?? [],
         isLoading,
         currentWindow,
         isLoadingWindow,
@@ -347,11 +325,9 @@ export function useEvents(viewMode: ViewMode = 'feed') {
         isLoadingMonth,
         selectedTags,
         selectedTowns,
-        selectedCategory,
         toggleTag,
         toggleTown,
         clearTowns,
-        setCategory,
         clearFilters,
         refetch: () => {
             lastChangeRef.current = 'initial';

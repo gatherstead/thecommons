@@ -30,7 +30,6 @@ export default function HomePageClient() {
   const {
     filteredEvents,
     towns,
-    categories,
     isLoading,
     currentWindow,
     isLoadingWindow,
@@ -46,11 +45,9 @@ export default function HomePageClient() {
     isLoadingMonth,
     selectedTags,
     selectedTowns,
-    selectedCategory,
     toggleTag,
     toggleTown,
     clearTowns,
-    setCategory,
     clearFilters,
   } = useEvents(viewMode);
 
@@ -94,13 +91,9 @@ export default function HomePageClient() {
     return filteredEvents.filter((e) => isSameDay(e.date, selectedDate));
   }, [filteredEvents, selectedDate, viewMode]);
 
-  const selectedSectionName =
-    categories.find((c) => c.slug === selectedCategory)?.display_name ?? null;
-
   const hasFilters =
     selectedTags.length > 0 ||
     selectedTowns.length > 0 ||
-    selectedCategory !== null ||
     selectedDate !== null ||
     currentWindow !== '3months';
 
@@ -120,11 +113,8 @@ export default function HomePageClient() {
     selectedTags,
     onTagToggle: toggleTag,
     towns,
-    categories,
     selectedTowns,
     onTownToggle: toggleTown,
-    selectedCategory,
-    onCategorySelect: setCategory,
     currentWindow,
     onWindowChange: setWindow,
     currentUser: user,
@@ -156,9 +146,6 @@ export default function HomePageClient() {
                   : `${displayedEvents.length} event${displayedEvents.length !== 1 ? 's' : ''}`}
                 currentWindow={currentWindow}
                 onWindowChange={setWindow}
-                categories={categories}
-                selectedCategory={selectedCategory}
-                onCategorySelect={setCategory}
               />
               <EventFeed
                 events={displayedEvents}
@@ -172,9 +159,6 @@ export default function HomePageClient() {
                       : `${displayedEvents.length} event${displayedEvents.length !== 1 ? 's' : ''}`}
                     currentWindow={currentWindow}
                     onWindowChange={setWindow}
-                    categories={categories}
-                    selectedCategory={selectedCategory}
-                    onCategorySelect={setCategory}
                   />
                 }
                 currentPage={currentPage}
@@ -183,7 +167,6 @@ export default function HomePageClient() {
                 onNextPage={nextPage}
                 onPrevPage={prevPage}
                 isLoadingPage={isLoadingPage}
-                sectionName={selectedSectionName}
               />
             </div>
             <div className="lg:col-span-2 lg:pl-6 lg:border-l border-[var(--color-border-light)] mt-6 lg:mt-0">

@@ -5,7 +5,7 @@ from django.test import TestCase, tag
 from django.urls import reverse
 from django.utils import timezone
 
-from events.models import Category, Event, Tag
+from events.models import Event, Tag
 
 from .factories import make_event, make_town
 
@@ -65,22 +65,6 @@ class EventFacetsTests(TestCase):
         resp = self.client.get(reverse("event-facets"), {"window": "past"})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["towns"], {"carrboro": 1})
-
-    def test_category_filter_narrows_counts_consistently_with_list(self):
-        # Migration 0012 already seeds these slugs, so fetch rather than create.
-        music, _ = Category.objects.get_or_create(slug="music", defaults={"display_name": "Music"})
-        art, _ = Category.objects.get_or_create(slug="art", defaults={"display_name": "Art"})
-
-        music_event = make_event("Music Show", town=self.carrboro, days_offset=1)
-        music_event.categories.add(music)
-        art_event = make_event("Art Show", town=self.chapel_hill, days_offset=1)
-        art_event.categories.add(art)
-
-        facets_resp = self.client.get(reverse("event-facets"), {"category": "music"})
-        list_resp = self.client.get(reverse("events"), {"category": "music"})
-
-        self.assertEqual(facets_resp.data["towns"], {"carrboro": 1})
-        self.assertEqual(list_resp.data["count"], 1)
 
     def test_facets_are_cached_and_invalidated_with_list(self):
         make_event("First", town=self.carrboro, days_offset=1)

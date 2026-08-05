@@ -16,7 +16,7 @@ from backend.permissions import BearerTokenAuthentication, HasCommonsAPIKeyOrUse
 from ingestion.models import StagedEvent
 
 from . import cache as events_cache
-from .models import Category, Event, Town
+from .models import Event, Town
 from .serializers import EventSerializer
 
 PAGE_SIZE = 30
@@ -38,19 +38,9 @@ def get_towns(request):
     return Response(data)
 
 
-@api_view(["GET"])
-def get_categories(request):
-    data = cache.get(events_cache.CATEGORIES_CACHE_KEY)
-    if data is None:
-        cats = Category.objects.all().order_by("display_name")
-        data = [{"slug": c.slug, "display_name": c.display_name} for c in cats]
-        cache.set(events_cache.CATEGORIES_CACHE_KEY, data, events_cache.STATIC_TTL)
-    return Response(data)
-
-
 def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; complexity is inherent
     """
-    Shared window/category/date filtering for the events list and facet-count endpoints.
+    Shared window/date filtering for the events list and facet-count endpoints.
 
     Query params (applied in priority order — after/before/include_past override window):
       after        ISO datetime — events on or after this datetime
@@ -61,7 +51,6 @@ def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; 
                             otherwise date >= now (fills page from all future events)
                    past:    date < now
                    future:  date > now + 90 days
-      category     repeatable (?category=a&category=b) — OR within the group
       tag          repeatable (?tag=a&tag=b) — AND within the group: an event must
                    carry every requested tag, not just one of them
       town         repeatable (?town=a&town=b) — OR within the group
@@ -106,12 +95,8 @@ def _filtered_events_queryset(request):  # noqa: C901  # query-param filtering; 
             else:
                 events = events.filter(date__gte=now)
 
-    category_param = request.query_params.getlist("category")
-    if category_param:
-        events = events.filter(categories__slug__in=category_param).distinct()
-
-    # Multi-tag is AND (an event must carry every selected tag), unlike category/town
-    # which are OR within their own group. A single `tags__name__in=[...]` filter would
+    # Multi-tag is AND (an event must carry every selected tag), unlike town
+    # which is OR within its own group. A single `tags__name__in=[...]` filter would
     # give OR semantics, so each tag gets its own chained `.filter()` call — each one
     # adds its own join, which is what makes the AND work.
     #
@@ -159,7 +144,7 @@ def get_facets(request):
     """
     Facet counts (towns, tags) over the full filtered event set — unpaginated.
 
-    Accepts the same window/category/date query params as `get_all`. Used by the
+    Accepts the same window/date query params as `get_all`. Used by the
     frontend sidebar so counts reflect the whole filtered result, not just the
     current page.
     """
@@ -219,33 +204,6 @@ def _coerce_price(value):
     return value
 
 
-def _coerce_categories(data):
-    """Read submitted categories as a list of slugs, accepting either key.
-
-    `StagedEvent.categories` is a list (suite 49.11), but the live post form
-    (`theCommonsWeb/src/app/post/page.tsx`) is a single-select wizard step and
-    still posts a singular `category` string. Backend and frontend deploy
-    independently — Docker vs Vercel — so the old key has to keep working
-    rather than 500-ing the public submission form during any deploy skew.
-
-    Returns None when neither key is present, so PATCH can distinguish "not
-    submitted" (leave alone) from "submitted empty" (clear it).
-    """
-    if "categories" in data:
-        # Form-encoded posts arrive as a QueryDict, where `data["categories"]`
-        # silently yields only the LAST repeated value — `getlist` is the only
-        # way to see `?categories=a&categories=b` whole. JSON bodies parse to a
-        # plain dict and hand back the real list.
-        value = data.getlist("categories") if hasattr(data, "getlist") else data["categories"]
-        if isinstance(value, str):  # tolerate a bare string on the plural key
-            value = [value]
-        return [slug for slug in (value or []) if slug]
-    if "category" in data:
-        slug = data["category"]
-        return [slug] if slug else []
-    return None
-
-
 @api_view(["GET", "PATCH", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -292,9 +250,6 @@ def manage_staged_event(request, event_id):  # noqa: C901  # multi-method CRUD v
         staged.link = data["link"]
     if "tags" in data:
         staged.tags = data["tags"]
-    submitted_categories = _coerce_categories(data)
-    if submitted_categories is not None:
-        staged.categories = submitted_categories
     staged.save()
     return Response({"id": staged.id, "status": staged.status})
 
@@ -323,7 +278,6 @@ def create_event(request):
         price=_coerce_price(data.get("price")),
         link=data.get("link", ""),
         tags=data.get("tags", []),
-        categories=_coerce_categories(data) or [],
         status="pending",
         submitted_by=submitted_by,
     )

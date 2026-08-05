@@ -21,11 +21,12 @@ the system, read `overview.md` first. This doc exists so you can keep a tab open
   `UserProfile`, `BusinessProfile`, and `NewsletterSubscriber` between Django apps *without*
   moving their physical tables, so the app label and the Postgres table name now disagree for
   all three (Deep Dive §8).
-- `Town` and `Category` are real SQL tables, not hardcoded enums — the ingestion pipeline parks
-  (never drops) any event whose town slug doesn't match a row.
+- `Town` is a real SQL table, not a hardcoded enum — the ingestion pipeline parks
+  (never drops) any event whose town slug doesn't match a row. (Event categories were retired
+  entirely in suite 50; `Tag` is now the only event facet vocabulary.)
 - `broadcast` is intentionally isolated: its models never carry a foreign key into `events`,
   `accounts`, or `ingestion` — it works off a denormalized snapshot of an event's fields instead.
-- Who depends on this: the `events` API and frontend read/write `Event`/`Tag`/`Category`/`Town`;
+- Who depends on this: the `events` API and frontend read/write `Event`/`Tag`/`Town`;
   the `ingestion` pipeline writes `RawEvent`/`StagedEvent` on the way to publishing an `Event`;
   `accounts` mediates all identity and feeds `newsletter`'s recipient-building; `broadcast`
   reads none of the above and stands alone.
@@ -43,10 +44,9 @@ Five Django apps in `backendServer/` own the `public` Postgres schema between th
 `accounts` merely *mirrors*, read-only, out of a `neon_auth` schema that belongs to Better Auth
 (the Next.js identity provider, not Django). A recent refactor (Suite 41) moved several models
 between apps without moving their physical tables — §8 explains exactly what that means and why
-a table name and its owning Django app no longer match for three of these models. `Town` and
-`Category` are real SQL tables, not hardcoded choices — nothing in the codebase should treat them
-as enums, and the ingestion pipeline silently parks (not drops) any event whose town slug doesn't
-match a row.
+a table name and its owning Django app no longer match for three of these models. `Town` is a
+real SQL table, not a hardcoded choice — nothing in the codebase should treat it as an enum, and
+the ingestion pipeline silently parks (not drops) any event whose town slug doesn't match a row.
 
 ### 2. How the models relate
 
@@ -54,7 +54,6 @@ match a row.
 erDiagram
     Town ||--o{ Event : "town (SET_NULL)"
     Event }o--o{ Tag : tags
-    Event }o--o{ Category : categories
     BetterAuthUser ||--o{ Event : "created_by (SET_NULL)"
     BetterAuthUser ||--o| UserProfile : "user (1:1)"
     BetterAuthUser ||--o| BusinessProfile : "user (1:1)"
@@ -112,17 +111,6 @@ vocabulary across events, personal interests, and business listings.
 
 A real SQL table, not an enum — seeded by data migrations (`events/migrations/0016_seed_chatham_towns.py`, `0018_seed_apex_durham_towns.py`), editable in the admin. Adding a new town is a data change, not a code change.
 
-#### `Category`
-
-| Field | Meaning |
-|---|---|
-| `slug` | Unique (`SlugField`). |
-| `display_name` | Human label. |
-
-Same story as `Town` — a real table (`Meta.verbose_name_plural = "categories"` is the only
-non-default option), not hardcoded. Unlike `Town`, an unmatched category slug does **not** stall
-an event's publication — see §10.
-
 #### `Event`
 
 | Field | Meaning |
@@ -131,7 +119,7 @@ an event's publication — see §10.
 | `title`, `venue`, `description`, `price`, `photo`, `link` | Plain content fields; `price` is nullable (no price listed, not "$0"). |
 | `date` | Indexed (`db_index=True`) — this is the field every list/window query filters and sorts on. |
 | `town` | FK → `Town`, `SET_NULL` — an event survives its town row being deleted, just loses the association. |
-| `tags`, `categories` | M2M → `Tag`, `Category`. |
+| `tags` | M2M → `Tag`. |
 | `is_verified` | `True` only when the submitter was an authenticated user with `user_type="BUSINESS"` at publish time (`ingestion.services`) — not a manual admin toggle, not related to safety scoring. |
 | `source_name` | Free text describing provenance: the originating `EventSource.name` for scraped events, `"Community Submission"` for anonymous `/events/create` posts, `"Direct submission by {organizer}"` / `"Direct submission by host"` for the broadcast direct-submit path. |
 | `created_by` | FK → `accounts.BetterAuthUser`, `SET_NULL`, `db_constraint=False` (see §8 for why FKs into the mirrors never carry a DB-level constraint). Null for pipeline-ingested events — this is how you tell "someone submitted this" from "the scraper found this." |
@@ -183,7 +171,7 @@ this source" query the admin/monitoring views use.
 | Field | Meaning |
 |---|---|
 | `raw_event` | OneToOne → `RawEvent`, **nullable** — null for events entered via the plain `/events/create` form, since those skip the raw/standardize step entirely and go straight to a pending `StagedEvent`. |
-| `town`, `category` | Plain strings (an LLM's best guess, or a user's typed value), **not foreign keys** — see §10 for what happens when they don't match a real row. |
+| `town` | A plain string (an LLM's best guess, or a user's typed value), **not a foreign key** — see §10 for what happens when it doesn't match a real row. |
 | `tags` | `JSONField`, a list of tag-name strings — converted to real `Tag` rows only at publish time via `get_or_create`. |
 | `status` | `pending` / `approved` / `rejected` / `duplicate` / `published` / `skipped_no_town`. See the state diagram below — `published` is terminal but the row is **not deleted**, because it's part of the deduplicator's matching corpus (`deduplicator.CANDIDATE_STATUSES` includes `pending`, `approved`, `duplicate`, `published`, and `skipped_no_town` — everything except `rejected`). Rows are eventually reaped by `cleanup_old_events` once `start_datetime` is in the past. |
 | `safety_score` | **Nullable, and the null-vs-value distinction matters.** `null` = not yet scored by Gemini. A non-null value with `status="pending"` means it *was* scored and came back above `SAFETY_SCORE_THRESHOLD` (default `0.3`) — held for manual review, not rejected. `<= SAFETY_SCORE_THRESHOLD` triggers auto-approval instead. There is no separate "held for review" status value; it's this null/non-null-plus-pending combination. |
@@ -415,13 +403,11 @@ factual disagreement.
    migration would try to create or alter tables that already exist and are owned by a different
    codebase.
 
-3. **`Town` and `Category` are SQL rows, not enums.** Don't hardcode a Python list of towns or
-   categories anywhere — new ones are added as data (seed migrations or the admin), not code.
+3. **`Town` rows are SQL rows, not enums.** Don't hardcode a Python list of towns anywhere —
+   new ones are added as data (seed migrations or the admin), not code.
    The ingestion pipeline enforces this at the boundary: a `StagedEvent.town` string that doesn't
    slugify to an existing `Town.slug` sends the row to `status="skipped_no_town"` rather than
-   publishing with a null/wrong town (see §4's state diagram). `Category` is looser — an
-   unmatched category slug doesn't block publication at all; `publish_all_approved` just skips
-   attaching a category and the event goes live uncategorized.
+   publishing with a null/wrong town (see §4's state diagram).
 
 4. **`StagedEvent.safety_score` null and `StagedEvent.safety_score` non-null-but-`pending` mean
    different things.** Null = the Gemini safety scorer hasn't run on this row yet. A non-null

@@ -61,7 +61,10 @@ There is a deliberate `accounts ↔ newsletter` coupling, not a boundary bug: `a
 writes a `NewsletterSubscriber` row (email-preference sync) and
 `newsletter._build_recipients` reads `accounts.UserProfile` (tag-filtered digests). Both
 directions are intentional and covered by each app's `test_isolation_fast.py` (which forbid
-reaching into `ingestion`/`broadcast`, not into each other or `events`).
+reaching into `ingestion`/`broadcast`, not into each other or `events`). That guard covers
+`accounts` and `newsletter` only — `events` has no isolation test and does import
+`ingestion.models.StagedEvent` for the user-submission endpoints (see
+[`backendServer/AGENTS.md`](backendServer/AGENTS.md)).
 
 ### Migration mechanics for the model moves
 

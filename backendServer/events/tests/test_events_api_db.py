@@ -159,6 +159,44 @@ class EventCreateTests(TestCase):
         self.assertEqual(staged.title, "New Concert")
         self.assertIsNone(staged.submitted_by)
 
+    def test_create_accepts_legacy_singular_category(self):
+        """The live post form is a single-select wizard and still sends
+        `category`; it must keep staging correctly after the field widened to
+        a list, since the frontend deploys separately from the backend.
+        """
+        resp = self.client.post(
+            reverse("create-event"),
+            {**self._payload(), "category": "music"},
+            format="json",
+            HTTP_AUTHORIZATION="Bearer test-api-key",
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(StagedEvent.objects.get(id=resp.data["id"]).categories, ["music"])
+
+    def test_create_accepts_plural_categories_list(self):
+        # APIClient, not self.client: this class's plain Django test Client
+        # ignores `format="json"` and form-encodes, which collapses a repeated
+        # key to its last value. A real JSON body is what the SPA sends.
+        resp = APIClient().post(
+            reverse("create-event"),
+            {**self._payload(), "categories": ["music", "comedy"]},
+            format="json",
+            HTTP_AUTHORIZATION="Bearer test-api-key",
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(
+            StagedEvent.objects.get(id=resp.data["id"]).categories, ["music", "comedy"]
+        )
+
+    def test_create_without_category_stages_empty_list(self):
+        resp = self.client.post(
+            reverse("create-event"),
+            self._payload(),
+            format="json",
+            HTTP_AUTHORIZATION="Bearer test-api-key",
+        )
+        self.assertEqual(StagedEvent.objects.get(id=resp.data["id"]).categories, [])
+
     def test_create_without_key_is_401(self):
         resp = self.client.post(reverse("create-event"), self._payload(), format="json")
         self.assertEqual(resp.status_code, 401)

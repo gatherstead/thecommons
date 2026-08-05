@@ -62,6 +62,11 @@ audience).
 
 ### 2. First run: clone to a running system
 
+> [`local-setup.md`](local-setup.md) is now the fuller version of this section — prerequisites
+> and versions, all four env files, Celery workers, Playwright, and the Docker Compose path.
+> This section is kept as the short form for someone who is here to run the tests. If the two
+> disagree, `local-setup.md` is the more recently checked one.
+
 #### 2.1 Backend
 
 ```bash

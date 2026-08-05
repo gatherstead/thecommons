@@ -36,6 +36,7 @@ class StandardizerTests(TestCase):
             "location_name": "Cat's Cradle",
             "town": "Carrboro",
             "tags": ["live-music", "not-a-real-tag", "free"],
+            "categories": ["music", "not-a-real-category"],
             "price": 0,
         }
         with self._gemini_returning(payload):
@@ -46,8 +47,18 @@ class StandardizerTests(TestCase):
         self.assertEqual(staged.status, "pending")
         # Invalid tags are dropped against the VALID_TAGS allowlist.
         self.assertEqual(set(staged.tags), {"live-music", "free"})
+        # Invalid categories are dropped against the CATEGORY_SLUGS allowlist.
+        self.assertEqual(staged.categories, ["music"])
         self.raw.refresh_from_db()
         self.assertTrue(self.raw.processed)
+
+    def test_categories_over_cap_are_truncated(self):
+        payload = self._minimal_payload()
+        payload["categories"] = ["music", "art", "community"]
+        with self._gemini_returning(payload):
+            staged = standardize_event(self.raw)
+
+        self.assertEqual(staged.categories, ["music", "art"])
 
     def test_gemini_error_leaves_raw_unprocessed(self):
         client = mock.Mock()
@@ -158,6 +169,7 @@ class StandardizerTests(TestCase):
             "location_name": None,
             "town": None,
             "tags": None,
+            "categories": None,
             "price": None,
         }
         with self._gemini_returning(payload):
@@ -168,6 +180,7 @@ class StandardizerTests(TestCase):
         self.assertEqual(staged.location_name, self.raw.raw_location)
         self.assertEqual(staged.town, "")
         self.assertEqual(staged.tags, [])
+        self.assertEqual(staged.categories, [])
         self.assertEqual(staged.price, -1)
 
     def test_non_numeric_price_falls_back_to_sentinel(self):

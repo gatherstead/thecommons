@@ -19,6 +19,7 @@ still to be written.
 |---|---|---|
 | [start-here.md](start-here.md) | Task-oriented map: "I want to…" → the right doc | 2026-08-01 |
 | [overview.md](overview.md) | System map: product, monorepo layout, event lifecycle, architecture diagram — read this first | 2026-08-01 |
+| [local-setup.md](local-setup.md) | Clone to running system: prerequisites, the four env files, backend/frontends/Redis/Celery/Playwright, the Docker path | 2026-08-05 |
 | [auth.md](auth.md) | Better Auth (Next.js) is identity's source of truth; Django only mirrors it and verifies JWTs | 2026-08-01 |
 | [ingestion.md](ingestion.md) | Source → Gemini standardize → dedupe → safety-score → publish, and how to classify a new source | 2026-08-01 |
 | [data-model.md](data-model.md) | Every core model, field by field, and how they relate — the reference to keep open in another tab | 2026-08-01 |

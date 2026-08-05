@@ -22,7 +22,7 @@ covers the same ground.
 2. **How identity works** → [`auth.md`](auth.md)
 3. **How an event gets from a website onto the site** → [`ingestion.md`](ingestion.md)
 4. **The data model** → [`data-model.md`](data-model.md)
-5. **Run it locally** → [`testing.md`](testing.md)
+5. **Run it locally** → [`local-setup.md`](local-setup.md), then [`testing.md`](testing.md)
 
 ---
 
@@ -31,6 +31,7 @@ covers the same ground.
 | I want to… | Read | Also useful |
 |---|---|---|
 | Understand the whole system | [`overview.md`](overview.md) | [`ARCHITECTURE.md`](../ARCHITECTURE.md) |
+| Get the project running on my machine | [`local-setup.md`](local-setup.md) | [`testing.md`](testing.md), [`docs/dev-db-isolation.md`](../docs/dev-db-isolation.md) |
 | Work on sign-in / accounts / the JWT bridge | [`auth.md`](auth.md) | [`docs/runbook-auth-cutover.md`](../docs/runbook-auth-cutover.md), [`docs/prd-centralized-auth.md`](../docs/prd-centralized-auth.md) |
 | Add or debug an event source | [`ingestion.md`](ingestion.md) | [`docs/ingestion-pipeline.md`](../docs/ingestion-pipeline.md), [`docs/safety-scoring.md`](../docs/safety-scoring.md), `/source-creation` skill |
 | Diagnose a stuck / failing source | [`ingestion.md`](ingestion.md) | [`docs/ingestion-monitoring.md`](../docs/ingestion-monitoring.md) (`/devtools/monitor`) |

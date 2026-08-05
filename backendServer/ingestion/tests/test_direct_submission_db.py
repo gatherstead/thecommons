@@ -130,6 +130,23 @@ class DirectSubmissionTest(TestCase):
         staged = StagedEvent.objects.get()
         self.assertIsNone(staged.submitted_by)
 
+    # Host-supplied categories (EVENT["categories"] = ["music"]) must survive
+    # direct_submit -> RawEvent.raw_categories -> StagedEvent.categories, and
+    # win over Gemini's answer — STD_PAYLOAD deliberately has no "categories"
+    # key, so a passing assertion here proves the host's value was used, not
+    # a lucky match with LLM output.
+    def test_host_categories_survive_to_staged_event(self):
+        self._post_anon(DRAFT_ID, EVENT)
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.categories, ["music"])
+
+    def test_unrecognised_host_categories_fall_back_to_llm(self):
+        event = dict(EVENT, categories=["not-a-real-category"])
+        std_payload = dict(STD_PAYLOAD, categories=["community"])
+        self._post_anon(DRAFT_ID, event, std_payload=std_payload)
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.categories, ["community"])
+
     # 2. Authenticated (JWT) submission → 202, attributed to that user.
     def test_jwt_submission_returns_202_and_attributes_user(self):
         resp = self._post_jwt(DRAFT_ID, EVENT)

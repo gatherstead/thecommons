@@ -9,10 +9,20 @@ from bs4 import BeautifulSoup
 from django.conf import settings
 from google import genai
 
+from events.categories import CATEGORY_SLUGS
 from ingestion.models import RawEvent, StagedEvent
 from ingestion.scraping.browser import render_page
 
 logger = logging.getLogger(__name__)
+
+# The public post form is single-select, but `Event.categories` is a
+# ManyToMany and plenty of ingested events genuinely straddle two categories
+# (a brewery's live-music night is both "food-drink" and "music"; a farmers
+# market with a band is "markets-fairs" and "music"). Capping at 2 rather than
+# 1 lets the pipeline capture that without turning the field into a tag dump —
+# the sidebar filters read best when a category means "this is one of the
+# event's *main* things", not "this is tangentially related".
+MAX_CATEGORIES = 2
 
 VALID_TAGS = [
     "free",
@@ -46,12 +56,14 @@ Given the following raw event data, produce a JSON object with these fields:
 - "location_name": The venue or location name, cleaned up
 - "town": The city or town where this event takes place (e.g. "Chapel Hill", "Durham", "Carrboro"). Infer from the location/address if possible. If unclear, use an empty string.
 - "tags": An array of applicable tags from this list ONLY: {tags}
+- "categories": An array of at most {max_categories} categories from this list ONLY: {categories}. Pick the category (or two, if it genuinely spans both) that best describes what the event IS, not just its setting or vibe. Return an empty array if nothing fits well — do not force a bad match.
 - "price": IMPORTANT — search ALL provided text (raw description AND the scraped webpage text) very carefully for price/cost indicators. Look for: "Cost: $X", "Cost: FREE", "Fee: $X", "cost: $X", "$X per person", "admission: $X", "tickets: $X", "free", "FREE", "$0", "no cost", "no charge". Return the dollar amount as a number. If the event says "free", "FREE", or "$0", return 0. If a narrow, official-looking range like "$10-$20" is given, return the average. Only return -1 if there is absolutely NO price info anywhere in the raw data or scraped webpage and if it doesn't say free.
   * DO NOT trust pricing from ticket resale/secondary marketplaces (e.g. StubHub, Vivid Seats, SeatGeek, TicketSmarter, EventTicketsCenter, viagogo, or any page that says "resale", "secondary market", "prices may be above face value", or similar). Those prices are marked up and unreliable, not the face-value ticket price.
   * If the only price info comes from such a resale page, or the page shows a very wide price spread (e.g. spanning more than roughly 3x from low to high) with no single clearly-labeled face-value price, that is not usable price data — return -1 rather than guessing or averaging.
 
 Rules:
 - Only use tags from the provided list. Choose all that apply.
+- Only use categories from the provided list, at most {max_categories}.
 - If the event is free or price is 0, include "free" in tags.
 - Keep descriptions factual — don't invent details that aren't in the raw data.
 - Respond with ONLY the JSON object. No markdown, no backticks, no explanation.
@@ -65,6 +77,21 @@ End: {end}
 
 Additional context scraped from the event webpage (use this to find price, cost, fee info and other details):
 {page_text}
+"""
+
+# Slimmed-down sibling of STANDARDIZATION_PROMPT for `infer_categories`, which
+# only has a title/description to work with (no raw source data, no scraped
+# webpage) — used by the backfill path for events that predate this ticket.
+CATEGORY_INFERENCE_PROMPT = """You are a data processor for a local community events platform called The Commons.
+Classify the following event into categories.
+
+Respond with a JSON object with one field:
+- "categories": An array of at most {max_categories} categories from this list ONLY: {categories}. Pick the category (or two, if it genuinely spans both) that best describes what the event IS, not just its setting or vibe. Return an empty array if nothing fits well — do not force a bad match.
+
+Respond with ONLY the JSON object. No markdown, no backticks, no explanation.
+
+Event title: {title}
+Event description: {description}
 """
 
 # Matches "cancelled"/"canceled" (either spelling) anywhere in a title, so
@@ -147,65 +174,24 @@ def fetch_page_text(url: str, max_chars: int = 6000, *, use_browser: bool = Fals
         return ""
 
 
-def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:  # noqa: C901  # LLM standardization with fallbacks; complexity is inherent
-    """
-    Send a RawEvent through Gemini to produce a standardized StagedEvent.
-    """
-    # Central chokepoint for the cancellation guard — every source passes
-    # through here, unlike the two per-scraper guards (morrisvillechamber,
-    # eventbriteraleigh) that only cover their own source. Checked against
-    # `raw_title` (pre-standardization) and placed before the Gemini call so a
-    # cancelled event never costs an API call — the title is already available
-    # off the RawEvent, so there's nothing gained by waiting for standardized
-    # output (which could even reword "CANCELLED" out of the title). Lands the
-    # row in the terminal `cancelled` status rather than deleting it or
-    # reusing `rejected`, mirroring the `skipped_no_town` precedent: visible
-    # in the monitor, and RawEvent is still marked processed so it isn't
-    # re-billed to Gemini on every subsequent run.
-    if CANCELLED_TITLE_RE.search(raw_event.raw_title or ""):
-        staged = StagedEvent.objects.create(
-            raw_event=raw_event,
-            title=raw_event.raw_title[:500],
-            description=raw_event.raw_description,
-            location_name=raw_event.raw_location[:255],
-            town="",
-            start_datetime=raw_event.raw_start_datetime,
-            end_datetime=raw_event.raw_end_datetime,
-            tags=[],
-            price=-1,
-            link=raw_event.source_url[:500] if raw_event.source_url else "",
-            status="cancelled",
-        )
-        raw_event.processed = True
-        raw_event.save(update_fields=["processed"])
-        logger.info(f"Cancelled (title match): {staged.title}")
-        return staged
+def _generate_json(client, prompt: str, *, log_label: str = "") -> dict:
+    """Send `prompt` to Gemini, trying each model in the flash-lite -> flash ->
+    pro fallback chain in turn (with 503 retries) until one returns parseable
+    JSON.
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    Extracted from `standardize_event` so `infer_categories` can reuse the same
+    fallback/retry machinery instead of standing up a second Gemini client path.
+    `log_label` is folded into log lines to identify the caller (e.g. a raw
+    event title) — purely cosmetic, doesn't affect behavior.
+
+    Raises RuntimeError (chained from the last underlying error) if every
+    model fails — callers that need a never-raise contract (`infer_categories`)
+    catch this themselves rather than this function swallowing it, so that
+    `standardize_event`'s existing raise-on-total-failure behavior is
+    unchanged.
+    """
     models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
     max_retries = 3
-
-    # Fetch the event webpage for additional context (price, details, etc.)
-    # Scraper-type sources are JS-heavy, so render them with Playwright instead
-    # of a plain requests.get (ICS/direct submissions never launch a browser).
-    use_browser = bool(raw_event.source and raw_event.source.source_type == "scraper")
-    page_text = fetch_page_text(raw_event.source_url, use_browser=use_browser)
-    if page_text:
-        logger.info(f"Fetched {len(page_text)} chars from {raw_event.source_url}")
-
-    prompt = STANDARDIZATION_PROMPT.format(
-        tags=json.dumps(VALID_TAGS),
-        title=raw_event.raw_title,
-        description=raw_event.raw_description,
-        location=raw_event.raw_location,
-        start=raw_event.raw_start_datetime.isoformat(),
-        end=raw_event.raw_end_datetime.isoformat()
-        if raw_event.raw_end_datetime
-        else "Not specified",
-        page_text=page_text or "No webpage available",
-    )
-    if prompt_suffix:
-        prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
 
     # `data` is only set once a model produces a usable (non-empty, parseable)
     # response. A model that errors out, returns no text, or returns unparseable
@@ -256,16 +242,144 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
             data = json.loads(text)
         except json.JSONDecodeError as e:
             last_error = e
-            logger.error(f"Failed to parse Gemini response for '{raw_event.raw_title}': {e}")
+            logger.error(f"Failed to parse Gemini response for '{log_label}': {e}")
             logger.error(f"Raw response: {response.text}")
             continue
 
         break  # success
 
     if data is None:
-        raise RuntimeError(f"All models failed for '{raw_event.raw_title}'") from last_error
+        raise RuntimeError(f"All models failed for '{log_label}'") from last_error
+
+    return data
+
+
+def _extract_categories(data: dict) -> list[str]:
+    """Validate Gemini's `categories` array against CATEGORY_SLUGS and cap it
+    at MAX_CATEGORIES — mirrors the VALID_TAGS filtering below. Never trust the
+    model's spelling or its adherence to the "at most N" prompt instruction.
+    """
+    categories = [c for c in (data.get("categories") or []) if c in CATEGORY_SLUGS]
+    return categories[:MAX_CATEGORIES]
+
+
+def infer_categories(title: str, description: str) -> list[str]:
+    """Classify an event into 0-MAX_CATEGORIES canonical category slugs via Gemini.
+
+    Standalone entry point (title/description only, no RawEvent) for the later
+    backfill ticket that needs to categorize events which already went through
+    the pipeline before this ticket existed — `standardize_event` below covers
+    the ingestion-time path. Reuses `_generate_json`'s model-fallback/retry
+    loop rather than a second Gemini client path.
+
+    Never raises: an unparseable/failed Gemini response (all models exhausted,
+    bad JSON, etc.) is logged and treated as "no categories" rather than
+    aborting whatever backfill loop is calling this per-event.
+    """
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    prompt = CATEGORY_INFERENCE_PROMPT.format(
+        categories=json.dumps(CATEGORY_SLUGS),
+        max_categories=MAX_CATEGORIES,
+        title=title,
+        description=description,
+    )
+    try:
+        data = _generate_json(client, prompt, log_label=title)
+    except Exception as e:
+        logger.error(f"infer_categories failed for '{title}': {e}")
+        return []
+
+    return _extract_categories(data)
+
+
+def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEvent:  # noqa: C901  # LLM standardization with fallbacks; complexity is inherent
+    """
+    Send a RawEvent through Gemini to produce a standardized StagedEvent.
+    """
+    # Central chokepoint for the cancellation guard — every source passes
+    # through here, unlike the two per-scraper guards (morrisvillechamber,
+    # eventbriteraleigh) that only cover their own source. Checked against
+    # `raw_title` (pre-standardization) and placed before the Gemini call so a
+    # cancelled event never costs an API call — the title is already available
+    # off the RawEvent, so there's nothing gained by waiting for standardized
+    # output (which could even reword "CANCELLED" out of the title). Lands the
+    # row in the terminal `cancelled` status rather than deleting it or
+    # reusing `rejected`, mirroring the `skipped_no_town` precedent: visible
+    # in the monitor, and RawEvent is still marked processed so it isn't
+    # re-billed to Gemini on every subsequent run.
+    if CANCELLED_TITLE_RE.search(raw_event.raw_title or ""):
+        staged = StagedEvent.objects.create(
+            raw_event=raw_event,
+            title=raw_event.raw_title[:500],
+            description=raw_event.raw_description,
+            location_name=raw_event.raw_location[:255],
+            town="",
+            start_datetime=raw_event.raw_start_datetime,
+            end_datetime=raw_event.raw_end_datetime,
+            tags=[],
+            categories=[],
+            price=-1,
+            link=raw_event.source_url[:500] if raw_event.source_url else "",
+            status="cancelled",
+        )
+        raw_event.processed = True
+        raw_event.save(update_fields=["processed"])
+        logger.info(f"Cancelled (title match): {staged.title}")
+        return staged
+
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    # Fetch the event webpage for additional context (price, details, etc.)
+    # Scraper-type sources are JS-heavy, so render them with Playwright instead
+    # of a plain requests.get (ICS/direct submissions never launch a browser).
+    use_browser = bool(raw_event.source and raw_event.source.source_type == "scraper")
+    page_text = fetch_page_text(raw_event.source_url, use_browser=use_browser)
+    if page_text:
+        logger.info(f"Fetched {len(page_text)} chars from {raw_event.source_url}")
+
+    prompt = STANDARDIZATION_PROMPT.format(
+        tags=json.dumps(VALID_TAGS),
+        categories=json.dumps(CATEGORY_SLUGS),
+        max_categories=MAX_CATEGORIES,
+        title=raw_event.raw_title,
+        description=raw_event.raw_description,
+        location=raw_event.raw_location,
+        start=raw_event.raw_start_datetime.isoformat(),
+        end=raw_event.raw_end_datetime.isoformat()
+        if raw_event.raw_end_datetime
+        else "Not specified",
+        page_text=page_text or "No webpage available",
+    )
+    if prompt_suffix:
+        prompt += f"\n\nADDITIONAL SOURCE-SPECIFIC INSTRUCTIONS:\n{prompt_suffix}\n"
+
+    data = _generate_json(client, prompt, log_label=raw_event.raw_title)
 
     valid_tags = [t for t in (data.get("tags") or []) if t in VALID_TAGS]
+
+    # A direct host submission (see ingestion/views.py:direct_submit) carries
+    # hand-picked categories in raw_event.raw_categories, stored verbatim and
+    # unvalidated — the host told us what their event IS, and re-guessing that
+    # from Gemini after the fact would both waste the call and risk
+    # contradicting the host's own judgment. Filter/cap it exactly like
+    # _extract_categories does for the model's answer (never trust client
+    # input more than model output either) and prefer it over Gemini's
+    # "categories" key whenever at least one slug survives filtering.
+    #
+    # Ingested (non-direct) RawEvents simply have raw_categories=[], so this
+    # branch is a no-op for them and falls straight through to the LLM path
+    # below, unchanged from before this ticket.
+    #
+    # If the host's list is entirely unrecognised (e.g. the broadcast SPA's
+    # own vocabulary, which doesn't line up with CATEGORY_SLUGS — see
+    # events/categories.py), fall back to LLM inference rather than storing
+    # an empty list: silently discarding a host's intent-to-categorize would
+    # just recreate the "we throw away what the host told us" bug this ticket
+    # exists to fix.
+    host_categories = [c for c in (raw_event.raw_categories or []) if c in CATEGORY_SLUGS][
+        :MAX_CATEGORIES
+    ]
+    valid_categories = host_categories if host_categories else _extract_categories(data)
 
     # Parse price: -1 means N/A (displayed as "N/A" on frontend)
     price = _coerce_price(data.get("price", -1))
@@ -287,6 +401,7 @@ def standardize_event(raw_event: RawEvent, prompt_suffix: str = "") -> StagedEve
         start_datetime=raw_event.raw_start_datetime,
         end_datetime=raw_event.raw_end_datetime,
         tags=valid_tags,
+        categories=valid_categories,
         price=price,
         link=link[:500],
         status="pending",

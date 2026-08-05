@@ -117,6 +117,20 @@ class DirectIngestTests(TestCase):
 
         self.assertEqual(event.source_name, "Direct submission by host")
 
+    def test_host_categories_flow_through_to_staged_event(self):
+        """raw_categories set directly on the RawEvent (as direct_submit would
+        populate it) must win over STD_PAYLOAD's absent "categories" key —
+        confirms the full ingest_direct_submission -> standardize_event path,
+        not just standardize_event in isolation."""
+        self.raw.raw_categories = ["music", "not-a-real-category"]
+        self.raw.save(update_fields=["raw_categories"])
+
+        with self._gemini_mocks(self.STD_PAYLOAD, 0.0):
+            ingest_direct_submission(self.raw.id, self.user.id)
+
+        staged = StagedEvent.objects.get()
+        self.assertEqual(staged.categories, ["music"])
+
     def test_anonymous_submission_no_user_id(self):
         """user_id=None → submitted_by=None, is_verified=False, Event created."""
         with self._gemini_mocks(self.STD_PAYLOAD, 0.0):

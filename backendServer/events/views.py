@@ -219,6 +219,33 @@ def _coerce_price(value):
     return value
 
 
+def _coerce_categories(data):
+    """Read submitted categories as a list of slugs, accepting either key.
+
+    `StagedEvent.categories` is a list (suite 49.11), but the live post form
+    (`theCommonsWeb/src/app/post/page.tsx`) is a single-select wizard step and
+    still posts a singular `category` string. Backend and frontend deploy
+    independently — Docker vs Vercel — so the old key has to keep working
+    rather than 500-ing the public submission form during any deploy skew.
+
+    Returns None when neither key is present, so PATCH can distinguish "not
+    submitted" (leave alone) from "submitted empty" (clear it).
+    """
+    if "categories" in data:
+        # Form-encoded posts arrive as a QueryDict, where `data["categories"]`
+        # silently yields only the LAST repeated value — `getlist` is the only
+        # way to see `?categories=a&categories=b` whole. JSON bodies parse to a
+        # plain dict and hand back the real list.
+        value = data.getlist("categories") if hasattr(data, "getlist") else data["categories"]
+        if isinstance(value, str):  # tolerate a bare string on the plural key
+            value = [value]
+        return [slug for slug in (value or []) if slug]
+    if "category" in data:
+        slug = data["category"]
+        return [slug] if slug else []
+    return None
+
+
 @api_view(["GET", "PATCH", "DELETE"])
 @authentication_classes([BearerTokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -265,8 +292,9 @@ def manage_staged_event(request, event_id):  # noqa: C901  # multi-method CRUD v
         staged.link = data["link"]
     if "tags" in data:
         staged.tags = data["tags"]
-    if "category" in data:
-        staged.category = data["category"]
+    submitted_categories = _coerce_categories(data)
+    if submitted_categories is not None:
+        staged.categories = submitted_categories
     staged.save()
     return Response({"id": staged.id, "status": staged.status})
 
@@ -295,7 +323,7 @@ def create_event(request):
         price=_coerce_price(data.get("price")),
         link=data.get("link", ""),
         tags=data.get("tags", []),
-        category=data.get("category", ""),
+        categories=_coerce_categories(data) or [],
         status="pending",
         submitted_by=submitted_by,
     )

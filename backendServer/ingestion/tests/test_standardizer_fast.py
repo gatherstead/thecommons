@@ -1,9 +1,18 @@
+import json
 import unittest
 from unittest import mock
 
 from django.test import tag
 
-from ingestion.standardizer import CANCELLED_TITLE_RE, _coerce_price, _coerce_str, fetch_page_text
+from ingestion.standardizer import (
+    CANCELLED_TITLE_RE,
+    MAX_CATEGORIES,
+    _coerce_price,
+    _coerce_str,
+    _extract_categories,
+    fetch_page_text,
+    infer_categories,
+)
 
 
 @tag("fast")
@@ -106,3 +115,60 @@ class CancelledTitleRegexTests(unittest.TestCase):
 
     def test_no_match_on_clean_title(self):
         self.assertIsNone(CANCELLED_TITLE_RE.search("Fall Festival on the Green"))
+
+
+@tag("fast")
+class ExtractCategoriesTests(unittest.TestCase):
+    """_extract_categories must never trust the model's spelling or its
+    adherence to the "at most MAX_CATEGORIES" prompt instruction."""
+
+    def test_valid_categories_kept(self):
+        data = {"categories": ["music", "food-drink"]}
+        self.assertEqual(_extract_categories(data), ["music", "food-drink"])
+
+    def test_invalid_categories_dropped(self):
+        data = {"categories": ["music", "not-a-real-category"]}
+        self.assertEqual(_extract_categories(data), ["music"])
+
+    def test_missing_key_returns_empty_list(self):
+        self.assertEqual(_extract_categories({}), [])
+
+    def test_null_value_returns_empty_list(self):
+        self.assertEqual(_extract_categories({"categories": None}), [])
+
+    def test_over_cap_list_is_truncated(self):
+        # music, art, community are all real slugs; MAX_CATEGORIES caps at 2
+        # even though the model returned 3.
+        data = {"categories": ["music", "art", "community"]}
+        result = _extract_categories(data)
+        self.assertEqual(len(result), MAX_CATEGORIES)
+        self.assertEqual(result, ["music", "art"])
+
+
+@tag("fast")
+class InferCategoriesFailureTests(unittest.TestCase):
+    """infer_categories must never raise — a failed/unparseable Gemini response
+    degrades to an empty list so a backfill loop can keep going event-by-event."""
+
+    def test_all_models_failing_returns_empty_list_without_raising(self):
+        client = mock.Mock()
+        client.models.generate_content.side_effect = Exception("429 RESOURCE_EXHAUSTED")
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            result = infer_categories("Some Event", "Some description")
+        self.assertEqual(result, [])
+
+    def test_unparseable_response_returns_empty_list_without_raising(self):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(text="not json")
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            result = infer_categories("Some Event", "Some description")
+        self.assertEqual(result, [])
+
+    def test_successful_response_returns_validated_categories(self):
+        client = mock.Mock()
+        client.models.generate_content.return_value = mock.Mock(
+            text=json.dumps({"categories": ["music", "not-a-real-category"]})
+        )
+        with mock.patch("ingestion.standardizer.genai.Client", return_value=client):
+            result = infer_categories("Jazz Night", "Live jazz downtown.")
+        self.assertEqual(result, ["music"])

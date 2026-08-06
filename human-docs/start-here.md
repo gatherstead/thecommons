@@ -6,6 +6,11 @@ reading. **Human docs** (this folder) are written for people. **Agent / deep-div
 canonical. Where a human doc doesn't exist yet, this map sends you to the agent doc that
 covers the same ground.
 
+**Each human doc is dense on purpose.** Every one opens with an **Overview** you can skim in
+under a minute for the broad idea — read that first, always. Only drop into its **Deep Dive**
+if you need the specifics on one particular part; you're not expected to read a whole doc
+top to bottom for a quick question.
+
 ---
 
 ## New here? Read these in order

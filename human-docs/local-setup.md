@@ -23,6 +23,14 @@ run migrations", never "start a server".
 Roughly 20 minutes if the credentials are already in hand. Read §1 before you start; the rest
 is sequential.
 
+**If you're in VS Code, skip most of the manual terminal-juggling below.** The **"Start Dev
+Environment"** task in `.vscode/tasks.json` (Cmd/Ctrl+Shift+P → "Tasks: Run Task" → *Start Dev
+Environment*) opens one dedicated terminal each for the frontend, `broadcastWeb`, Redis, and
+the backend (running `runserver`, not the Celery workers from §6), plus a terminal for the prod
+VM (`ssh.sh`) and a spare shell — all in parallel with one command. Pair it with **"Teardown Dev
+Environment"** (`teardown.sh`) to kill everything at once when you're done. §7 covers the other
+shortcut, the fully containerized alternative.
+
 ---
 
 ## 1. Prerequisites

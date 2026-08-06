@@ -6,14 +6,6 @@ reading. **Human docs** (this folder) are written for people. **Agent / deep-div
 canonical. Where a human doc doesn't exist yet, this map sends you to the agent doc that
 covers the same ground.
 
-> Status: the subsystem docs are written — all of them — and each opens with an Overview you
-> can skim in under a minute before dropping into its Deep Dive. Every doc carries a
-> **Last updated** line stating the commit it was checked against.
->
-> The Docker cutover it used to caveat is **done**: production has run on Docker Compose since
-> 2026-08-02 (PR #41), and [`containerization.md`](containerization.md) now describes it as
-> settled fact rather than a plan.
-
 ---
 
 ## New here? Read these in order

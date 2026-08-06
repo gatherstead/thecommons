@@ -34,6 +34,12 @@
   resend or smoke test → Deep Dive §2.4; the field-level schema → Deep Dive §3; the endpoint/task
   list → Deep Dive §4; known traps → Deep Dive §5; what's unverified → Deep Dive §6.
 
+  **future work**
+  - Need to make the newletter look better visually
+  - Figure out how to send events that a user may prefer, for example from thir town or with filters
+  they use a lot. 
+  - I don't think the newletter sends properly so need to figure out whats going on there. 
+
 ## Deep Dive
 
 ### 1. What this is and who depends on it

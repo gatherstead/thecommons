@@ -43,6 +43,15 @@
     → §5.
   - What's still unverified or unfinished (Google sign-in, email verification, prod nginx) → §6.
 
+  **note** We've set it up like this to make auth easily extensible to other new applications. 
+  We can use a new subdomain but route all the auth back to this shared portal that distributes
+  the JWT. 
+
+  **future work**
+  - Make it look nicer
+  - forgot password
+  - implement refresh tokens
+
 ## Deep Dive
 
 The single fact that matters more than any other in this codebase: **Django does not own user

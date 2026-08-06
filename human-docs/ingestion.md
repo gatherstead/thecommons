@@ -39,6 +39,12 @@ calendar as a source, or figure out why a source has gone quiet.
     `Event`) → Deep Dive §3.
   - Wiring into an endpoint or CLI command → Deep Dive §4 (Interfaces).
 
+
+  **future work**
+  - create a devtool that shows us (devs) what are the events that need to be moderated.
+  We'll start with dev moderation then move into community champion moderation at a later date. 
+  
+
 ## Deep Dive
 
 ### 1. What this is and who depends on it

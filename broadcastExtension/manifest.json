@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "The Commons - Broadcast",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Autofills community event calendars for manual review. You solve the captcha and click submit.",
   "permissions": ["scripting", "storage"],
   "host_permissions": [

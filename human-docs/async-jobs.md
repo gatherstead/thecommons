@@ -12,18 +12,20 @@ those disagree, the code won the argument — see "Known gaps and doc drift" at 
 Audience: someone inheriting this codebase who needs to add a new background job or
 scheduled task, or figure out why a scheduled job didn't run.
 
-**A note on what's current.** A parallel effort is moving this stack into Docker Compose —
-there's a `docker-compose.yml` in the tree defining `celery`, `celerybeat`,
-`broadcast-worker`, and `scrape-worker` services that mirror the systemd units this doc
-describes, and `deploy/healthcheck.sh` has already been rewritten to shell into those
-containers. None of that is cut over yet. This doc describes the systemd units
-(`deploy/celery.service`, `deploy/celerybeat.service`, `deploy/broadcast-worker.service`,
-`deploy/scrape-worker.service`) as they exist at this commit, because that's what's
-actually running in production today. The containerized version is covered by a sibling
-doc, `containerization.md`, once it exists.
-
 ## Overview
 
+- **Where these processes actually run today.** Production cut over to Docker Compose on
+  2026-08-02 (PR #41, the Suite 42 Dockerization); see [`deploy-ops.md`](deploy-ops.md)
+  and [`containerization.md`](containerization.md) for the full deploy topology. The four
+  Celery-family processes this doc describes are `docker-compose.yml`'s `celery`,
+  `celerybeat`, `broadcast-worker`, and `scrape-worker` service blocks now, not the
+  `deploy/celery.service`, `deploy/celerybeat.service`, `deploy/broadcast-worker.service`,
+  and `deploy/scrape-worker.service` systemd units those container commands replaced —
+  those unit files still exist in the repo as retired/historical rollback reference, per
+  `deploy-ops.md`'s systemd table, but nothing on the VM runs them anymore. This doc is
+  about the shape of the queueing/scheduling system (queues, schedules, the data model),
+  which is unchanged by that cutover — where a command example below still shows a
+  systemd invocation, treat it as historical context, not the live operational path.
 - **What it is.** Redis + Celery is how The Commons runs everything that isn't a live
   HTTP request/response: nightly event ingestion, weekly/monthly email digests,
   bulk-publishing approved events, and pushing submitted events out to third-party
@@ -69,11 +71,12 @@ retry, queueing, or scheduling story. Redis + Celery gives every Django app in t
 when they run.
 
 Two things depend on this layer directly and visibly: the ingestion pipeline (see
-[`ingestion.md`](ingestion.md) once it exists) won't pull in new events at all if
+[`ingestion.md`](ingestion.md)) won't pull in new events at all if
 beat or the default worker is down, and the newsletter digest engine
-(see [`newsletter.md`](newsletter.md) once it exists) won't send weekly/monthly email if
-the same is true. Broadcast (see [`broadcast.md`](broadcast.md) once it exists, or
-[`docs/broadcast.md`](../docs/broadcast.md) today) depends on it too, but less visibly —
+(see [`newsletter.md`](newsletter.md)) won't send weekly/monthly email if
+the same is true. Broadcast (see [`broadcast.md`](broadcast.md), or
+[`docs/broadcast.md`](../docs/broadcast.md) for the agent-facing deep dive) depends on it
+too, but less visibly —
 **`ARCHITECTURE.md` currently claims broadcast "does not use Celery — it runs its own
 DB-backed queue worker," and that's stale.** `broadcast/tasks.py` defines two real Celery
 tasks, `process_broadcast_queue` and `recover_broadcast_orphans`, routed to their own
@@ -100,7 +103,8 @@ both, but nothing else couples them, and nothing should ever read/write DB 1 as 
 the broker or vice versa.
 
 On the Celery side there are three named queues, each drained by a purpose-built worker
-process (a separate systemd unit, all reading the same `REDIS_URL` broker on DB 0):
+process (a separate `docker-compose.yml` service — historically a separate systemd unit,
+before the 2026-08-02 Docker cutover — all reading the same `REDIS_URL` broker on DB 0):
 
 ```mermaid
 flowchart LR
@@ -118,10 +122,10 @@ flowchart LR
         QBroadcast["queue: broadcast"]
     end
 
-    subgraph Workers["Worker processes (systemd, run in parallel)"]
-        WDefault["commons-default\ncelery.service\n--concurrency=2"]
-        WScrape["commons-scrape\nscrape-worker.service\n-Q scrape -c 1"]
-        WBroadcast["commons-broadcast\nbroadcast-worker.service\n-Q broadcast -c 1"]
+    subgraph Workers["Worker processes (Docker Compose services, run in parallel)"]
+        WDefault["celery service\n--concurrency=2"]
+        WScrape["scrape-worker service\n-Q scrape -c 1"]
+        WBroadcast["broadcast-worker service\n-Q broadcast -c 1"]
     end
 
     Beat -->|"ingest-events-daily,\nweekly/monthly digest"| QDefault
@@ -150,10 +154,10 @@ flowchart LR
    in `status="running"` at the moment it runs is necessarily orphaned (the worker that
    claimed it must have died mid-job). That assumption only holds if `process_broadcast_queue`
    can never be mid-drain on a *second* worker at the same time — i.e., if there is
-   structurally only one broadcast worker process. Scaling `broadcast-worker.service` up
-   (more replicas, or dropping the `-c 1`) is the obvious-looking fix for "broadcast feels
-   slow" and it is wrong: it reintroduces exactly the race the single-worker constraint
-   exists to prevent.
+   structurally only one broadcast worker process. Scaling the `broadcast-worker` service
+   up (more `docker compose` replicas, or dropping the `-c 1`) is the obvious-looking fix
+   for "broadcast feels slow" and it is wrong: it reintroduces exactly the race the
+   single-worker constraint exists to prevent.
 3. **`process_broadcast_queue` is not on a beat schedule at all.** Every submission,
    retry, and promote-to-real action calls `transaction.on_commit(process_broadcast_queue.delay)`
    (`broadcast/services.py`) — the queue gets drained on demand, right after the DB row
@@ -338,11 +342,11 @@ involved in cache invalidation at all.
 
 | `PeriodicTask.name` | Task (dotted path) | What it does | Queue | Cadence | Worker that drains it |
 |---|---|---|---|---|---|
-| `ingest-events-daily` | `ingestion.tasks.run_ingestion_pipeline` | Full ICS-leg pipeline: cleanup → poll ICS sources → Gemini standardize → dedup → safety-score → auto-publish | default | 04:00 daily, `America/New_York` | `commons-default` (`celery.service`) |
-| `scrape-sources-daily` | `ingestion.tasks.scrape_all_sources_task` | Polls `scraper`- and `http`-type sources (fires 30 min before the daily ingest so rows land in time) | scrape | 03:30 daily, `America/New_York` | `commons-scrape` (`scrape-worker.service`) |
+| `ingest-events-daily` | `ingestion.tasks.run_ingestion_pipeline` | Full ICS-leg pipeline: cleanup → poll ICS sources → Gemini standardize → dedup → safety-score → auto-publish | default | 04:00 daily, `America/New_York` | `commons-default` (`celery` service in `docker-compose.yml`) |
+| `scrape-sources-daily` | `ingestion.tasks.scrape_all_sources_task` | Polls `scraper`- and `http`-type sources (fires 30 min before the daily ingest so rows land in time) | scrape | 03:30 daily, `America/New_York` | `commons-scrape` (`scrape-worker` service) |
 | `weekly-digest-sunday` | `newsletter.tasks.fan_out_weekly_digest` | Queues one `send_one_digest` per WEEKLY subscriber/user-profile | default | Sundays 18:00, `America/New_York` | `commons-default` |
 | `monthly-digest-first` | `newsletter.tasks.fan_out_monthly_digest` | Queues one `send_one_digest` per MONTHLY subscriber/user-profile | default | 1st of month, 18:00, `America/New_York` | `commons-default` |
-| `broadcast-orphan-recovery` | `broadcast.tasks.recover_broadcast_orphans` | Re-queues `BroadcastSubmission`/`BroadcastTarget` rows stranded by a crashed worker | broadcast | every 6 hours on the hour, `UTC` | `commons-broadcast` (`broadcast-worker.service`) |
+| `broadcast-orphan-recovery` | `broadcast.tasks.recover_broadcast_orphans` | Re-queues `BroadcastSubmission`/`BroadcastTarget` rows stranded by a crashed worker | broadcast | every 6 hours on the hour, `UTC` | `commons-broadcast` (`broadcast-worker` service) |
 
 The two digest rows are the ones with history worth knowing: both were originally seeded
 (by `events/migrations/0015_seed_digest_beat.py` and `0020_seed_monthly_digest_beat.py`)
@@ -385,8 +389,9 @@ worker that isn't there.
    (called from `backend/celery.py`) finds it automatically — no registration step.
 2. If it needs to stay off the default queue (heavy browser work, or anything that
    shouldn't share a process with digests/ingestion), add an entry to `CELERY_TASK_ROUTES`
-   in `backend/settings/base.py`, and give it a dedicated worker unit if it's going to run
-   in prod unattended (follow the pattern in `deploy/scrape-worker.service`).
+   in `backend/settings/base.py`, and give it a dedicated worker service if it's going to
+   run in prod unattended (follow the pattern of the `scrape-worker` service in
+   `docker-compose.yml`).
 3. Write a data migration in the owning app that does the `CrontabSchedule.get_or_create`
    / `PeriodicTask.update_or_create` seed — copy the shape of e.g.
    `ingestion/migrations/0012_seed_scrape_beat.py`. Pick the timezone deliberately:
@@ -466,11 +471,14 @@ admin. § 2.2 covers how to check the live truth.
   deliberately wants *non*-eager behavior, not the reverse. This wasn't in scope to correct
   on that file for this pass (only its stale digest task-path references were) — flagging
   it here so it doesn't get propagated further.
-- **This doc did not independently verify `docs/redis-celery-handoff.md`'s prod
-  provisioning commands** (Redis install/config, systemd `cp`/`enable` sequence) — they
-  read as plausible and internally consistent with the service files in `deploy/`, but
-  weren't re-run against a live VM for this pass. Treat that doc as authoritative for the
-  exact commands; this doc is about the shape of the system, not a runbook.
+- **`docs/redis-celery-handoff.md`'s prod provisioning commands are systemd-era** (Redis
+  install/config, systemd `cp`/`enable` sequence) and predate the 2026-08-02 Docker cutover
+  — they describe how these processes used to be provisioned, not how `docker-compose.yml`
+  provisions them today. This wasn't in scope to correct on that file for this pass; treat
+  [`deploy-ops.md`](deploy-ops.md) and [`containerization.md`](containerization.md) as
+  authoritative for the current commands, and that doc's sequence as historical reference
+  only. This doc is about the shape of the queueing system, not a deploy runbook either
+  way.
 - **No consumer of `events.tasks.ping` exists outside its own test.** It's either a leftover
   smoke-test scaffold from before `manage.py healthcheck`'s `control.ping()`-based worker
   check existed, or an intentionally-kept minimal example task — nothing in the codebase

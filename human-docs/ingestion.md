@@ -39,11 +39,9 @@ calendar as a source, or figure out why a source has gone quiet.
     `Event`) → Deep Dive §3.
   - Wiring into an endpoint or CLI command → Deep Dive §4 (Interfaces).
 
-
-  **future work**
-  - create a devtool that shows us (devs) what are the events that need to be moderated.
-  We'll start with dev moderation then move into community champion moderation at a later date. 
-  
+**Future work:**
+- Create a devtool that shows us (devs) which events need to be moderated. We'll start
+  with dev moderation, then move into community champion moderation at a later date.
 
 ## Deep Dive
 
@@ -62,8 +60,7 @@ Two things depend on its output directly: the public `events` app (everything on
 is either pipeline-published or a business's own direct submission that went through the
 same code path), and the `broadcast` subsystem, which pushes already-published `Event`
 rows *out* to other towns' calendars — broadcast reads `Event`, it never touches
-`RawEvent`/`StagedEvent` (see [`broadcast.md`](broadcast.md) once it exists, or
-[`docs/broadcast.md`](../docs/broadcast.md) today). If ingestion silently stops, the
+`RawEvent`/`StagedEvent` (see [`broadcast.md`](broadcast.md)). If ingestion silently stops, the
 front page slowly runs out of new events — nothing crashes, nothing errors on the
 frontend, it just goes quiet, which is exactly why the monitoring dashboard covered later
 in this doc exists.
@@ -225,8 +222,7 @@ flowchart TD
 | `Event` (`events` app) | `uuid` (primary key!), `title`, `town` FK, `date`, `venue`, `tags`/`categories` (M2M), `is_verified`, `source_name`, `created_by` FK | The live, published record the frontend reads. Created once per `StagedEvent` that clears the pipeline (or once per direct submission), then updated in place on a direct-submission re-edit. |
 
 For the full cross-app data model (accounts, newsletter, broadcast included) see
-[`data-model.md`](data-model.md) once it exists, or `ARCHITECTURE.md`'s "Data Models"
-section today.
+[`data-model.md`](data-model.md).
 
 #### `StagedEvent.status` lifecycle
 

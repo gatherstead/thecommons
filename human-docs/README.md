@@ -10,8 +10,7 @@ Written mainly by `/handoff-report`. See that skill for structure, grounding rul
 publish checklist.
 
 **New here?** Start with [`start-here.md`](start-here.md) — it routes you to the right doc by
-what you're trying to do. [`HANDOFF_PLAN.md`](HANDOFF_PLAN.md) tracks which subsystem docs are
-still to be written.
+what you're trying to do.
 
 ## Index
 
@@ -31,4 +30,4 @@ still to be written.
 | [frontend.md](frontend.md) | Main site: App Router routes, the TanStack Query data layer, Better Auth on the client | 2026-08-01 |
 | [design-system.md](design-system.md) | The digital-newspaper aesthetic as an enforceable spec — tokens, type scale, the banned list | 2026-08-01 |
 | [testing.md](testing.md) | Local setup, the backend test tiers, the shared-test-DB hazard, and what CI runs | 2026-08-01 |
-| [HANDOFF_PLAN.md](HANDOFF_PLAN.md) | The plan these docs were written from — kept for provenance; all 11 planned docs now exist | 2026-08-01 |
+| [suggested-workflow.md](suggested-workflow.md) | The project owner's recommended workflow: adding a source via the ingestion-playground devtool, monitoring ingestion via the monitor devtool, and AI-assisted coding with `/write-tickets` + `/orchestrate` | 2026-08-05 |

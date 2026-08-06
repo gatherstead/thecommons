@@ -43,14 +43,14 @@
     → §5.
   - What's still unverified or unfinished (Google sign-in, email verification, prod nginx) → §6.
 
-  **note** We've set it up like this to make auth easily extensible to other new applications. 
-  We can use a new subdomain but route all the auth back to this shared portal that distributes
-  the JWT. 
+**Note:** We've set it up like this to make auth easily extensible to other new
+applications. A new app can use its own subdomain but route all the auth back to this
+shared portal, which distributes the JWT.
 
-  **future work**
-  - Make it look nicer
-  - forgot password
-  - implement refresh tokens
+**Future work:**
+- Make it look nicer
+- Forgot password
+- Implement refresh tokens
 
 ## Deep Dive
 
@@ -388,9 +388,8 @@ those tables would be wrong in a way that matters if they ever try to reason abo
   was deleted along with the pre-portal auth UI. Re-enabling it needs a new post-OAuth
   account-type step built into the portal (it used to bypass the LOCAL/BUSINESS/VENUE choice
   entirely) — not just uncommenting the block.
-- **Production nginx routing for the auth origin was not verified for this doc.** This repo's
-  deploy tooling was mid-change while this doc was written (a Docker-based nginx config was
-  present but not yet part of a committed state), so the exact current routing for
-  `auth.thecommons.town` is `deploy-ops.md`'s claim to verify, not this one's — everything above
-  about cookies, trusted origins, and the JWKS URL is grounded in application code and env-var
-  wiring, not in reading the live nginx config.
+- **Production nginx routing for the auth origin is `deploy-ops.md`'s claim to verify, not
+  this one's.** Production now runs the nginx container defined in `docker-compose.yml`
+  (see `deploy-ops.md` and `containerization.md` for the committed, current config) —
+  everything above about cookies, trusted origins, and the JWKS URL is grounded in
+  application code and env-var wiring, not in reading the live nginx config.

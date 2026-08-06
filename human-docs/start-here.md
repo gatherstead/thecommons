@@ -19,10 +19,11 @@ covers the same ground.
 ## New here? Read these in order
 
 1. **What is this and how does it fit together** → [`overview.md`](overview.md)
-2. **How identity works** → [`auth.md`](auth.md)
-3. **How an event gets from a website onto the site** → [`ingestion.md`](ingestion.md)
-4. **The data model** → [`data-model.md`](data-model.md)
-5. **Run it locally** → [`local-setup.md`](local-setup.md), then [`testing.md`](testing.md)
+2. **Tips for working on this project** → [`suggested-workflow.md`](suggested-workflow.md)
+3. **How identity works** → [`auth.md`](auth.md)
+4. **How an event gets from a website onto the site** → [`ingestion.md`](ingestion.md)
+5. **The data model** → [`data-model.md`](data-model.md)
+6. **Run it locally** → [`local-setup.md`](local-setup.md), then [`testing.md`](testing.md)
 
 ---
 
@@ -44,6 +45,7 @@ covers the same ground.
 | Get the look-and-feel right | [`design-system.md`](design-system.md) | [`CODING_STYLE.md`](../CODING_STYLE.md) |
 | Understand the admin / review workflow | — | [`docs/admin-backend.md`](../docs/admin-backend.md) |
 | Run the test suites | [`testing.md`](testing.md) | [`backendServer/AGENTS.md`](../backendServer/AGENTS.md#testing) |
+| Know the recommended way to work on this repo (adding a source, monitoring ingestion, AI-assisted coding) | [`suggested-workflow.md`](suggested-workflow.md) | `/write-tickets`, `/orchestrate` skills |
 
 ---
 

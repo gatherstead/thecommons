@@ -29,13 +29,6 @@ needs to understand what it is before the deep-dive doc makes sense.
   extension-driven "recipe" flow (a human clicks Submit) is live; a second, complete
   Playwright-headless server-side path exists, is tested, but nothing in the current SPA UI can
   trigger it — don't trust `ARCHITECTURE.md`'s framing of this, it's stale (see Deep Dive §4).
-
-  **note** we used to use something like that for fully automating the postage, but most of the time users 
-  still have to go through and click the submit button due to captcha. We cannot bypass this due to laws
-  surrounding captcha. Additionally it is not straightforward to test the validity of these events acutally 
-  being submitted to the calendars properly. Hence, we've opted for just using the recipe to fill out the page, 
-  and letting users walk the last mile of verifying the info and having the satisfaction of knowing it was submitted.
-
 - **Where to go for what:**
   - Who runs it and how access/tiers work → Deep Dive §2
   - The live extension-based submission flow → Deep Dive §3
@@ -45,10 +38,19 @@ needs to understand what it is before the deep-dive doc makes sense.
   - Gotchas that bite newcomers → Deep Dive §7
   - What this doc couldn't independently verify → Deep Dive §8
 
-  **future work**
-  - implement broadcast history per user (so they can track what events they've already uploaded + we can tell them total 
-  how much time they've saved).
-  - Add more destinations (possible creating a claude skill to one shot add a new destination)
+**Note:** we used to use something like the headless path for fully automating the
+posting, but most of the time users still have to go through and click the submit button
+due to captcha. We can't bypass this due to laws surrounding captcha. Additionally it's
+not straightforward to test that these events are actually being submitted to the
+calendars properly. Hence, we've opted for just using the recipe to fill out the page,
+and letting users walk the last mile of verifying the info and having the satisfaction of
+knowing it was submitted.
+
+**Future work:**
+- Implement broadcast history per user (so they can track what events they've already
+  uploaded, and we can tell them how much time they've saved in total).
+- Add more destinations (possibly by creating a Claude skill to one-shot add a new
+  destination).
 
 ---
 
@@ -383,5 +385,5 @@ someone a working code.
 
 See also: `data-model.md` for the full `broadcast` model field reference, `async-jobs.md` for
 the complete Celery queue and beat-schedule layout, `deploy-ops.md` for the `broadcast-worker`
-systemd unit and how it's deployed, and `ingestion.md` for the pipeline the direct-submit
-bridge in §3 feeds into.
+Docker Compose service and how it's deployed, and `ingestion.md` for the pipeline the
+direct-submit bridge in §3 feeds into.

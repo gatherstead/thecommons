@@ -52,11 +52,10 @@ on a pull request.
 It does not cover application architecture, the data model, or any single subsystem in depth —
 [`overview.md`](overview.md) is the map for that, and [`async-jobs.md`](async-jobs.md) is the
 deeper dive on *why* Redis and Celery exist at all, not just how to stand up Redis locally.
-Production deployment is [`deploy-ops.md`](deploy-ops.md); the emerging Docker-based local/prod
-setup is [`containerization.md`](containerization.md); frontend architecture and conventions
-beyond "how do I run the tests" live in `frontend.md` (once it exists — until then,
-[`theCommonsWeb/AGENTS.md`](../theCommonsWeb/AGENTS.md) covers the same ground for an agent
-audience).
+Production deployment is [`deploy-ops.md`](deploy-ops.md); the Docker-based local/prod setup is
+[`containerization.md`](containerization.md); frontend architecture and conventions beyond "how
+do I run the tests" live in [`frontend.md`](frontend.md) (or
+[`theCommonsWeb/AGENTS.md`](../theCommonsWeb/AGENTS.md) for an agent audience).
 
 ---
 
@@ -354,10 +353,11 @@ Redis *is* required the moment you actually run the app (`manage.py runserver` p
 `dev.py` only swaps to `LocMemCache` when `"test"` is in `sys.argv`; a plain dev server run uses
 the real Redis-backed cache and a real Celery broker, both defaulting to `localhost:6379` (DB 0
 broker/results, DB 1 cache) per `.env.example`. The straightforward path is installing Redis
-locally (§2.1). A parallel, **not yet settled** effort is containerizing the whole stack — an
-uncommitted `docker-compose.yml` plus `docker-compose.override.yml` for local dev, covered in
-full in [`containerization.md`](containerization.md) — which does include a `redis:7-alpine`
-compose service. Worth knowing precisely what that does and doesn't give you today: that `redis`
+locally (§2.1). Production runs the whole stack containerized (`docker-compose.yml` plus
+`docker-compose.override.yml` for local dev, both committed at the repo root, covered in full in
+[`containerization.md`](containerization.md)), which does include a `redis:7-alpine`
+compose service. Worth knowing precisely what that does and doesn't give you for local
+development: that `redis`
 service publishes no port to the host at all, so it's only reachable by other containers on the
 same compose network. It's a real alternative if you run the *entire* stack via `docker compose
 up` (backend, Celery, everything, per `docker-compose.override.yml`'s local-dev config), but it

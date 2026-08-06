@@ -31,10 +31,9 @@ still real and still apply, just inside containers now. See the Deep Dive below 
 full request-routing diagram, the deploy pipeline, the retired-unit reference table, and
 the historical incidents that shaped today's guardrails.
 
-
-**future work**
-- The Oracle VM is owned by Arya, it should be moved to another VM (potentially AWS) that is 
-owned by the organization. 
+**Future work:**
+- The Oracle VM is owned by Arya — it should be moved to another VM (potentially AWS)
+  that's owned by the organization.
 
 ## Deep Dive
 

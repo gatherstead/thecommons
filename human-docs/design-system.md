@@ -18,13 +18,16 @@
   - Checking whether something you're about to write is disallowed → Deep Dive §7 (Banned)
   - Known inconsistencies and open gaps → Deep Dive §8
 
-**note**
-- We are taking inspiration from craigslist in the sense of prioritizing UX over UI. If there is ever a decision to be made between the two, it should aways fall towards UX. Always prioritize making things clear and easy for the user.
+**Note:** We're taking inspiration from Craigslist in the sense of prioritizing UX over
+UI. If there's ever a decision to be made between the two, it should always fall towards
+UX. Always prioritize making things clear and easy for the user.
 
-**future work**
-- "thecommonsweb" needs to have a UI update. It is too confusing and dense- but has a nice look to it. Suggested approach is to ask users if they can figure out
-how to do something simple (like find an event they'd want to go to), and documenting how they go about it. For example, where do they look first, where do they
-get stuck etc- then mold the changes to the website strucutre to facilitate the usage of the broad majority and eliminating blockers, etc. 
+**Future work:**
+- `theCommonsWeb` needs a UI update. It's too confusing and dense — even though it has a nice look
+  to it. Suggested approach: ask users if they can figure out how to do something simple
+  (like find an event they'd want to go to), and document how they go about it — where
+  they look first, where they get stuck, etc. — then mold changes to the site's structure
+  to facilitate usage for the broad majority and eliminate blockers.
 
 ## Deep Dive
 

@@ -18,7 +18,7 @@ from broadcast.models import (
     BroadcastTarget,
     SalesCodeSlot,
 )
-from broadcast.sales_codes import ensure_sales_slots, rotate_sales_slot
+from broadcast.sales_codes import ensure_sales_slots, rotate_sales_slot, start_trial_clock
 
 
 class BroadcastTargetInline(TabularInline):
@@ -180,13 +180,18 @@ class AccessCodeAdmin(ModelAdmin):
         """POST-only JSON endpoint backing the sales dashboard's Copy button.
 
         Called after the browser has already copied the *current* code to the
-        clipboard — this generates the *next* one so the box is pre-loaded for
-        next time. The just-copied code is left active, not revoked.
+        clipboard — this starts that code's trial clock (its 3 days run from
+        hand-off, not from whenever it happened to be minted) and then
+        generates the *next* one so the box is pre-loaded for next time. The
+        just-copied code is left active, not revoked.
         """
         if request.method != "POST":
             return JsonResponse({"detail": "POST required"}, status=405)
         if slot not in dict(SalesCodeSlot.SLOT_CHOICES):
             return JsonResponse({"detail": "unknown slot"}, status=404)
+        copied = SalesCodeSlot.objects.select_related("access_code").filter(slot=slot).first()
+        if copied is not None:
+            start_trial_clock(copied)
         rotated = rotate_sales_slot(slot)
         return JsonResponse({"slot": slot, "raw_code": rotated.raw_code})
 

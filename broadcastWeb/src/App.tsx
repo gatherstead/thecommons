@@ -81,6 +81,23 @@ const EMPTY_DRAFT: EventDraft = {
   contact_phone: "",
 };
 
+// The AI-autofill response carries every EventDraft key, with unknowns as
+// "" / [] / false. Strip those (and draft_id, which the form owns) so the
+// result can be merged over the current draft without erasing fields the
+// model simply didn't mention. Consequence, deliberate: autofill can set a
+// field but never clear one — clearing stays a manual edit.
+export const meaningfulFields = (event: EventDraft): Partial<EventDraft> => {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) {
+    if (key === "draft_id") continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    if (value === false || value === null || value === undefined) continue;
+    out[key] = value;
+  }
+  return out as Partial<EventDraft>;
+};
+
 export const isDraftEmpty = (draft: EventDraft): boolean =>
   draft.title.trim() === "" &&
   draft.description.trim() === "" &&
@@ -531,10 +548,14 @@ export default function App() {
   // bound to the account), and if the backend rejects that, as a TRIAL code
   // (per-request header auth). Either way the user sees a single Verify step.
   const handleVerifyCode = async () => {
-    if (!accessCode.trim() || !jwt) return;
+    // Trim once, up front: codes arrive by copy/paste and a stray trailing
+    // space made a valid code hash to something else entirely, surfacing as
+    // an unexplainable "Access code not recognized."
+    const code = accessCode.trim();
+    if (!code || !jwt) return;
     setAccessError("");
     try {
-      const result = await redeemAccessCode({ jwt }, accessCode);
+      const result = await redeemAccessCode({ jwt }, code);
       setTier(result.tier);
       setIsTrial(false);
       setUsesRemaining(null);
@@ -550,12 +571,12 @@ export default function App() {
       }
     }
     try {
-      const access = await getAccess({ accessCode });
+      const access = await getAccess({ accessCode: code });
       if (access.tier === 0) {
         throw new ApiError(403, "Access code not recognized. Check the code and try again.");
       }
       setAccessVerified(true);
-      setVerifiedCode(accessCode);
+      setVerifiedCode(code);
       setAccessSource("code");
       setTier(access.tier);
       setIsTrial(access.is_trial);
@@ -713,8 +734,14 @@ export default function App() {
       } else {
         setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
       }
-    } catch {
-      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
+    } catch (e) {
+      // Only the extension path earns "not available". A failed
+      // /broadcast/direct-recipe call (403 rate-limit, expired session, 404
+      // adapter) used to land here too and got reported as a missing
+      // extension — sending people to reinstall a working extension while the
+      // real error stayed invisible in the network tab.
+      setError(describeError(e, "Couldn't build the fill for this site."));
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "failed" }));
     }
   };
 
@@ -751,14 +778,15 @@ export default function App() {
     setError("");
     try {
       const result = await aiAutofill(auth, aiText);
-      setDraft((prev) => ({
-        ...EMPTY_DRAFT,
-        organizer_name: prev.organizer_name,
-        contact_email: prev.contact_email,
-        contact_phone: prev.contact_phone,
-        ...result.event,
-        draft_id: crypto.randomUUID(),
-      }));
+      // Merge, never replace. The backend always returns every EventDraft key
+      // (unknowns as "" / [] / false), so spreading the response wholesale
+      // wiped every field the model didn't happen to re-extract — which made
+      // "change the phone number to X" erase the rest of the form. Only
+      // non-empty values overwrite what's already there, so a targeted edit
+      // touches exactly the fields it names and a first paste still fills
+      // everything. draft_id is preserved: it keys trial metering, and a fresh
+      // one per autofill would burn a use on every edit.
+      setDraft((prev) => ({ ...prev, ...meaningfulFields(result.event) }));
       setPreview(null);
       setJob(null);
       setSelected(new Set());

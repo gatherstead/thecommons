@@ -38,8 +38,14 @@ class AccessResult:
 
 
 def hash_code(raw: str) -> str:
-    """SHA-256 hexdigest of a raw access code (never store raw)."""
-    return hashlib.sha256(raw.encode()).hexdigest()
+    """SHA-256 hexdigest of a raw access code (never store raw).
+
+    Whitespace-stripped first: codes are handed out by copy/paste, and a
+    pasted trailing space or newline otherwise produces a different digest —
+    an unrecoverable "Invalid credentials." on a perfectly good code. Generated
+    codes are URL-safe tokens, so stripping can never collide two real codes.
+    """
+    return hashlib.sha256(raw.strip().encode()).hexdigest()
 
 
 def authenticated_email(request) -> str | None:

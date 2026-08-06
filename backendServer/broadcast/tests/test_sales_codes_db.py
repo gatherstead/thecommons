@@ -5,13 +5,16 @@ Run with:
         broadcast.tests.test_sales_codes_db
 """
 
+from datetime import timedelta
+
 from django.contrib.auth.models import User
-from django.test import TestCase, tag
+from django.test import RequestFactory, TestCase, tag
 from django.urls import reverse
+from django.utils import timezone
 
 from broadcast.access import resolve_access
 from broadcast.models import AccessCode, SalesCodeSlot
-from broadcast.sales_codes import ensure_sales_slots, rotate_sales_slot
+from broadcast.sales_codes import TRIAL_DAYS, ensure_sales_slots, rotate_sales_slot
 
 
 @tag("db")
@@ -126,3 +129,63 @@ class SalesDashboardAdminTest(TestCase):
         url = reverse("admin:broadcast_accesscode_rotate_slot", args=["bogus"])
         resp = self.client.post(url)
         self.assertEqual(resp.status_code, 404)
+
+
+@tag("db")
+class TrialSlotExpiryTest(TestCase):
+    """The trial slot's 3-day window must run from hand-off, not from minting.
+
+    The dashboard pre-loads the *next* code as soon as the current one is
+    copied, so the code on display was minted on the previous copy. Anchoring
+    expiry to creation meant a slot nobody had touched in TRIAL_DAYS handed out
+    an already-dead code while the panel advertised "valid 3 days from when
+    it's copied" — a fresh-looking code that 403s on /broadcast/access.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser("sales", "sales@example.com", "pw")
+        self.client.force_login(self.admin)
+
+    def test_copy_restarts_the_trial_clock(self):
+        slot = rotate_sales_slot(SalesCodeSlot.SLOT_TRIAL)
+        code = slot.access_code
+        stale = timezone.now() - timedelta(days=1)
+        AccessCode.objects.filter(pk=code.pk).update(expires_at=stale)
+
+        url = reverse("admin:broadcast_accesscode_rotate_slot", args=[SalesCodeSlot.SLOT_TRIAL])
+        self.assertEqual(self.client.post(url).status_code, 200)
+
+        code.refresh_from_db()
+        self.assertGreater(code.expires_at, timezone.now() + timedelta(days=TRIAL_DAYS - 1))
+
+    def test_copied_trial_code_still_resolves_after_a_stale_mint(self):
+        slot = rotate_sales_slot(SalesCodeSlot.SLOT_TRIAL)
+        raw = slot.raw_code
+        AccessCode.objects.filter(pk=slot.access_code.pk).update(
+            expires_at=timezone.now() - timedelta(days=1)
+        )
+
+        url = reverse("admin:broadcast_accesscode_rotate_slot", args=[SalesCodeSlot.SLOT_TRIAL])
+        self.client.post(url)
+
+        req = RequestFactory().post("/", HTTP_X_BROADCAST_ACCESS_CODE=raw)
+        self.assertEqual(resolve_access(req).tier, 2)
+
+    def test_upgrade_slot_never_gains_an_expiry(self):
+        slot = rotate_sales_slot(SalesCodeSlot.SLOT_TIER1)
+        url = reverse("admin:broadcast_accesscode_rotate_slot", args=[SalesCodeSlot.SLOT_TIER1])
+        self.client.post(url)
+        slot.access_code.refresh_from_db()
+        self.assertIsNone(slot.access_code.expires_at)
+
+    def test_ensure_sales_slots_rotates_an_expired_trial_code(self):
+        rotate_sales_slot(SalesCodeSlot.SLOT_TRIAL)
+        slot = SalesCodeSlot.objects.get(slot=SalesCodeSlot.SLOT_TRIAL)
+        dead_raw = slot.raw_code
+        AccessCode.objects.filter(pk=slot.access_code.pk).update(
+            expires_at=timezone.now() - timedelta(days=1)
+        )
+
+        displayed = {s.slot: s for s in ensure_sales_slots()}[SalesCodeSlot.SLOT_TRIAL]
+        self.assertNotEqual(displayed.raw_code, dead_raw)
+        self.assertGreater(displayed.access_code.expires_at, timezone.now())

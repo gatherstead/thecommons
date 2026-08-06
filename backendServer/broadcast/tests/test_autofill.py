@@ -111,8 +111,23 @@ class CoerceTest(SimpleTestCase):
         self.assertTrue(_coerce({"is_free": True})["is_free"])
         self.assertFalse(_coerce({"is_free": False})["is_free"])
 
-    def test_state_defaults_to_nc(self):
-        self.assertEqual(_coerce({})["state"], "NC")
+    def test_state_left_blank_when_absent(self):
+        # Deliberately NOT defaulted to "NC" — the SPA merges non-empty fields
+        # over the current form, so a fabricated state would stomp an
+        # out-of-state value on every targeted edit.
+        self.assertEqual(_coerce({})["state"], "")
+
+    def test_phone_kept_when_ten_digits(self):
+        for raw in ("919-555-0123", "(919) 555-0123", "9195550123", "+1 919 555 0123"):
+            self.assertEqual(_coerce({"contact_phone": raw})["contact_phone"], raw)
+
+    def test_phone_dropped_when_more_than_ten_digits(self):
+        # A tracking/order number the model mistook for a phone.
+        for raw in ("1Z9999W99999999999", "8005551234567", "202603150000123456"):
+            self.assertEqual(_coerce({"contact_phone": raw})["contact_phone"], "")
+
+    def test_phone_dropped_when_too_few_digits(self):
+        self.assertEqual(_coerce({"contact_phone": "555-0123"})["contact_phone"], "")
 
     def test_state_truncated_to_2_chars(self):
         # Shouldn't happen in practice but we guard it

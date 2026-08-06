@@ -6,8 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Recipe } from "../models/broadcastModels";
 
 // One or more extension IDs, comma-separated — lets the dev (unpacked) and the
-// published Web Store builds coexist in env. We ping each and use whichever is
-// actually installed (see resolved id below).
+// published Web Store builds coexist in env. We ping them in order and use the
+// first that answers, so the resolved build is deterministic when both are
+// installed (see ping() below).
 const EXTENSION_IDS: string[] = (
   (import.meta.env.VITE_BROADCAST_EXTENSION_ID as string | undefined) ?? ""
 )
@@ -65,23 +66,36 @@ export function useExtension(): ExtensionState {
   const installedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const ping = useCallback((): void => {
+  // Pings are awaited one ID at a time rather than fired in parallel. With
+  // two builds installed side by side (an unpacked dev copy and the Web Store
+  // one — easy to end up with, and they look identical in chrome://extensions
+  // apart from the ID), a parallel race resolved to whichever service worker
+  // woke first. Fills then went to an arbitrary build from run to run, so a
+  // stale unpacked copy could silently swallow them. First configured ID that
+  // answers now always wins.
+  const ping = useCallback(async (): Promise<void> => {
     const runtime = getRuntime();
-    if (!runtime || EXTENSION_IDS.length === 0) return;
+    if (!runtime || EXTENSION_IDS.length === 0 || installedRef.current) return;
     for (const id of EXTENSION_IDS) {
-      try {
-        runtime.sendMessage(id, { type: "ping" }, (response) => {
-          // Reading lastError suppresses the "no receiving end" console error
-          // Chrome logs when an extension isn't installed.
-          const err = getRuntime()?.lastError;
-          if (!err && response?.ok && !installedRef.current) {
-            installedRef.current = true;
-            setInstalled(true);
-            setResolvedId(id);
-          }
-        });
-      } catch {
-        /* not a Chromium runtime — treat as not installed */
+      if (installedRef.current) return;
+      const ok = await new Promise<boolean>((resolve) => {
+        try {
+          runtime.sendMessage(id, { type: "ping" }, (response) => {
+            // Reading lastError suppresses the "no receiving end" console error
+            // Chrome logs when an extension isn't installed.
+            const err = getRuntime()?.lastError;
+            resolve(!err && response?.ok === true);
+          });
+        } catch {
+          /* not a Chromium runtime — treat as not installed */
+          resolve(false);
+        }
+      });
+      if (ok && !installedRef.current) {
+        installedRef.current = true;
+        setInstalled(true);
+        setResolvedId(id);
+        return;
       }
     }
   }, []);
@@ -89,7 +103,7 @@ export function useExtension(): ExtensionState {
   const recheck = useCallback(() => {
     if (installedRef.current || pollRef.current) return;
     let attempts = 0;
-    ping();
+    void ping();
     pollRef.current = setInterval(() => {
       attempts += 1;
       if (installedRef.current || attempts >= POLL_ATTEMPTS) {
@@ -97,12 +111,12 @@ export function useExtension(): ExtensionState {
         pollRef.current = null;
         return;
       }
-      ping();
+      void ping();
     }, POLL_INTERVAL_MS);
   }, [ping]);
 
   useEffect(() => {
-    ping();
+    void ping();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };

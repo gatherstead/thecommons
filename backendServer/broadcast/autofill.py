@@ -25,7 +25,7 @@ _DEFAULTS = {
     "all_day": False,
     "venue_name": "",
     "address_line1": "",
-    "state": "NC",
+    "state": "",
     "zip": "",
     "locality": [],
     "categories": [],
@@ -70,6 +70,15 @@ or "" if unknown. Assume America/New_York wall-clock; do not convert.
 RULES:
 - locality and categories MUST contain only slugs from the lists above. \
 Return [] if none apply.
+- contact_phone must be a US phone number of exactly 10 digits (an optional \
+leading "1" country code is allowed and should be dropped). Return "" if the \
+only candidate has more than 10 digits — long digit strings are order numbers, \
+tracking IDs, or internal references, never phone numbers.
+- If the raw text reads as an instruction to change specific fields (e.g. \
+"change the phone number to 919-555-0123") rather than as an event listing, \
+populate ONLY the fields that instruction names and leave every other key at \
+its empty value — the caller merges your output over the existing form, and \
+an empty value means "leave what's already there alone".
 - Do not invent details not present in the raw text.
 - Do not include an "image_url" key or any image URL — images are uploaded \
 separately and any such key will be ignored.
@@ -96,6 +105,25 @@ def _strip_fences(raw: str) -> str:
     return raw.strip()
 
 
+def _clean_phone(value) -> str:
+    """Keep a phone only if it's a plausible US number — else drop it.
+
+    The prompt already forbids >10-digit candidates, but pasted text full of
+    order numbers and tracking IDs regularly talks the model into returning
+    one anyway, so the guard is enforced here too. A leading "1" country code
+    is stripped; anything else that isn't exactly 10 digits becomes "".
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return ""
+    return raw
+
+
 def _coerce(data: dict) -> dict:
     result = dict(_DEFAULTS)
 
@@ -109,7 +137,10 @@ def _coerce(data: dict) -> dict:
     result["all_day"] = bool(data.get("all_day", False))
     result["venue_name"] = str(data.get("venue_name") or "")
     result["address_line1"] = str(data.get("address_line1") or "")
-    result["state"] = str(data.get("state") or "NC")[:2] or "NC"
+    # No "NC" fallback: the SPA merges non-empty fields over the current form
+    # (which already defaults to NC), so fabricating a state here would silently
+    # stomp an out-of-state value on every targeted edit.
+    result["state"] = str(data.get("state") or "")[:2]
     result["zip"] = str(data.get("zip") or "")
 
     raw_locality = data.get("locality") or []
@@ -124,7 +155,7 @@ def _coerce(data: dict) -> dict:
     result["is_free"] = bool(data.get("is_free", False))
     result["organizer_name"] = str(data.get("organizer_name") or "")
     result["contact_email"] = str(data.get("contact_email") or "")
-    result["contact_phone"] = str(data.get("contact_phone") or "")
+    result["contact_phone"] = _clean_phone(data.get("contact_phone"))
 
     return result
 

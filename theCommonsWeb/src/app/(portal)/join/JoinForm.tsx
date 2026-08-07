@@ -6,7 +6,6 @@ import { useAuth } from '../../../hooks/useAuth';
 import { resolveRedirect } from '../../../lib/redirect-allowlist';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
-import { PortalShell } from '../PortalShell';
 import type { UserType } from '../../../models/authModels';
 
 const USER_TYPE_OPTIONS: { value: UserType; label: string }[] = [
@@ -17,14 +16,21 @@ const USER_TYPE_OPTIONS: { value: UserType; label: string }[] = [
 
 const MIN_PASSWORD_LENGTH = 8;
 
-export function JoinForm() {
+export function JoinForm({
+    email,
+    onEmailChange,
+    autoFocus,
+}: {
+    email: string;
+    onEmailChange: (value: string) => void;
+    autoFocus?: boolean;
+}) {
     const searchParams = useSearchParams();
     const { signup, isAuthenticated, isInitializing } = useAuth();
 
     const redirectTo = searchParams.get('redirect_to');
 
     const [userType, setUserType] = useState<UserType>('LOCAL');
-    const [email, setEmail] = useState('');
     const [password, updatePassword] = useState('');
     const [confirm, setConfirm] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -61,11 +67,7 @@ export function JoinForm() {
     }
 
     return (
-        <PortalShell
-            activeTab="join"
-            heading="Create Account"
-            subheading="Set your email and password to get started."
-        >
+        <>
             {error && (
                 <div
                     className="mb-6 p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
@@ -87,7 +89,7 @@ export function JoinForm() {
                                 type="button"
                                 onClick={() => setUserType(opt.value)}
                                 aria-pressed={userType === opt.value}
-                                className={`flex-1 text-center border py-2 px-2 text-xs uppercase tracking-wider font-bold cursor-pointer ${
+                                className={`flex-1 text-center border py-2 px-2 text-xs uppercase tracking-wider font-bold cursor-pointer transition-colors ${
                                     userType === opt.value
                                         ? 'bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-bg)]'
                                         : 'bg-transparent border-[var(--color-border)] hover:bg-[var(--color-bg-alt)]'
@@ -103,9 +105,10 @@ export function JoinForm() {
                     type="email"
                     autoComplete="email"
                     required
-                    autoFocus
+                    autoFocus={autoFocus}
+                    placeholder="you@saxapahaw.com"
                     value={email}
-                    onChange={e => setEmail(e.target.value)}
+                    onChange={e => onEmailChange(e.target.value)}
                 />
                 <Input
                     label="Password"
@@ -125,12 +128,17 @@ export function JoinForm() {
                     value={confirm}
                     onChange={e => setConfirm(e.target.value)}
                 />
-                <div className="flex justify-end items-center pt-2">
-                    <Button type="submit" variant="primary" disabled={isLoading}>
+                <div className="pt-2">
+                    <Button
+                        type="submit"
+                        variant="primary"
+                        className="portal-submit"
+                        disabled={isLoading}
+                    >
                         {isLoading ? 'Please wait…' : 'Create Account'}
                     </Button>
                 </div>
             </form>
-        </PortalShell>
+        </>
     );
 }

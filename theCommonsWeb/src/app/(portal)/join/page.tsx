@@ -1,10 +1,13 @@
 import { Suspense } from 'react';
-import { JoinForm } from './JoinForm';
+import { PortalShell } from '../PortalShell';
+import { AuthPanel } from '../AuthPanel';
 
 export default function JoinPage() {
     return (
-        <Suspense fallback={null}>
-            <JoinForm />
-        </Suspense>
+        <PortalShell>
+            <Suspense fallback={null}>
+                <AuthPanel initialTab="join" />
+            </Suspense>
+        </PortalShell>
     );
 }

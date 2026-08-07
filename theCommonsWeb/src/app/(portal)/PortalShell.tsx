@@ -1,107 +1,75 @@
-'use client';
-
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-
-function portalHref(base: string, redirectTo: string | null) {
-    if (!redirectTo) return base;
-    return `${base}?redirect_to=${encodeURIComponent(redirectTo)}`;
-}
+import Image from 'next/image';
 
 export function PortalShell({
-    activeTab,
     heading,
     subheading,
     children,
 }: {
-    activeTab?: 'signin' | 'join';
     heading?: string;
     subheading?: string;
     children: React.ReactNode;
 }) {
-    const searchParams = useSearchParams();
-    const redirectTo = searchParams.get('redirect_to');
-
-    const signInHref = portalHref('/signin', redirectTo);
-    const joinHref = portalHref('/join', redirectTo);
-
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 min-h-screen">
-            {/* ── Left panel: masthead ────────────────────────────────────────── */}
-            <div className="hidden md:flex md:items-center md:justify-center relative bg-[var(--color-bg-alt)] border-r border-[var(--color-border)] px-12">
-                <div className="max-w-sm">
-                    <span className="block text-xs uppercase tracking-[0.35em] text-[var(--color-text-muted)] mb-6">
-                        Est. 2026
-                    </span>
-                    <h2
-                        className="font-black leading-[0.95] mb-6"
-                        style={{ fontSize: 'clamp(2.5rem, 6vw, 4rem)', fontFamily: 'var(--font-headline)' }}
-                    >
-                        The Commons
-                    </h2>
-                    <div className="border-t-2 border-[var(--color-border)] pt-6">
-                        <p className="font-[var(--font-headline)] italic text-lg leading-relaxed text-[var(--color-text-muted)]">
-                            &ldquo;Find your next excuse to stay local.&rdquo;
-                        </p>
-                    </div>
-                    <div className="border-t border-[var(--color-border-light)] mt-8 pt-4">
-                        <span className="text-xs uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                            Your town&rsquo;s digital gathering place
-                        </span>
-                    </div>
-                </div>
+        <div className="portal-page relative min-h-screen w-full overflow-x-hidden">
+            <div aria-hidden className="portal-art overflow-hidden">
+                {/* object-position X is the horizontal framing knob: higher %
+                    slides the visible window right through the painting,
+                    cutting more off the left of the tree. The asset is cut
+                    wide on purpose so this has ~23vw of travel — see
+                    docs/login-art.md.
+
+                    The image is height-bound under object-cover (its render
+                    height already matches the container), so there's no
+                    vertical slack to slide through on its own. scale-y-[118%]
+                    stretches the painting taller — a deliberate distortion,
+                    the tree reads slightly elongated — leaving horizontal
+                    zoom untouched (that stays governed by object-position X
+                    on the wide asset, see above). The stretch over-fills the
+                    container by ~9% top and bottom; -translate-y-[5%] spends
+                    part of that overflow to push the visible window up — more
+                    roots/ground stay hidden below, less empty canvas above.
+                    Keep |translate-y| at or under half of (scale-y - 100),
+                    i.e. up to ~9% here, or the bottom edge exposes background
+                    instead of painting. */}
+                <Image
+                    src="/login-tree.webp"
+                    alt=""
+                    fill
+                    priority
+                    sizes="(max-width: 768px) 100vw, 78vw"
+                    className="scale-y-[118%] -translate-y-[8%] object-cover object-[95%_center]"
+                />
             </div>
 
-            {/* ── Right panel: form slot ─────────────────────────────────────── */}
-            <div className="flex items-center justify-center px-4 py-12">
-                <div className="w-full max-w-[480px]">
-                    {(heading || subheading) && (
-                        <header className="mb-8">
-                            {heading && (
-                                <h1
-                                    className="font-black tracking-tight leading-none mb-1"
-                                    style={{ fontSize: 'clamp(2rem, 5vw, 3rem)', fontFamily: 'var(--font-headline)' }}
-                                >
-                                    {heading}
-                                </h1>
-                            )}
-                            {subheading && (
-                                <p className="text-sm italic text-[var(--color-text-muted)]">
-                                    {subheading}
-                                </p>
-                            )}
-                        </header>
-                    )}
+            <div className="relative grid min-h-screen grid-cols-1 md:grid-cols-[60%_1fr]">
+                <div aria-hidden className="hidden md:block" />
 
-                    <nav
-                        aria-label="Account access"
-                        className="flex border-b border-[var(--color-border)] mb-8"
-                    >
-                        <Link
-                            href={signInHref}
-                            aria-current={activeTab === 'signin' ? 'page' : undefined}
-                            className={`px-4 py-2.5 text-xs uppercase tracking-[0.15em] font-bold text-center flex-1 -mb-px border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-                                activeTab === 'signin'
-                                    ? 'border-[var(--color-accent)] text-[var(--color-text)]'
-                                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                            }`}
+                <div className="flex items-start px-6 pt-[40vh] pb-16 md:items-center md:px-0 md:pr-[6vw] md:py-16 md:pt-16">
+                    <div className="w-full max-w-[440px]">
+                        <h1
+                            className="mb-0 leading-none tracking-tight"
+                            style={{ fontSize: 'clamp(2.1rem, 3.4vw, 2.75rem)' }}
                         >
-                            Sign In
-                        </Link>
-                        <Link
-                            href={joinHref}
-                            aria-current={activeTab === 'join' ? 'page' : undefined}
-                            className={`px-4 py-2.5 text-xs uppercase tracking-[0.15em] font-bold text-center flex-1 -mb-px border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-                                activeTab === 'join'
-                                    ? 'border-[var(--color-accent)] text-[var(--color-text)]'
-                                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                            }`}
-                        >
-                            Create Account
-                        </Link>
-                    </nav>
+                            The Commons
+                        </h1>
+                        <div className="mt-4 border-t border-[var(--color-border)]" />
+                        <p className="mt-3 italic text-[var(--color-text-muted)]">
+                            Local happenings, small NC towns.
+                        </p>
 
-                    {children}
+                        {(heading || subheading) && (
+                            <header className="mt-8">
+                                {heading && <h2 className="mb-1 text-2xl">{heading}</h2>}
+                                {subheading && (
+                                    <p className="text-sm italic text-[var(--color-text-muted)]">
+                                        {subheading}
+                                    </p>
+                                )}
+                            </header>
+                        )}
+
+                        <div className="mt-8">{children}</div>
+                    </div>
                 </div>
             </div>
         </div>

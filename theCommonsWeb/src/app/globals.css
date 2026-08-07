@@ -11,6 +11,7 @@
   --color-border: #1a1a1a;
   --color-border-light: #c8c3b8;
   --color-accent: #8b0000;
+  --color-gilt: #9f7e3d;   /* gilt leaf — ornamental active state on the auth portal */
 
   /* Readable serif stack -- Georgia is on every system, no network requests */
   --font-headline: Georgia, "Times New Roman", Times, serif;
@@ -107,4 +108,218 @@ hr {
 
 @media (prefers-reduced-motion: reduce) {
   .skeleton-block { animation: none; opacity: 0.5; }
+}
+
+/* ── Auth portal ──────────────────────────────────────────────────────────
+   The one surface where the newsprint palette warms into sepia, so the type
+   reads as part of the painted masthead rather than pasted beside it. Scoped
+   to .portal-page — every other page keeps the flat cream/ink tokens. */
+.portal-page {
+  --color-bg: #eee8da;
+  --color-bg-rgb: 238 232 218;
+  --color-bg-alt: #e4dcc9;
+  --color-text: #32291e;
+  --color-text-muted: #6b6049;
+  --color-border: #32291e;
+  --color-border-light: #cfc4ab;
+  --color-placeholder: #736853;
+  background-color: var(--color-bg);
+}
+
+.portal-art {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 38vh;
+}
+
+/* The fade is the design: the painting dissolves into the page the form sits
+   on, so there is never a seam between image and background.
+
+   Every ramp below approximates alpha = t^2.6 rather than a straight line.
+   A linear ramp reads as "translucent everywhere"; this one stays under 20%
+   for the first half of its span, so the painting looks fully opaque well
+   into the fade and then gives way quickly. */
+.portal-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--color-bg-rgb) / 0) 25%,
+    rgb(var(--color-bg-rgb) / 0.007) 36%,
+    rgb(var(--color-bg-rgb) / 0.044) 47%,
+    rgb(var(--color-bg-rgb) / 0.125) 59%,
+    rgb(var(--color-bg-rgb) / 0.265) 70%,
+    rgb(var(--color-bg-rgb) / 0.473) 81%,
+    rgb(var(--color-bg-rgb) / 0.76) 92%,
+    rgb(var(--color-bg-rgb) / 1) 100%
+  );
+}
+
+@media (min-width: 768px) {
+  .portal-art {
+    inset: 0 auto 0 0;
+    width: 78%;
+    height: auto;
+  }
+  /* Two layers. The diagonal does the visible work — 105deg keeps the slant
+     readable while staying shallow enough that the stop positions don't swing
+     wildly with viewport aspect. Its span lands the fade in the middle third
+     of the screen at mid-height.
+
+     The horizontal layer underneath is inert in normal cases (the diagonal has
+     already reached full opacity by then) and exists only to seal the panel's
+     right edge, which the diagonal alone leaves visible at the top-right corner
+     on tall, narrow viewports. */
+  .portal-art::after {
+    background:
+      /* Shift these stops as a block to slide the fade left/right; keep the
+         spacing between them to preserve the ease-in shape. */
+      linear-gradient(
+        118deg,
+        rgb(var(--color-bg-rgb) / 0) 24%,
+        rgb(var(--color-bg-rgb) / 0.007) 30%,
+        rgb(var(--color-bg-rgb) / 0.044) 37%,
+        rgb(var(--color-bg-rgb) / 0.125) 43%,
+        rgb(var(--color-bg-rgb) / 0.265) 49%,
+        rgb(var(--color-bg-rgb) / 0.426) 54%,
+        rgb(var(--color-bg-rgb) / 0.636) 59%,
+        rgb(var(--color-bg-rgb) / 0.828) 63%,
+        rgb(var(--color-bg-rgb) / 1) 66%
+      ),
+      linear-gradient(
+        to right,
+        rgb(var(--color-bg-rgb) / 0) 62%,
+        rgb(var(--color-bg-rgb) / 0.044) 73%,
+        rgb(var(--color-bg-rgb) / 0.211) 82%,
+        rgb(var(--color-bg-rgb) / 0.473) 90%,
+        rgb(var(--color-bg-rgb) / 0.76) 95%,
+        rgb(var(--color-bg-rgb) / 1) 99%
+      );
+  }
+}
+
+.portal-page label {
+  letter-spacing: 0.18em;
+}
+
+/* The portal drops the site-wide underline on links — the tabs and masthead
+   carry their own rules, so a default underline just adds noise. */
+.portal-page a {
+  text-decoration: none;
+}
+
+.portal-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.portal-page input[type='email'],
+.portal-page input[type='password'],
+.portal-page input[type='text'] {
+  border: 0;
+  border-bottom: 1px solid var(--color-border-light);
+  padding: 0.4rem 0;
+  font-size: 1rem;
+}
+
+/* Underline fields can't wear the site's rectangular focus outline without
+   looking boxed-in, so the indicator becomes a thickened gilt rule plus a
+   wash behind the field — both visible enough to stand in for the ring. */
+.portal-page input[type='email']:focus,
+.portal-page input[type='password']:focus,
+.portal-page input[type='text']:focus {
+  outline: none;
+  border-bottom: 2px solid var(--color-gilt);
+  padding-bottom: calc(0.4rem - 1px);
+  background-color: rgb(159 126 61 / 0.07);
+}
+
+.portal-page ::placeholder {
+  color: var(--color-placeholder);
+  font-style: italic;
+  opacity: 1;
+}
+
+/* Sign In / Create Account are one surface, not two pages: the rule slides
+   between labels and the panel grows into the taller form. */
+.portal-tabs {
+  position: relative;
+  display: flex;
+  gap: 2rem;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.portal-tab {
+  padding-bottom: 0.75rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-text-muted);
+  transition: color 200ms ease;
+}
+
+.portal-tab:hover,
+.portal-tab.is-active {
+  color: var(--color-text);
+}
+
+.portal-tab.is-active {
+  font-weight: 700;
+}
+
+.portal-tab-marker {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background-color: var(--color-gilt);
+}
+
+.portal-tab-marker.is-ready {
+  transition:
+    transform 320ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Height animates so the column re-centres smoothly, but the content is NOT
+   clipped to it: clipping chopped the submit button off mid-transition and
+   popped it back, which read as a flash. */
+.portal-body {
+  transition: height 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes portal-form-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.portal-form {
+  animation: portal-form-in 260ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-tab-marker.is-ready,
+  .portal-body {
+    transition: none;
+  }
+  .portal-form {
+    animation: none;
+  }
+}
+
+.portal-submit {
+  width: 100%;
+  font-family: var(--font-headline);
+  font-size: 1.05rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  padding: 0.85rem 1rem;
 }

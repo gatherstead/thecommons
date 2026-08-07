@@ -1,10 +1,13 @@
 import { Suspense } from 'react';
-import { SignInForm } from './SignInForm';
+import { PortalShell } from '../PortalShell';
+import { AuthPanel } from '../AuthPanel';
 
 export default function SignInPage() {
     return (
-        <Suspense fallback={null}>
-            <SignInForm />
-        </Suspense>
+        <PortalShell>
+            <Suspense fallback={null}>
+                <AuthPanel initialTab="signin" />
+            </Suspense>
+        </PortalShell>
     );
 }

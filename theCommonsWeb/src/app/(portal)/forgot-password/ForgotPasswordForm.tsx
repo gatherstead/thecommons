@@ -6,7 +6,6 @@ import { useSearchParams } from 'next/navigation';
 import { authClient } from '../../../lib/auth-client';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
-import { PortalShell } from '../PortalShell';
 
 export function ForgotPasswordForm() {
     const searchParams = useSearchParams();
@@ -38,48 +37,49 @@ export function ForgotPasswordForm() {
     }
 
     return (
-        <PortalShell heading="Forgot Password?">
-            <div className="space-y-6">
-                <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-                    Enter your account email and we&rsquo;ll send you a link to set a new
-                    password.
-                </p>
+        <div className="space-y-6">
+            <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+                Enter your account email and we&rsquo;ll send you a link to set a new
+                password.
+            </p>
 
-                <form onSubmit={handleSubmit} className="space-y-4 pt-2 border-t border-[var(--color-border)]">
-                    <Input
-                        label="Email"
-                        type="email"
-                        autoComplete="email"
-                        required
-                        autoFocus
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        placeholder="you@example.com"
-                    />
+            <form onSubmit={handleSubmit} className="space-y-4 pt-2 border-t border-[var(--color-border)]">
+                <Input
+                    label="Email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    autoFocus
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                />
 
-                    {submitted && (
-                        <div
-                            className="p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
-                            role="status"
-                        >
-                            If that email exists in our system, we&rsquo;ve sent a reset link.
-                        </div>
-                    )}
-
-                    <div className="flex justify-between items-center pt-2">
-                        <Button type="submit" variant="secondary" size="sm" disabled={isLoading}>
-                            {isLoading ? 'Sending…' : 'Send Reset Link'}
-                        </Button>
-                        <Link
-                            href={signInHref}
-                            style={{ color: 'var(--color-bg)', textDecoration: 'none' }}
-                            className="font-[var(--font-sans)] cursor-pointer tracking-wide uppercase text-xs font-bold bg-[var(--color-text)] border-2 border-[var(--color-text)] hover:bg-[var(--color-accent)] hover:border-[var(--color-accent)] px-4 py-2.5 inline-block text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                        >
-                            Back to Sign In
-                        </Link>
+                {submitted && (
+                    <div
+                        className="p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
+                        role="status"
+                    >
+                        If that email exists in our system, we&rsquo;ve sent a reset link.
                     </div>
-                </form>
-            </div>
-        </PortalShell>
+                )}
+
+                <div className="pt-2">
+                    <Button
+                        type="submit"
+                        variant="primary"
+                        className="portal-submit"
+                        disabled={isLoading}
+                    >
+                        {isLoading ? 'Sending…' : 'Send Reset Link'}
+                    </Button>
+                    <p className="mt-4 text-sm italic text-[var(--color-text-muted)]">
+                        <Link href={signInHref} className="portal-link">
+                            Back to sign in
+                        </Link>
+                    </p>
+                </div>
+            </form>
+        </div>
     );
 }

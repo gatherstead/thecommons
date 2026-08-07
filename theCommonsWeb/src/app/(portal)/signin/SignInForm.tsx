@@ -7,9 +7,16 @@ import { useAuth } from '../../../hooks/useAuth';
 import { resolveRedirect } from '../../../lib/redirect-allowlist';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
-import { PortalShell } from '../PortalShell';
 
-export function SignInForm() {
+export function SignInForm({
+    email,
+    onEmailChange,
+    autoFocus,
+}: {
+    email: string;
+    onEmailChange: (value: string) => void;
+    autoFocus?: boolean;
+}) {
     const searchParams = useSearchParams();
     const { login, isAuthenticated, isInitializing } = useAuth();
 
@@ -18,7 +25,6 @@ export function SignInForm() {
         ? `/forgot-password?redirect_to=${encodeURIComponent(redirectTo)}`
         : '/forgot-password';
 
-    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -46,11 +52,7 @@ export function SignInForm() {
     }
 
     return (
-        <PortalShell
-            activeTab="signin"
-            heading="Sign In"
-            subheading="Welcome back — enter your details to continue."
-        >
+        <>
             {error && (
                 <div
                     className="mb-6 p-2 border-2 border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-bold"
@@ -66,30 +68,36 @@ export function SignInForm() {
                     type="email"
                     autoComplete="email"
                     required
-                    autoFocus
+                    autoFocus={autoFocus}
+                    placeholder="you@saxapahaw.com"
                     value={email}
-                    onChange={e => setEmail(e.target.value)}
+                    onChange={e => onEmailChange(e.target.value)}
                 />
                 <Input
                     label="Password"
                     type="password"
                     autoComplete="current-password"
                     required
+                    placeholder="••••••"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                 />
-                <div className="flex justify-between items-center pt-2">
-                    <Link
-                        href={forgotPasswordHref}
-                        className="text-xs uppercase tracking-wider font-bold hover:text-[var(--color-accent)] transition-colors"
+                <div className="pt-2">
+                    <Button
+                        type="submit"
+                        variant="primary"
+                        className="portal-submit"
+                        disabled={isLoading}
                     >
-                        Forgot Password?
-                    </Link>
-                    <Button type="submit" variant="primary" disabled={isLoading}>
                         {isLoading ? 'Please wait…' : 'Sign In'}
                     </Button>
+                    <p className="mt-4 text-sm italic text-[var(--color-text-muted)]">
+                        <Link href={forgotPasswordHref} className="portal-link">
+                            Forgot your password?
+                        </Link>
+                    </p>
                 </div>
             </form>
-        </PortalShell>
+        </>
     );
 }

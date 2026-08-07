@@ -34,8 +34,7 @@ import {
   submitReal,
 } from "./services/broadcastApi";
 
-const DEV_FIXTURE: EventDraft = {
-  draft_id: "",
+const DEV_FIXTURE: Omit<EventDraft, "draft_id"> = {
   title: "Bull City BOOs Fest",
   description:
     "Join The MAKRS Society for our 5th annual Halloween Festival at Durham Central Park!\n\nCostumes Encouraged!!\n\nCool People. Cool Stuff.\n\n🍕 THE FOOD: 10-15 food trucks, breweries, cideries, wine, desserts and more!\n\n🔥 THE PERFORMANCES: Contortionist, magician, aerialist, fire performers and more!\n\n🎧 THE MUSIC: Live DJ keeping the party alive all night!\n\n🔮 THE EXPERIENCE: Lasers, fog, stilt walkers, tarot card readers, costume contests, selfie wall and more!\n\nVendor Applications: https://www.eventeny.com/events/vendor/?id=46443\nFood Truck Applications: https://www.eventeny.com/events/vendor/?id=46444\nEvent Website: https://makrs.com/bull-city-boos-fest",
@@ -58,8 +57,7 @@ const DEV_FIXTURE: EventDraft = {
   contact_phone: "",
 };
 
-const EMPTY_DRAFT: EventDraft = {
-  draft_id: "",
+const EMPTY_DRAFT: Omit<EventDraft, "draft_id"> = {
   title: "",
   description: "",
   start_datetime: "",
@@ -182,11 +180,27 @@ type ExtFillStatus =
   | "ready"
   | "filling"
   | "submitted"
+  // The extension itself never dispatched the fill (both the ack path and
+  // its one-shot fallback failed) — most commonly a build so old it
+  // predates even {type:"fill"} runtime.onMessageExternal. Distinct from
+  // "not-installed" (no extension at all) so the copy can point at
+  // *updating* rather than installing (see the README's fill-ack >= 0.4.1
+  // note).
   | "unavailable"
+  // No extension id resolved at all (useExtension's ping never found one) —
+  // distinct from "unavailable" so the copy is install-oriented rather than
+  // update-oriented; these are different user actions.
+  | "not-installed"
   // content.js's completion ack came back with ok:false (a field handler or
   // runFill itself threw) — a real, confirmed failure, distinct from
   // "unavailable" (the extension/tab never opened at all).
   | "failed"
+  // The /broadcast/direct-recipe call itself failed (403 rate-limit, expired
+  // session, 404 adapter, network error) — the extension was never even
+  // reached. Kept separate from "failed" (a confirmed content.js failure) and
+  // "unavailable"/"not-installed" (extension-side problems) so the message
+  // points at the actual cause instead of blaming the extension.
+  | "recipe-failed"
   // No completion ack arrived within FILL_ACK_TIMEOUT_MS — NOT the same as
   // FILLED and not the same as a confirmed failure either: the fill may well
   // have gone through, we just never heard back (ticket 48.2).
@@ -197,7 +211,9 @@ type ExtFillStatus =
 const TERMINAL_FILL_STATUSES = new Set<ExtFillStatus>([
   "submitted",
   "unavailable",
+  "not-installed",
   "failed",
+  "recipe-failed",
   "unconfirmed",
 ]);
 
@@ -643,7 +659,9 @@ export default function App() {
   const handlePreview = async () => {
     setBusy(true);
     setError("");
-    directSubmit(auth, draft.draft_id, toApiEvent(draft)).catch(() => {});
+    directSubmit(auth, draft.draft_id, toApiEvent(draft)).catch((e) => {
+      console.error("[direct-submit] fire-and-forget call failed:", e);
+    });
     try {
       const result = await previewBroadcast(auth, toApiEvent(draft));
       setPreview(result);
@@ -712,7 +730,10 @@ export default function App() {
 
   const fillOne = async (siteKey: string) => {
     if (!extensionId) {
-      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
+      // No extension resolved at all — distinct from "unavailable" (a
+      // dispatch failure against a real, resolved extension) so the copy can
+      // point at installing rather than updating.
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "not-installed" }));
       return;
     }
     setExtFillStatus((prev) => ({ ...prev, [siteKey]: "filling" }));
@@ -721,8 +742,9 @@ export default function App() {
       // FILLED is only ever reported once content.js's own completion ack
       // says so — never inferred from the tab having opened (the bug this
       // ticket fixes). "timeout" and "dispatch-failed" are deliberately
-      // different outcomes: the former means we just never heard back, the
-      // latter means the fill never started.
+      // different outcomes: the former means we just never heard back (or
+      // the one-shot fallback opened the tab with no ack channel at all),
+      // the latter means the fill never started even after the fallback.
       const result = await sendFillWithAck(extensionId, recipe);
       if (result.kind === "complete") {
         setExtFillStatus((prev) => ({
@@ -735,13 +757,14 @@ export default function App() {
         setExtFillStatus((prev) => ({ ...prev, [siteKey]: "unavailable" }));
       }
     } catch (e) {
-      // Only the extension path earns "not available". A failed
-      // /broadcast/direct-recipe call (403 rate-limit, expired session, 404
-      // adapter) used to land here too and got reported as a missing
-      // extension — sending people to reinstall a working extension while the
-      // real error stayed invisible in the network tab.
+      // Only a confirmed extension-side failure earns "not available"/
+      // "failed". A failed /broadcast/direct-recipe call (403 rate-limit,
+      // expired session, 404 adapter) never reaches the extension at all —
+      // reporting it as an extension problem sends people to
+      // reinstall/update a working extension while the real error stays
+      // invisible in the network tab. "recipe-failed" keeps it distinct.
       setError(describeError(e, "Couldn't build the fill for this site."));
-      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "failed" }));
+      setExtFillStatus((prev) => ({ ...prev, [siteKey]: "recipe-failed" }));
     }
   };
 
@@ -865,7 +888,12 @@ export default function App() {
           <button
             type="button"
             className="dev-autofill"
-            onClick={() => { setDraft(DEV_FIXTURE); setPreview(null); setJob(null); setError(""); }}
+            onClick={() => {
+              setDraft(() => ({ ...DEV_FIXTURE, draft_id: crypto.randomUUID() }));
+              setPreview(null);
+              setJob(null);
+              setError("");
+            }}
             title="Autofill with Bull City BOOs Fest test data"
           >
             ⚡ Dev autofill
@@ -1113,8 +1141,23 @@ export default function App() {
                     {status === "submitted" && (
                       <span className="target-status submitted">filled</span>
                     )}
+                    {status === "not-installed" && (
+                      <span className="target-status unavailable">
+                        extension not installed —{" "}
+                        <a href={WEB_STORE_URL} target="_blank" rel="noopener noreferrer">
+                          install it
+                        </a>
+                      </span>
+                    )}
                     {status === "unavailable" && (
-                      <span className="target-status unavailable">not available</span>
+                      <span className="target-status unavailable">
+                        extension didn&rsquo;t respond — update it to the latest version
+                      </span>
+                    )}
+                    {status === "recipe-failed" && (
+                      <span className="target-status failed">
+                        couldn&rsquo;t build this fill — try again
+                      </span>
                     )}
                     {status === "failed" && (
                       <span className="target-status failed">fill failed</span>
@@ -1127,7 +1170,9 @@ export default function App() {
                     {status !== "filling" &&
                       status !== "submitted" &&
                       status !== "unavailable" &&
+                      status !== "not-installed" &&
                       status !== "failed" &&
+                      status !== "recipe-failed" &&
                       status !== "unconfirmed" && (
                         <span className="target-status ready">ready</span>
                       )}

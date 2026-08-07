@@ -139,6 +139,62 @@ describe("sendFillWithAck", () => {
     });
   });
 
+  // Ticket 51.6: when the ack channel never got off the ground (most
+  // commonly a stale extension build with no onConnectExternal handler for
+  // the "fill" port), sendFillWithAck now falls back to the older one-shot
+  // sendFill rather than reporting a hard failure with no tab opened.
+
+  it("falls back to the one-shot send and resolves timeout when it succeeds", async () => {
+    const port = fakePort();
+    const sendMessage = vi.fn((_id: string, _msg: unknown, cb: (r?: { ok?: boolean }) => void) =>
+      cb({ ok: true })
+    );
+    vi.stubGlobal("chrome", {
+      runtime: { connect: vi.fn(() => port), sendMessage, lastError: undefined },
+    });
+
+    const promise = sendFillWithAck("ext-id", RECIPE);
+    port._emitDisconnect();
+
+    await expect(promise).resolves.toEqual({ kind: "timeout" });
+    expect(sendMessage).toHaveBeenCalledWith(
+      "ext-id",
+      { type: "fill", payload: RECIPE },
+      expect.any(Function)
+    );
+  });
+
+  it("falls back to the one-shot send and resolves dispatch-failed when that also fails", async () => {
+    const port = fakePort();
+    const sendMessage = vi.fn((_id: string, _msg: unknown, cb: (r?: { ok?: boolean }) => void) =>
+      cb({ ok: false })
+    );
+    vi.stubGlobal("chrome", {
+      runtime: { connect: vi.fn(() => port), sendMessage, lastError: undefined },
+    });
+
+    const promise = sendFillWithAck("ext-id", RECIPE);
+    port._emitDisconnect();
+
+    await expect(promise).resolves.toEqual({ kind: "dispatch-failed" });
+    expect(sendMessage).toHaveBeenCalled();
+  });
+
+  it("does NOT fall back (and so does not double-dispatch) when 'dispatched' was seen before onDisconnect", async () => {
+    const port = fakePort();
+    const sendMessage = vi.fn();
+    vi.stubGlobal("chrome", {
+      runtime: { connect: vi.fn(() => port), sendMessage, lastError: undefined },
+    });
+
+    const promise = sendFillWithAck("ext-id", RECIPE);
+    port._emitMessage({ type: "dispatched", tabId: 7 });
+    port._emitDisconnect();
+
+    await expect(promise).resolves.toEqual({ kind: "dispatch-failed" });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("ignores a 'dispatched' message and keeps waiting for the real completion ack", async () => {
     const port = fakePort();
     vi.stubGlobal("chrome", { runtime: { connect: vi.fn(() => port) } });

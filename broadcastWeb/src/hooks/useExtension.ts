@@ -6,9 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Recipe } from "../models/broadcastModels";
 
 // One or more extension IDs, comma-separated — lets the dev (unpacked) and the
-// published Web Store builds coexist in env. We ping them in order and use the
-// first that answers, so the resolved build is deterministic when both are
-// installed (see ping() below).
+// published Web Store builds coexist in env. We ping every configured id and
+// prefer whichever advertises the fill-ack capability, so the resolved build
+// is deterministic (and not stale) when both are installed (see ping() below).
 const EXTENSION_IDS: string[] = (
   (import.meta.env.VITE_BROADCAST_EXTENSION_ID as string | undefined) ?? ""
 )
@@ -22,6 +22,10 @@ export const WEB_STORE_URL =
 interface PingResponse {
   ok?: boolean;
   version?: string;
+  // Explicit capability list (e.g. "fill-ack" for the onConnectExternal port
+  // channel) rather than a version-string comparison, so preference logic
+  // stays correct even if a future build regresses a capability.
+  caps?: string[];
 }
 
 // Minimal shape of a chrome.runtime.Port, typed just enough for the fill-ack
@@ -66,38 +70,65 @@ export function useExtension(): ExtensionState {
   const installedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Pings are awaited one ID at a time rather than fired in parallel. With
-  // two builds installed side by side (an unpacked dev copy and the Web Store
-  // one — easy to end up with, and they look identical in chrome://extensions
-  // apart from the ID), a parallel race resolved to whichever service worker
-  // woke first. Fills then went to an arbitrary build from run to run, so a
-  // stale unpacked copy could silently swallow them. First configured ID that
-  // answers now always wins.
+  // Pings every configured ID and picks by *capability*, not by who answers
+  // first. With two builds installed side by side (an unpacked dev copy and
+  // the Web Store one — easy to end up with, and they look identical in
+  // chrome://extensions apart from the ID), racing on "first responder"
+  // could resolve to a stale build lacking the fill-ack port channel
+  // (background.js's onConnectExternal). The SPA would then open a port
+  // nothing listens on and the fill would die instantly. So: survey every
+  // id, and once the survey completes prefer whichever advertised
+  // "fill-ack", falling back to any responder if none did.
+  //
+  // Reported "installed" state upgrades responsively rather than waiting on
+  // the whole survey: the moment *any* id answers we flip installed/resolved
+  // immediately (so the UI doesn't stall on the slowest configured id), then
+  // once every id has answered we upgrade resolvedId to the ack-capable one
+  // if the initial responder wasn't it. We only ever upgrade, never
+  // downgrade — an ack-capable resolution is never replaced by a non-capable
+  // one. Gating the whole function on installedRef.current at the top means
+  // a resolved hook never re-surveys — recheck()'s 1s poll naturally stops
+  // once installedRef.current flips.
   const ping = useCallback(async (): Promise<void> => {
     const runtime = getRuntime();
     if (!runtime || EXTENSION_IDS.length === 0 || installedRef.current) return;
-    for (const id of EXTENSION_IDS) {
-      if (installedRef.current) return;
-      const ok = await new Promise<boolean>((resolve) => {
-        try {
-          runtime.sendMessage(id, { type: "ping" }, (response) => {
-            // Reading lastError suppresses the "no receiving end" console error
-            // Chrome logs when an extension isn't installed.
-            const err = getRuntime()?.lastError;
-            resolve(!err && response?.ok === true);
-          });
-        } catch {
-          /* not a Chromium runtime — treat as not installed */
-          resolve(false);
-        }
-      });
-      if (ok && !installedRef.current) {
-        installedRef.current = true;
-        setInstalled(true);
-        setResolvedId(id);
-        return;
-      }
-    }
+
+    let firstResponderId: string | undefined;
+
+    const survey = EXTENSION_IDS.map(
+      (id) =>
+        new Promise<{ id: string; caps: string[] } | null>((resolve) => {
+          try {
+            runtime.sendMessage(id, { type: "ping" }, (response) => {
+              // Reading lastError suppresses the "no receiving end" console
+              // error Chrome logs when an extension isn't installed.
+              const err = getRuntime()?.lastError;
+              if (err || response?.ok !== true) {
+                resolve(null);
+                return;
+              }
+              if (!firstResponderId) {
+                firstResponderId = id;
+                if (!installedRef.current) {
+                  installedRef.current = true;
+                  setInstalled(true);
+                  setResolvedId(id);
+                }
+              }
+              resolve({ id, caps: response.caps ?? [] });
+            });
+          } catch {
+            /* not a Chromium runtime — treat as not installed */
+            resolve(null);
+          }
+        }),
+    );
+
+    const results = (await Promise.all(survey)).filter(
+      (r): r is { id: string; caps: string[] } => r !== null,
+    );
+    const ackCapable = results.find((r) => r.caps.includes("fill-ack"));
+    if (ackCapable) setResolvedId(ackCapable.id);
   }, []);
 
   const recheck = useCallback(() => {
@@ -189,66 +220,104 @@ export const FILL_ACK_TIMEOUT_MS = 120_000;
 // long-lived port to the extension (mirrors the fetch-image port pattern
 // already used between content.js and background.js) so background.js can
 // push the ack back down once it arrives, rather than the SPA polling for it.
+//
+// Falls back to the older one-shot sendFill (fire-and-forget, no ack) when
+// the ack channel itself never got off the ground — most commonly a stale
+// extension build predating background.js's onConnectExternal handler for
+// the "fill" port. Without this fallback that build regresses to a hard
+// failure (ticket 51.6): "not available" and no tab opens, even though the
+// one-shot {type:"fill"} runtime.onMessageExternal path the stale build
+// *does* still handle would have opened the destination fine. A successful
+// fallback resolves "timeout", not "complete" — we still have no completion
+// ack, only confirmation (sendFill's boolean) that the tab opened.
+function fallbackToOneShot(extensionId: string, recipe: Recipe): Promise<FillAckResult> {
+  return sendFill(extensionId, recipe).then((dispatched) =>
+    dispatched ? { kind: "timeout" } : { kind: "dispatch-failed" }
+  );
+}
+
 export function sendFillWithAck(extensionId: string, recipe: Recipe): Promise<FillAckResult> {
   return new Promise((resolve) => {
     const runtime = getRuntime();
     if (!runtime || typeof runtime.connect !== "function") {
-      resolve({ kind: "dispatch-failed" });
+      // No connect() at all — the port was never opened, so nothing could
+      // have been dispatched. Safe to retry via the one-shot path.
+      void fallbackToOneShot(extensionId, recipe).then(resolve);
       return;
     }
 
     let settled = false;
     let port: ChromePort | undefined;
+    // Set once background.js confirms (via a "dispatched" port message) that
+    // handleFill actually ran. onDisconnect can in principle fire *after*
+    // that — e.g. the destination tab's own navigation tearing the port down
+    // — so a blind retry on every onDisconnect risks opening a second tab
+    // for the same recipe. The other three dispatch-failed paths (no
+    // connect(), connect() throwing, postMessage throwing) provably never
+    // reached handleFill and are unconditionally safe to retry.
+    let dispatched = false;
 
-    const timer = setTimeout(() => {
+    const settle = (result: FillAckResult) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       try {
         port?.disconnect();
       } catch {
         /* already gone */
       }
-      resolve({ kind: "timeout" });
-    }, FILL_ACK_TIMEOUT_MS);
+      resolve(result);
+    };
+
+    const settleWithFallback = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        port?.disconnect();
+      } catch {
+        /* already gone */
+      }
+      void fallbackToOneShot(extensionId, recipe).then(resolve);
+    };
+
+    const timer = setTimeout(() => settle({ kind: "timeout" }), FILL_ACK_TIMEOUT_MS);
 
     try {
       port = runtime.connect(extensionId, { name: "fill" });
     } catch {
       clearTimeout(timer);
-      resolve({ kind: "dispatch-failed" });
+      void fallbackToOneShot(extensionId, recipe).then(resolve);
       return;
     }
 
     port.onMessage.addListener((message) => {
       if (settled) return;
       const msg = message as { type?: string; summary?: FillAckSummary };
-      if (msg && msg.type === "fill-complete" && msg.summary) {
-        settled = true;
-        clearTimeout(timer);
-        try {
-          port?.disconnect();
-        } catch {
-          /* already gone */
-        }
-        resolve({ kind: "complete", summary: msg.summary });
+      if (msg?.type === "dispatched") {
+        // Confirms handleFill ran — from here on, onDisconnect must NOT
+        // trigger a fallback retry.
+        dispatched = true;
+        return;
       }
-      // Other message types (e.g. "dispatched") just confirm the tab opened —
-      // not completion, so keep waiting.
+      if (msg?.type === "fill-complete" && msg.summary) {
+        settle({ kind: "complete", summary: msg.summary });
+      }
     });
 
     port.onDisconnect.addListener(() => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ kind: "dispatch-failed" });
+      if (dispatched) {
+        settle({ kind: "dispatch-failed" });
+        return;
+      }
+      settleWithFallback();
     });
 
     try {
       port.postMessage({ type: "fill", payload: recipe });
     } catch {
-      settled = true;
-      clearTimeout(timer);
-      resolve({ kind: "dispatch-failed" });
+      settleWithFallback();
     }
   });
 }

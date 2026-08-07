@@ -9,16 +9,28 @@ from rest_framework.permissions import BasePermission
 from broadcast.access import authenticated_email, resolve_access
 
 
+def _normalize_draft_id(value):
+    """Coerce a raw draft_id value to a non-blank str, or None if it's missing/blank."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
 def _draft_id_from(request):
-    """Extract draft_id from the request body, handling nested event dicts."""
+    """Extract draft_id from the request body, handling nested event dicts.
+
+    Blank, whitespace-only, and absent draft_ids are all normalized to None so
+    callers can't distinguish "" from a missing key.
+    """
     data = getattr(request, "data", None)
     if isinstance(data, dict):
-        draft_id = data.get("draft_id")
+        draft_id = _normalize_draft_id(data.get("draft_id"))
         if draft_id is not None:
             return draft_id
         event = data.get("event")
         if isinstance(event, dict):
-            return event.get("draft_id")
+            return _normalize_draft_id(event.get("draft_id"))
     return None
 
 

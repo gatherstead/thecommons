@@ -77,4 +77,76 @@ describe("useExtension", () => {
     expect(result.current.installed).toBe(false);
     expect(sendMessage).not.toHaveBeenCalled();
   });
+
+  // 51.5: capability-based build selection. PingResponse now carries
+  // caps: string[]; ping() surveys every configured id and prefers whichever
+  // advertises "fill-ack" (the onConnectExternal port channel) rather than
+  // whichever answers first.
+  it("prefers the ack-capable build when both configured builds are ack-capable", async () => {
+    vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "dev-unpacked,store-build");
+    const sendMessage = vi.fn(
+      (_id: string, _msg: unknown, cb: (r?: { ok: boolean; caps?: string[] }) => void) =>
+        cb({ ok: true, caps: ["fill-ack"] }),
+    );
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    const useExtension = await loadHook();
+    const { result } = renderHook(() => useExtension());
+
+    await waitFor(() => expect(result.current.installed).toBe(true));
+    // Both are ack-capable — either would be a legitimate resolution — but the
+    // resolution must be stable/deterministic and must land on an ack-capable id.
+    expect(["dev-unpacked", "store-build"]).toContain(result.current.extensionId);
+    expect(sendMessage).toHaveBeenCalledWith("dev-unpacked", { type: "ping" }, expect.any(Function));
+    expect(sendMessage).toHaveBeenCalledWith("store-build", { type: "ping" }, expect.any(Function));
+  });
+
+  it("upgrades away from a stale (non-ack) responder to the ack-capable one, regardless of configured order", async () => {
+    vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "dev-unpacked,store-build");
+    const sendMessage = vi.fn(
+      (id: string, _msg: unknown, cb: (r?: { ok: boolean; caps?: string[] }) => void) =>
+        cb(id === "dev-unpacked" ? { ok: true } : { ok: true, caps: ["fill-ack"] }),
+    );
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    const useExtension = await loadHook();
+    const { result } = renderHook(() => useExtension());
+
+    await waitFor(() => expect(result.current.installed).toBe(true));
+    await waitFor(() => expect(result.current.extensionId).toBe("store-build"));
+  });
+
+  it("reports installed with the stale build when it's the only one configured (degrades gracefully, doesn't report missing)", async () => {
+    vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "dev-unpacked");
+    const sendMessage = vi.fn(
+      (_id: string, _msg: unknown, cb: (r?: { ok: boolean; caps?: string[] }) => void) =>
+        cb({ ok: true }), // no caps — pre-51.5 build
+    );
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    const useExtension = await loadHook();
+    const { result } = renderHook(() => useExtension());
+
+    await waitFor(() => expect(result.current.installed).toBe(true));
+    expect(result.current.extensionId).toBe("dev-unpacked");
+  });
+
+  it("stays not-installed and logs nothing when nothing answers", async () => {
+    vi.stubEnv("VITE_BROADCAST_EXTENSION_ID", "dev-unpacked,store-build");
+    const sendMessage = vi.fn(
+      (_id: string, _msg: unknown, cb: (r?: { ok: boolean }) => void) => cb(undefined),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    const useExtension = await loadHook();
+    const { result } = renderHook(() => useExtension());
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(result.current.installed).toBe(false);
+    expect(result.current.extensionId).toBeUndefined();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });

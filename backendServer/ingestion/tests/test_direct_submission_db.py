@@ -175,7 +175,23 @@ class DirectSubmissionTest(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
-    # 5b. Missing organizer_name → 400 (required for attribution).
+    # 5a. Blank draft_id → 400.
+    def test_blank_draft_id_returns_400(self):
+        resp = self._post_anon("", EVENT)
+        self.assertEqual(resp.status_code, 400)
+
+    # 5b. Whitespace-only draft_id → 400.
+    def test_whitespace_draft_id_returns_400(self):
+        resp = self._post_anon("   ", EVENT)
+        self.assertEqual(resp.status_code, 400)
+
+    # 5c. Surrounding whitespace normalizes to the same draft, not a duplicate.
+    def test_whitespace_padded_draft_id_reuses_same_raw_event(self):
+        self._post_jwt(DRAFT_ID, EVENT)
+        self._post_jwt(f"  {DRAFT_ID}  ", EVENT)
+        self.assertEqual(Event.objects.count(), 1)
+
+    # 5d. Missing organizer_name → 400 (required for attribution).
     def test_missing_organizer_name_returns_400(self):
         event = {k: v for k, v in EVENT.items() if k != "organizer_name"}
         resp = self._post_anon(DRAFT_ID, event)

@@ -350,6 +350,24 @@ class PreviewMeteringTest(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("draft_id", resp.json())
 
+    def test_trial_preview_with_blank_draft_id_returns_400_and_creates_no_use(self):
+        resp = self._preview(draft_id="")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("draft_id", resp.json())
+        self.assertEqual(AccessCodeUse.objects.filter(access_code=self.code).count(), 0)
+
+    def test_trial_preview_with_whitespace_draft_id_returns_400_and_creates_no_use(self):
+        resp = self._preview(draft_id="   ")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("draft_id", resp.json())
+        self.assertEqual(AccessCodeUse.objects.filter(access_code=self.code).count(), 0)
+
+    def test_re_preview_with_surrounding_whitespace_normalizes_to_same_row(self):
+        self._preview(draft_id="draft-1")
+        resp = self._preview(draft_id="  draft-1  ")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(AccessCodeUse.objects.filter(access_code=self.code).count(), 1)
+
     def test_trial_preview_creates_one_use_row(self):
         resp = self._preview(draft_id="draft-1")
         self.assertEqual(resp.status_code, 200)

@@ -28,7 +28,11 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
     return false;
   }
   if (msg && msg.type === "ping") {
-    sendResponse({ ok: true, version: VERSION });
+    // caps advertises what this build actually supports, so the SPA can pick
+    // between coexisting builds by capability rather than by who answers
+    // first or a version-string comparison (which a future regression could
+    // silently break). "fill-ack" = the onConnectExternal "fill" port below.
+    sendResponse({ ok: true, version: VERSION, caps: ["fill-ack"] });
     return false;
   }
   if (msg && msg.type === "fill" && msg.payload) {
@@ -145,7 +149,14 @@ chrome.runtime.onConnect.addListener((port) => {
     if (!msg || msg.type !== "fetch-image" || !msg.url) return;
     fetchImageAsDataUrl(msg.url).then(
       (dataUrl) => safePostMessage(port, { ok: true, dataUrl }),
-      (err) => safePostMessage(port, { ok: false, error: String(err) }),
+      (err) => {
+        // fetchImageAsDataUrl already logged a greppable console message with
+        // the URL — this is just the port-side rejection so the caller (a
+        // race with its own timeout) doesn't hang. Without a matching
+        // host_permissions entry this is a silent no-fill (image just never
+        // attaches); the console log below is what actually surfaces it.
+        safePostMessage(port, { ok: false, error: String(err) });
+      },
     );
   });
 });
@@ -159,16 +170,25 @@ function safePostMessage(port, msg) {
 }
 
 async function fetchImageAsDataUrl(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`HTTP ${response.status} fetching image`);
-  const blob = await response.blob();
-  if (!blob.type || !blob.type.startsWith("image/")) {
-    throw new Error(`expected an image, got content-type "${blob.type || "unknown"}"`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status} fetching image`);
+    const blob = await response.blob();
+    if (!blob.type || !blob.type.startsWith("image/")) {
+      throw new Error(`expected an image, got content-type "${blob.type || "unknown"}"`);
+    }
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("FileReader failed"));
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    // Greppable and includes the URL: a missing host_permissions entry makes
+    // fetch() reject with a bare, generic "Failed to fetch" that otherwise
+    // vanishes into the port's error payload with nothing printed here — the
+    // exact silent-no-fill failure mode this repo has been bitten by before.
+    console.error("Commons Broadcast: fetchImageAsDataUrl failed", url, err);
+    throw err;
   }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
 }

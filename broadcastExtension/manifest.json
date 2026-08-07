@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "The Commons - Broadcast",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Autofills community event calendars for manual review. You solve the captcha and click submit.",
   "permissions": ["scripting", "storage"],
   "host_permissions": [
@@ -11,7 +11,9 @@
     "https://business.ccucc.net/*",
     "https://www.chathamartscouncil.org/*",
     "https://www.visitraleigh.com/*",
-    "https://api.thecommons.town/*"
+    "https://api.thecommons.town/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
   ],
   "background": {
     "service_worker": "background.js"

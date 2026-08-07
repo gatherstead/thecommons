@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import App from "../App";
 import { clearDraft, clearSession } from "../lib/persist";
 
@@ -463,5 +463,56 @@ describe("T9: reviewed-state lock", () => {
 
     expect(screen.getByLabelText(/Contact Phone/i)).toHaveValue("919-555-0100");
     expect(screen.queryByRole("button", { name: /^Edit$/i })).toBeNull();
+  });
+});
+
+// 51.3: the dev autofill button used to overwrite the minted draft UUID with
+// the fixture's empty draft_id, so direct-submit silently 400'd on every
+// preview after using it. It must mint a fresh id like resetCore does.
+describe("51.3: dev autofill preserves a non-empty draft_id", () => {
+  it("sends a non-empty draft_id to direct-submit after Dev autofill + Preview", async () => {
+    useSessionMock.mockReturnValue({
+      data: { user: { email: "operator@thecommons.town" } },
+      isPending: false,
+    });
+    fetchJwtMock.mockResolvedValue("fake.jwt.token");
+    getAccessMock.mockResolvedValue({ tier: 2, is_trial: false, uses_remaining: null });
+    vi.resetModules();
+    const { default: FreshApp } = await import("../App");
+    const { directSubmit } = await import("../services/broadcastApi");
+    render(<FreshApp />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Dev autofill/i })).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Dev autofill/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Bull City BOOs Fest")).toBeInTheDocument();
+    });
+
+    // The fixture deliberately leaves contact_phone blank; fill it so the
+    // form clears validation and the Preview button becomes clickable.
+    fireEvent.change(screen.getByLabelText(/Contact Phone/i), {
+      target: { value: "919-555-0100" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Preview Destinations/i })).toBeEnabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Preview Destinations/i }));
+    });
+
+    await waitFor(() => {
+      expect(directSubmit).toHaveBeenCalled();
+    });
+    const [, sentDraftId] = (directSubmit as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sentDraftId).toEqual(expect.any(String));
+    expect(sentDraftId).not.toBe("");
   });
 });

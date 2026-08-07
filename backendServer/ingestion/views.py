@@ -70,6 +70,7 @@ def direct_submit(request):
         return Response({"event": serializer.errors}, status=400)
 
     draft_id = request.data.get("draft_id")
+    draft_id = draft_id.strip() if isinstance(draft_id, str) else draft_id
     if not draft_id:
         return Response({"draft_id": "required"}, status=400)
 

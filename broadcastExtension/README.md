@@ -15,19 +15,19 @@ Buildless plain JS — no bundler. Files:
 ### `host_permissions`
 
 Lists the six calendar sites the extension is allowed to autofill, plus
-`https://api.thecommons.town/*` — our own media host. The background worker's
-`fetchImageAsDataUrl` (in `background.js`) fetches the event image cross-origin
-before attaching it to the form; without a matching host permission that fetch
-is blocked and the image silently fails to attach, on every site, not just one.
+`https://api.thecommons.town/*` (prod media host) and `http://127.0.0.1:8000/*`
+/ `http://localhost:8000/*` (local backend media, for dev). The background
+worker's `fetchImageAsDataUrl` (in `background.js`) fetches the event image
+cross-origin before attaching it to the form; without a matching host
+permission that fetch is blocked and the image silently fails to attach — a
+rejection now also logs `"Commons Broadcast: fetchImageAsDataUrl failed"` with
+the URL to the service worker console (`chrome://extensions` → service worker
+→ "Inspect"), so a missing host entry surfaces there instead of vanishing.
 
 **Dev/localhost:** a local backend serves media from `http://localhost:8000/media/`.
-To test image attach against a local backend, add `"http://localhost:8000/*"`
-to `host_permissions` in your **locally-unpacked** copy of `manifest.json` and
-reload the extension at `chrome://extensions`. Do **not** commit that entry —
-`manifest.json` in git should only ever list the production hosts above.
-`extensionzipper.sh` zips `manifest.json` as-is with no filtering, so anything
-left in the file at zip time ships to the Web Store, including a stray
-localhost entry if you forget to revert it before packaging.
+The dev hosts above ship in the one shipped `manifest.json` (not a separate
+dev manifest), so image attach against a local backend works out of the box
+with no manual edit-before-testing / revert-before-shipping step.
 
 ## Local development (load unpacked)
 
@@ -69,6 +69,13 @@ and review — **you** handle the account and submission.
 4. Add a short privacy policy: no PII is collected or transmitted by the
    extension; data flows SPA → extension → the target site form only.
 5. Submit for review.
+
+**The `fill-ack` port channel (`onConnectExternal`, see `background.js`)
+requires >= 0.4.1.** The ping response carries `caps: ["fill-ack"]` on any
+build that supports it; `useExtension`'s `ping()` surveys every configured
+extension ID and prefers one advertising `fill-ack` over an older build that
+only answers the plain `ping`/`fill` `sendMessage` path, so a stale unpacked
+copy sitting alongside a current one doesn't win by answering first.
 
 **Adding a `host_permissions` entry (like `api.thecommons.town` in v0.3.0)
 triggers a Chrome Web Store re-review**, and existing installs won't pick up

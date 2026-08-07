@@ -751,9 +751,6 @@
     if (document.getElementById("commons-broadcast-banner")) return;
     const bar = document.createElement("div");
     bar.id = "commons-broadcast-banner";
-    const captcha = recipe.captcha_hint
-      ? ` Captcha: ${recipe.captcha_hint}.`
-      : "";
     const unmatched = unmatchedTerms.length
       ? ` Not applied — not found in this site's list, set manually: ${unmatchedTerms
           .map((u) => u.term)
@@ -765,7 +762,7 @@
           .join("; ")}.`
       : "";
     bar.textContent =
-      `The Commons: fields filled.${captcha}${unmatched}${venueNotes} Review, solve any captcha, then click Submit yourself.`;
+      `The Commons is filling this form — sit back and relax.${unmatched}${venueNotes} When it's done, review everything, solve any captcha, then click Submit yourself.`;
     Object.assign(bar.style, {
       position: "fixed",
       top: "0",

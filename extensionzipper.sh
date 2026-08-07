@@ -13,15 +13,36 @@ out="$repo_root/broadcast-extension.zip"
 
 version="$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$src/manifest.json" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
 
-# The zip is built as-is with no filtering, so a stray dev host left in
-# host_permissions (see README) would ship to the store. Catch it here.
-if sed -n '/"host_permissions"/,/]/p' "$src/manifest.json" | grep -q "localhost\|127.0.0.1"; then
-  echo "ERROR: localhost entry in host_permissions — revert it before packaging." >&2
-  exit 1
-fi
+# Stage a copy so the dev-only localhost/127.0.0.1 host_permissions entries
+# (kept in the checked-in manifest.json so local testing works out of the box
+# — see README) never reach the store, without needing a manual edit/revert
+# of the source manifest before/after packaging.
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+cp -R "$src/." "$stage/"
+
+python3 - "$stage/manifest.json" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    manifest = json.load(f)
+
+before = manifest.get("host_permissions", [])
+after = [h for h in before if "localhost" not in h and "127.0.0.1" not in h]
+removed = [h for h in before if h not in after]
+manifest["host_permissions"] = after
+
+with open(path, "w") as f:
+    json.dump(manifest, f, indent=2)
+    f.write("\n")
+
+if removed:
+    print(f"Stripped dev host_permissions before packaging: {', '.join(removed)}")
+PY
 
 rm -f "$out"
-cd "$src"
+cd "$stage"
 zip -r "$out" . -x "*.DS_Store" "*/.DS_Store"
 
 echo

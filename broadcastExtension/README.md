@@ -64,8 +64,12 @@ and review — **you** handle the account and submission.
 2. Update `externally_connectable.matches` and `background.js` `ALLOWED_ORIGINS`
    with the **prod SPA origin** (replace the `broadcast.thecommons.example`
    placeholder).
-3. Zip the directory contents (not the parent folder) and create an **unlisted**
-   listing in the Chrome Web Store dashboard.
+3. Run `../extensionzipper.sh` from this directory (or the repo root) to produce
+   `broadcast-extension.zip`. It stages a copy of the extension and strips the
+   dev-only `localhost`/`127.0.0.1` entries from `host_permissions` in the
+   staged manifest automatically — no manual edit-before-zip/revert-after
+   step needed, and the checked-in `manifest.json` is never touched. Create an
+   **unlisted** listing in the Chrome Web Store dashboard and upload the zip.
 4. Add a short privacy policy: no PII is collected or transmitted by the
    extension; data flows SPA → extension → the target site form only.
 5. Submit for review.

@@ -50,3 +50,14 @@ code writing to help responses be more accurate and complete quicker.
 ### Usage
 - suggest a feature in english and use the command '/write-tickets' to create fleshed out tickets.
 - copy the response, then use '/orchestrate' in a different claude instance to code the feature up. 
+
+
+## Packaging the broadcast extension
+
+Don't hand-edit `broadcastExtension/manifest.json` to strip the dev
+`localhost`/`127.0.0.1` host permissions before uploading to the Chrome Web
+Store, and don't hand-revert it afterward. Just run `./extensionzipper.sh`
+from the repo root — it stages a copy of the extension, strips the dev-only
+host permissions from the staged manifest, and zips that into
+`broadcast-extension.zip`. The checked-in manifest (and your local dev setup)
+is never touched.

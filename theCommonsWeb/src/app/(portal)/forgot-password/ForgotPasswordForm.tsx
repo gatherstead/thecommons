@@ -61,6 +61,10 @@ export function ForgotPasswordForm() {
                         role="status"
                     >
                         If that email exists in our system, we&rsquo;ve sent a reset link.
+                        <span className="block mt-1 font-normal">
+                            It may take a minute to arrive. If you don&rsquo;t see it, check
+                            your junk or spam folder — the link expires in one hour.
+                        </span>
                     </div>
                 )}
 

@@ -81,6 +81,10 @@ export const auth = betterAuth({
                     body: JSON.stringify({
                         sender: {
                             name: 'The Commons',
+                            // Must be a Brevo-validated sender — either a verified address or
+                            // one at an authenticated domain (thecommons.town was authenticated
+                            // 2026-08-17). An unvalidated sender is rejected downstream and
+                            // silently dropped; see the res.ok note below.
                             email: process.env.DIGEST_FROM_EMAIL ?? 'digest@thecommons.town',
                         },
                         to: [{ email: user.email }],
@@ -92,8 +96,18 @@ export const auth = betterAuth({
                             'your password will not change.</p>',
                     }),
                 });
+                // A 2xx here means Brevo *accepted* the message, not that it sent it.
+                // Rejections (unvalidated sender, blocked recipient) happen later during
+                // async processing and never surface on this response — on 2026-08-17 every
+                // reset email was being dropped for an unvalidated sender while this branch
+                // stayed silent. So log the messageId on success too: it's the only handle
+                // for correlating a request against Brevo's event log, which is where the
+                // real outcome lives (GET /v3/smtp/statistics/events?email=<recipient>).
                 if (!res.ok) {
                     console.error('[auth] sendResetPassword: Brevo send failed', res.status, await res.text());
+                } else {
+                    const { messageId } = (await res.json().catch(() => ({}))) as { messageId?: string };
+                    console.info('[auth] sendResetPassword: Brevo accepted message', messageId ?? '(no id)');
                 }
             } catch (err) {
                 console.error('[auth] sendResetPassword: Brevo send threw', err);

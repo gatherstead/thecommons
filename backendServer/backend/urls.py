@@ -8,9 +8,9 @@ The `urlpatterns` list routes URLs to views. For more information please see:
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import URLPattern, URLResolver, include, path
 
-urlpatterns = [
+urlpatterns: list[URLPattern | URLResolver] = [
     path("events/", include("events.urls")),
     path("", include("accounts.urls")),
     path("broadcast/", include("broadcast.urls")),

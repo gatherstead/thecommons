@@ -3,18 +3,44 @@ from rest_framework import serializers
 from broadcast.routing import CATEGORIES, LOCALITIES
 from broadcast.schema import CanonicalEvent, _to_local
 
-MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024
+# Hard reject above this many total pixels. This is a memory bound, not a
+# quality one: decoding costs ~3 bytes/px and the downscale needs a second
+# copy, so 50 MP is ~350 MB transient per concurrent upload on a 6 GB VM whose
+# celery services already reserve 5 GB (docker-compose.yml). It also sits under
+# Pillow's own decompression-bomb threshold (Image.MAX_IMAGE_PIXELS, ~89 MP),
+# so a merely-large real photo gets this message rather than Pillow's generic
+# "corrupted image". 50 MP covers any phone or DSLR a client will realistically
+# hand us; raise it only alongside a mem_limit on the backend service.
+MAX_IMAGE_PIXELS_IN = 50_000_000
+# Stored output ceiling on the longest edge. Sources larger than this are
+# downscaled by views.upload_image, never rejected.
+MAX_IMAGE_EDGE_PX = 8000
 
 
 class BroadcastImageUploadSerializer(serializers.Serializer):
-    """Validates the raw upload before Pillow re-encodes it (views.upload_image)."""
+    """Validates the raw upload before Pillow re-encodes it (views.upload_image).
+
+    Both caps are decided from the file header: DjangoImageField has already run
+    Image.open()/verify() by the time validate_image sees the file, so `.image`
+    carries the dimensions without a raster ever being allocated. Keep it that
+    way — decoding first and measuring after is the DoS vector called out in
+    django.forms.ImageField.to_python.
+    """
 
     image = serializers.ImageField(max_length=None, use_url=False)
 
     def validate_image(self, value):
         if value.size > MAX_IMAGE_UPLOAD_BYTES:
             raise serializers.ValidationError(
-                "That image is too large — please upload one under 10 MB."
+                "That photo is too big for our system — please resize it down and try "
+                f"again. Files need to be under {MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB."
+            )
+        width, height = value.image.size
+        if width * height > MAX_IMAGE_PIXELS_IN:
+            raise serializers.ValidationError(
+                "That photo is too big for our system — please resize it down and try "
+                f"again. Around {MAX_IMAGE_EDGE_PX} pixels on the longest side works well."
             )
         return value
 

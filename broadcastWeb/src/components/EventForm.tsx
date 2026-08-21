@@ -16,10 +16,12 @@ interface Props {
 }
 
 // Mirrors the server-side caps in broadcast/serializers.py
-// (MAX_IMAGE_UPLOAD_BYTES, 4000px max edge) so a bad file is rejected
-// instantly instead of round-tripping to the server first.
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_IMAGE_EDGE = 4000;
+// (MAX_IMAGE_UPLOAD_BYTES, MAX_IMAGE_PIXELS_IN) so a bad file is rejected
+// instantly instead of round-tripping to the server first. There is no
+// client-side edge cap: the server downscales anything over its output
+// ceiling rather than rejecting it.
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 50_000_000;
 
 function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -109,13 +111,17 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setImageError("That image is too large — please use a file under 10 MB.");
+      setImageError(
+        "That photo is too big for our system — please resize it down and try again. Files need to be under 25 MB.",
+      );
       return;
     }
     try {
       const { width, height } = await readImageDimensions(file);
-      if (width > MAX_IMAGE_EDGE || height > MAX_IMAGE_EDGE) {
-        setImageError(`That image is too large — please use one no larger than ${MAX_IMAGE_EDGE}px on a side.`);
+      if (width * height > MAX_IMAGE_PIXELS) {
+        setImageError(
+          "That photo is too big for our system — please resize it down and try again. Around 8000 pixels on the longest side works well.",
+        );
         return;
       }
     } catch (err) {
@@ -422,7 +428,7 @@ export default function EventForm({ draft, onChange, disabled, auth }: Props) {
         )}
         {imageUploading && <p className="hint">Uploading…</p>}
         {imageError && <p className="field-error">{imageError}</p>}
-        <p className="hint">JPEG or PNG, up to 10 MB and 4000px on a side. The extension fills this on sites with a standard file input.</p>
+        <p className="hint">JPEG or PNG, up to 25 MB. Very large images are resized down to 8000px on the longest side. The extension fills this on sites with a standard file input.</p>
       </div>
 
     </div>

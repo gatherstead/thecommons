@@ -133,12 +133,31 @@ class UploadImageTest(TestCase):
         self.assertIn("detail", resp.json())
         self.assertEqual(BroadcastImage.objects.count(), 0)
 
-    def test_oversized_dimensions_are_rejected(self):
-        huge = _jpeg_upload(size=(4500, 100))
-        resp = self._post(huge)
+    def test_oversized_dimensions_are_downscaled_not_rejected(self):
+        # Over the stored-output ceiling but well under the input pixel cap:
+        # accepted, resized to fit, aspect ratio preserved.
+        # views imports the name directly, so patch it where it is used.
+        with mock.patch("broadcast.views.MAX_IMAGE_EDGE_PX", 400):
+            resp = self._post(_jpeg_upload(size=(1000, 500)))
+        self.assertEqual(resp.status_code, 201, resp.content)
+        record = BroadcastImage.objects.get()
+        with Image.open(record.image.path) as stored:
+            self.assertEqual(stored.size, (400, 200))
+
+    def test_image_within_output_ceiling_keeps_its_resolution(self):
+        resp = self._post(_jpeg_upload(size=(1000, 500)))
+        self.assertEqual(resp.status_code, 201, resp.content)
+        record = BroadcastImage.objects.get()
+        with Image.open(record.image.path) as stored:
+            self.assertEqual(stored.size, (1000, 500))
+
+    def test_excessive_pixel_count_is_rejected(self):
+        # Guard against decode-memory blowup. Lower the cap rather than
+        # allocating a real 80 MP fixture.
+        with mock.patch("broadcast.serializers.MAX_IMAGE_PIXELS_IN", 1000):
+            resp = self._post(_jpeg_upload(size=(200, 150)))
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("detail", resp.json())
-        self.assertIn("4000", resp.json()["detail"])
+        self.assertIn("resize it down", resp.json()["detail"])
         self.assertEqual(BroadcastImage.objects.count(), 0)
 
     def test_no_credentials_rejected(self):

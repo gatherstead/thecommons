@@ -119,7 +119,7 @@ configs:
           listen 80;
           server_name api.localhost;
 
-          client_max_body_size 20m;
+          client_max_body_size 40m;
 
           location /static/ {
               alias /usr/share/nginx/html/static/;

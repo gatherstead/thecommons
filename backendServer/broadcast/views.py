@@ -29,7 +29,11 @@ from broadcast.permissions import (
     _draft_id_from,
 )
 from broadcast.routing import eligible_targets
-from broadcast.serializers import BroadcastImageUploadSerializer, CanonicalEventSerializer
+from broadcast.serializers import (
+    MAX_IMAGE_EDGE_PX,
+    BroadcastImageUploadSerializer,
+    CanonicalEventSerializer,
+)
 from broadcast.services import (
     cancel_submission,
     create_submission,
@@ -41,9 +45,8 @@ from broadcast.services import (
 )
 
 # Re-encoded output caps — the source image is discarded, never stored as
-# received. Confirmed limits: 10 MB in (BroadcastImageUploadSerializer), 4000px
-# max edge out.
-MAX_IMAGE_EDGE_PX = 4000
+# received. Input limits (25 MB, 50 MP) live in BroadcastImageUploadSerializer;
+# MAX_IMAGE_EDGE_PX is the stored-output ceiling, applied by downscaling.
 
 # Maps AccessResult.reason (set by resolve_access for a matched-but-dead trial
 # code) to the message shown to the caller. Falls back to a generic message.
@@ -286,19 +289,21 @@ def upload_image(request):
         return Response({"detail": str(detail)}, status=status.HTTP_400_BAD_REQUEST)
 
     upload = serializer.validated_data["image"]
-    try:
-        img = Image.open(upload)
-        img.verify()
-    except (UnidentifiedImageError, OSError):
-        return Response(
-            {"detail": "That file doesn't look like a valid image — please try a JPEG or PNG."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    # verify() leaves the file unusable for further ops — reopen it.
+    # The serializer has already opened and verified this file (DjangoImageField)
+    # and bounded its dimensions, so open() here only has to produce a decodable
+    # image. load() can still fail on a header-valid but truncated body.
     upload.seek(0)
     try:
         img = Image.open(upload)
+        # JPEG only: decode at a DCT-scaled size instead of full resolution, so a
+        # source we are about to downscale anyway never allocates a full-size
+        # raster (measured: 460 MB -> 203 MB on a 17000x4000 source, identical
+        # output). draft() must be given the size the image will actually end up
+        # at, not the square ceiling box — it reduces by whole factors only, and
+        # a box whose short side already fits yields no reduction at all. No-op
+        # for formats that cannot do scaled decoding.
+        fit = min(MAX_IMAGE_EDGE_PX / img.width, MAX_IMAGE_EDGE_PX / img.height, 1)
+        img.draft("RGB", (round(img.width * fit), round(img.height * fit)))
         img.load()
     except (UnidentifiedImageError, OSError):
         return Response(
@@ -315,16 +320,7 @@ def upload_image(request):
         out_format, ext = "JPEG", "jpg"
 
     if img.width > MAX_IMAGE_EDGE_PX or img.height > MAX_IMAGE_EDGE_PX:
-        return Response(
-            {
-                "detail": (
-                    "That image is too large "
-                    f"({img.width}x{img.height}px) — please upload one no larger "
-                    f"than {MAX_IMAGE_EDGE_PX}px on a side."
-                )
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        img.thumbnail((MAX_IMAGE_EDGE_PX, MAX_IMAGE_EDGE_PX), Image.LANCZOS)
 
     buffer = io.BytesIO()
     save_kwargs = {"quality": 90, "optimize": True} if out_format == "JPEG" else {"optimize": True}

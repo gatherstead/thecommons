@@ -151,6 +151,23 @@ class UploadImageTest(TestCase):
         with Image.open(record.image.path) as stored:
             self.assertEqual(stored.size, (1000, 500))
 
+    def test_exif_orientation_is_applied_before_reencode(self):
+        # Phone portrait photos store landscape sensor pixels plus an EXIF
+        # "rotate to display" tag. Re-encoding strips EXIF, so the rotation
+        # must be baked into the pixels or the stored copy displays sideways.
+        exif = Image.Exif()
+        exif[0x0112] = 6  # rotate 90 CW to display: raw 400x200 -> shown 200x400
+        buf = io.BytesIO()
+        Image.new("RGB", (400, 200), (200, 30, 30)).save(buf, format="JPEG", exif=exif)
+        upload = SimpleUploadedFile("portrait.jpg", buf.getvalue(), content_type="image/jpeg")
+
+        resp = self._post(upload)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        record = BroadcastImage.objects.get()
+        with Image.open(record.image.path) as stored:
+            self.assertEqual(stored.size, (200, 400))
+            self.assertIsNone(stored.getexif().get(0x0112))
+
     def test_excessive_pixel_count_is_rejected(self):
         # Guard against decode-memory blowup. Lower the cap rather than
         # allocating a real 80 MP fixture.

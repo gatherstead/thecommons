@@ -11,7 +11,7 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404, HttpResponse
 from django_ratelimit.decorators import ratelimit
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
@@ -305,6 +305,12 @@ def upload_image(request):
         fit = min(MAX_IMAGE_EDGE_PX / img.width, MAX_IMAGE_EDGE_PX / img.height, 1)
         img.draft("RGB", (round(img.width * fit), round(img.height * fit)))
         img.load()
+        # Saving below drops all EXIF (deliberate), so the orientation tag must
+        # be applied to the pixels first or portrait phone photos come out
+        # sideways. After draft(): the transpose operates on whatever raster was
+        # actually decoded, and the thumbnail box below is square, so orientation
+        # doesn't change the fit.
+        ImageOps.exif_transpose(img, in_place=True)
     except (UnidentifiedImageError, OSError):
         return Response(
             {"detail": "That file doesn't look like a valid image — please try a JPEG or PNG."},
